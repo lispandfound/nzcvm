@@ -11,8 +11,55 @@ use crate::{
 
 mod crs;
 mod geomodelgrid;
+mod parse;
 mod rfile;
 mod uniformmodel;
+
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Parser)]
+#[command(name = "nzcvm")]
+#[command(about = "Next-generation New Zealand velocity model generator", long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+// 1. Derive ValueEnum and Clone
+#[derive(ValueEnum, Clone, Debug)]
+enum Format {
+    EMOD3D,
+    RFile,
+    GeoModelGrid,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Generate a velocity model from a description.
+    Generate {
+        /// File containing description of the velocity model.
+        file: String,
+
+        /// Velocity model output location.
+        output: String,
+
+        /// Velocity model output format.
+        #[arg(short, long, value_enum, default_value_t = Format::RFile)]
+        format: Format,
+    },
+    /// Convert an existing velocity model into the rfile format.
+    Convert {
+        /// The input.
+        input: String,
+
+        /// Velocity model output location.
+        output: String,
+
+        /// Velocity model output format.
+        #[arg(short, long, value_enum, default_value_t = Format::RFile)]
+        format: Format,
+    },
+}
 
 fn main() {
     let nx = 500;
@@ -44,11 +91,6 @@ fn main() {
         resolution_horiz: resolution,
         name: "top_surface".to_string(),
     };
-    let topo_bathy = geomodelgrid::Surface {
-        surface: Array2::zeros((nx, ny)),
-        resolution_horiz: resolution,
-        name: "topography_bathymetry".to_string(),
-    };
 
     let model_grid = GeoModelGrid::builder()
         // Basic Metadata
@@ -75,12 +117,12 @@ fn main() {
         ])
         // Coordinates
         .crs(NZTM) // Assuming NZTM is a variable/constant in scope
-        .origin_x(172.0) /* TODO: fill in */
-        .origin_y(-43.0) /* TODO: fill in */
+        .origin_x(172.0)
+        .origin_y(-43.0)
         .y_azimuth(0.1)
-        .dim_x(width) /* TODO: fill in */
-        .dim_y(height) /* TODO: fill in */
-        .dim_z((nz as f64) * (resolution_vertical as f64)) /* TODO: fill in */
+        .dim_x(width)
+        .dim_y(height)
+        .dim_z((nz as f64) * (resolution_vertical as f64))
         .add_block(block)
         .add_surface(topo)
         // .add_surface(topo_bathy)

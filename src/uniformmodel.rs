@@ -1,6 +1,4 @@
-use ndarray::{Array, Array4, ShapeError};
-
-use crate::geomodelgrid::*;
+use ndarray::{Array, Array4};
 
 pub fn uniform_values(
     shape: (usize, usize, usize),

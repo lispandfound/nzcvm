@@ -1,7 +1,7 @@
-use crate::geomodelgrid::{Block, GeoModelGrid, Surface};
+use crate::geomodelgrid::GeoModelGrid;
 use byteorder::{LittleEndian, WriteBytesExt};
 use std::fs::File;
-use std::io::{BufWriter, Error, ErrorKind, Result, Write};
+use std::io::{BufWriter, Result, Write};
 use std::path::Path; // Assuming these are in the parent crate
 
 pub fn write_rfile<P: AsRef<Path>>(grid: &GeoModelGrid, path: P) -> Result<()> {

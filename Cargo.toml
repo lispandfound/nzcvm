@@ -5,11 +5,17 @@ edition = "2024"
 
 [dependencies]
 approx = "0.5.1"
+bvh = "0.12.0"
 byteorder = "1.5.0"
 clap = { version = "4.6.0", features = ["derive"] }
+geo = "0.32.0"
 hdf5-metno = "0.12.3"
 hdf5-metno-sys = "0.11.2"
+nalgebra = "0.34.2"
 ndarray = { version = "0.17.2", features = ["approx", "rayon"] }
+ordered-float = "5.3.0"
 rayon = "1.11.0"
+rstar = "0.12.2"
+scirs2-interpolate = "0.4.1"
 tempfile = "3.27.0"
 winnow = "1.0.0"

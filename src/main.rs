@@ -28,7 +28,7 @@ mod rfile;
 fn main() {
     let nx = 500;
     let ny = 500;
-    let nz = 20;
+    let nz = 300;
 
     // Grid parameters
     let resolution = 1000.0;
@@ -51,24 +51,18 @@ fn main() {
     let tomography = ModelTree::mesh_model(ep2020);
     let model_dir = "/home/jake/src/nzcvm/basins";
 
-    // Containers for our data
     let mut basins = Vec::new();
     let mut models = Vec::new();
 
-    // 1. Walk the directory
     let entries = fs::read_dir(model_dir)
         .expect("Directory not found")
-        .filter_map(|res| res.ok()) // Ignore errors on specific files
-        .filter(|e| {
-            // Only process .h5 files
-            e.path().extension().map_or(false, |ext| ext == "h5")
-        });
+        .filter_map(|res| res.ok())
+        .filter(|e| e.path().extension().map_or(false, |ext| ext == "h5"));
 
     for entry in entries {
         let path = entry.path();
         println!("Loading: {:?}", path);
 
-        // 2. Read and push data
         match read_model_data(path.to_str().unwrap()) {
             Ok((geometry, model)) => {
                 basins.push(geometry);
@@ -78,12 +72,10 @@ fn main() {
         }
     }
 
-    // 3. Ensure we actually found models before building the tree
     if basins.is_empty() {
         panic!("No HDF5 models found in {}", model_dir);
     }
 
-    // 4. Initialize the ModelTree
     let basin_models = ModelTree::layered_model(LayerTree::new(&mut basins, &models));
     let model_tree = ModelTree::Stack(&basin_models, &tomography);
     println!("Model tree");

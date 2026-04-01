@@ -1,115 +1,133 @@
 use crate::{
     crs::NZTM,
     geomodelgrid::{Block, GeoModelGrid},
-    model::{LayerGeometry, Model},
-    quality::Quality,
+    layers::read_model_data,
+    mesh::load_mesh_from_hdf5,
     rfile::write_rfile,
 };
-use geo::polygon;
+use layers::LayerTree;
 use model::ModelTree;
 use nalgebra::Point3;
-use ndarray::Array4; // Assuming your GeoModelGrid uses ndarray
+use ndarray::parallel::prelude::*;
+use ndarray::Array4;
+use ndarray::{Axis, Zip};
+use rayon::iter::IntoParallelIterator; // Assuming your GeoModelGrid uses ndarray
+use std::fs;
+use std::path::Path;
 use std::path::PathBuf;
-
+use std::time::Instant;
 mod crs;
+mod geometry;
 mod geomodelgrid;
+mod layers;
+mod mesh;
 mod model;
 mod quality;
-mod quality_interpolator;
 mod rfile;
 
 fn main() {
     let nx = 500;
     let ny = 500;
-    let nz = 100;
+    let nz = 20;
 
     // Grid parameters
-    let resolution = 125.0;
-    let resolution_vertical = 125.0;
-    let origin_lon = 172.0; // These usually represent NZTM Easting/Northing in your CRS
-    let origin_x = 1518491.0;
-    let origin_lat = -43.0;
-    let origin_y = 5238700.0;
-    let azimuth: f32 = 0.1; // Radians
-    let vp = 3500.0;
+    let resolution = 1000.0;
+    let resolution_vertical = 25.0;
+    let origin_lat = -45.30046120197377;
+    let origin_lon = 167.7888330933356;
+    let origin_x = 1191438.0;
+    let origin_y = 4970446.0;
+    let azimuth: f32 = 0.0; // Radians
+    let mut vertices_buf = Vec::new();
+    let mut qualities_buf = Vec::new();
+    println!("Loading EP2020 mesh.");
+    let ep2020 = load_mesh_from_hdf5(
+        "/home/jake/src/nzcvm/ep2020.h5",
+        &mut vertices_buf,
+        &mut qualities_buf,
+    )
+    .expect("Could not read ep2020 mesh");
+    println!("Loaded mesh.");
+    let tomography = ModelTree::mesh_model(ep2020);
+    let model_dir = "/home/jake/src/nzcvm/basins";
 
-    let vs = 1860.0;
+    // Containers for our data
+    let mut basins = Vec::new();
+    let mut models = Vec::new();
 
-    let rho = 2320.0;
+    // 1. Walk the directory
+    let entries = fs::read_dir(model_dir)
+        .expect("Directory not found")
+        .filter_map(|res| res.ok()) // Ignore errors on specific files
+        .filter(|e| {
+            // Only process .h5 files
+            e.path().extension().map_or(false, |ext| ext == "h5")
+        });
 
-    let qp = 208.48;
+    for entry in entries {
+        let path = entry.path();
+        println!("Loading: {:?}", path);
 
-    let qs = 104.24;
+        // 2. Read and push data
+        match read_model_data(path.to_str().unwrap()) {
+            Ok((geometry, model)) => {
+                basins.push(geometry);
+                models.push(model);
+            }
+            Err(e) => eprintln!("Failed to read {:?}: {}", path, e),
+        }
+    }
 
-    let bounding_polygon = polygon![
-        (x: 1_000_000.0, y: 4_700_000.0), // South-West (roughly below Stewart Island)
-        (x: 2_500_000.0, y: 4_700_000.0), // South-East
-        (x: 2_500_000.0, y: 6_300_000.0), // North-East (above Raoul Island/Kermadecs is further, but this hits Northland)
-        (x: 1_000_000.0, y: 6_300_000.0)  // North-West
-    ];
-    let layer1 = LayerGeometry::new_with_flat_surface(&bounding_polygon, 0.0, 3000.0);
+    // 3. Ensure we actually found models before building the tree
+    if basins.is_empty() {
+        panic!("No HDF5 models found in {}", model_dir);
+    }
 
-    let model1 = Model::Uniform(Quality {
-        rho: rho,
-        vp: vp,
-        vs: vs,
-        qp: qp,
-        qs: qs,
-    });
+    // 4. Initialize the ModelTree
+    let basin_models = ModelTree::layered_model(LayerTree::new(&mut basins, &models));
+    let model_tree = ModelTree::Stack(&basin_models, &tomography);
+    println!("Model tree");
+    model_tree.pretty_print();
 
-    let layer2 = LayerGeometry::new_with_flat_surface(&bounding_polygon, 3000.0, 20000.0);
-
-    let model2 = Model::Uniform(Quality {
-        rho: 2360.0,
-        vp: 5590.0,
-        vs: 3330.0,
-        qp: 333.0,
-        qs: 166.5,
-    });
-
-    let mut prisms = [layer1, layer2];
-    let models = &[model1, model2];
-    let model_tree = ModelTree::new(&mut prisms, models);
-
-    // 1. Iterate over the volume and rasterise the model
-    // Assuming GeoModelGrid expects an Array4 (nx, ny, nz, num_fields) or similar
     let mut block_values = Array4::<f32>::zeros((nx, ny, nz, 7));
 
     let cos_a = azimuth.cos();
     let sin_a = azimuth.sin();
-    println!("Assigning velocities.");
-    for i in 0..nx {
-        for j in 0..ny {
-            for k in 0..nz {
-                // Local offsets from origin
-                let dy = (i as f32) * resolution; // Outer axis points north
-                let dx = (j as f32) * resolution;
-                let dz = (k as f32) * resolution_vertical; // Assuming z is depth (negative)
 
-                // Rotate local offsets by azimuth and translate to origin
-                // Assuming azimuth is relative to the Y axis (North)
-                let global_x = origin_x + (dx * cos_a - dy * sin_a);
-                let global_y = origin_y + (dx * sin_a + dy * cos_a);
+    let total_start = Instant::now();
 
-                let query_point = Point3::new(global_x, global_y, dz);
+    Zip::indexed(block_values.lanes_mut(Axis(3)))
+        .into_par_iter()
+        .for_each(|((i, j, k), mut lane)| {
+            let dy = (i as f32) * resolution;
+            let dx = (j as f32) * resolution;
 
-                // Query the tree and extract quality
-                let quality = model_tree
-                    .query(query_point, 1e-6)
-                    .expect("Point outside of defined model layers");
+            let global_x = origin_x + (dx * cos_a - dy * sin_a);
+            let global_y = origin_y + (dx * sin_a + dy * cos_a);
 
-                // Assign to the block array
-                block_values[[i, j, k, 0]] = quality.rho;
-                block_values[[i, j, k, 1]] = quality.vp;
-                block_values[[i, j, k, 2]] = quality.vs;
-                block_values[[i, j, k, 3]] = quality.qp;
-                block_values[[i, j, k, 4]] = quality.qs;
-                block_values[[i, j, k, 5]] = 0.0; // fault_block_id (placeholder)
-                block_values[[i, j, k, 6]] = 0.0; // zone_id (placeholder)
-            }
-        }
-    }
+            let dz = (k as f32) * resolution_vertical;
+            let query_point = Point3::new(global_x, global_y, dz);
 
+            let (quality, _) = model_tree
+                .query(query_point)
+                .expect("Point outside of defined model layers");
+
+            lane[0] = quality.rho;
+            lane[1] = quality.vp;
+            lane[2] = quality.vs;
+            lane[3] = quality.qp;
+            lane[4] = quality.qs;
+            lane[5] = 0.0;
+            lane[6] = 0.0;
+        });
+    let total_elapsed = total_start.elapsed();
+    let total_points = nx * ny * nz;
+    println!("--- Timing Results ---");
+    println!("Total time for all points: {:?}", total_elapsed);
+    println!(
+        "Average time per point:    {:?}",
+        total_elapsed / total_points as u32
+    );
     let width = (nx as f32) * resolution;
     let height = (ny as f32) * resolution;
     let depth = (nz as f32) * resolution_vertical;

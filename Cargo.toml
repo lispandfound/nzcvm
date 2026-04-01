@@ -9,6 +9,7 @@ bvh = "0.12.0"
 byteorder = "1.5.0"
 clap = { version = "4.6.0", features = ["derive"] }
 geo = "0.32.0"
+geozero = {version = "0.15.1", features = ["with-wkb"]}
 hdf5-metno = "0.12.3"
 hdf5-metno-sys = "0.11.2"
 nalgebra = "0.34.2"

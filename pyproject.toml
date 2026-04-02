@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.12,<2.0", "cffi"] # Maturin requires cffi to build with!
+build-backend = "maturin"
+
+[project]
+name = "nzcvm_real"
+requires-python = ">=3.13"
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+]
+dynamic = ["version"]
+dependencies = [
+    "numpy>=2.4.4",
+    "pyproj>=3.7.2",
+    "scikit-learn>=1.8.0",
+    "xarray>=2026.2.0",
+    "xoak>=0.2.0",
+]
+
+[tool.uv]
+cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]

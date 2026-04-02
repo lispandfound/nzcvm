@@ -1,9 +1,11 @@
+use crate::geometry::polygon_distance_sq;
 use crate::quality::Quality;
+use crate::tree_query::nearest_to_point_iterator;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
-use geo::{point, BoundingRect, Coord, Distance, Euclidean, Geometry, MapCoords, Polygon};
+use geo::{Coord, Geometry, MapCoords, Polygon};
 use geozero::wkb::Wkb;
 use geozero::ToGeo;
 use hdf5_metno::types::VarLenUnicode;
@@ -14,15 +16,18 @@ use ordered_float::OrderedFloat;
 use scirs2_interpolate::interpnd::{InterpolationMethod, RegularGridInterpolator};
 use scirs2_interpolate::ExtrapolateMode;
 use std::collections::BTreeMap;
-use std::collections::HashMap;
+use std::iter::once;
 use std::path::Path;
 
 #[derive(Debug)]
 pub struct LayerGeometry {
     pub id: usize,
-    pub bounds: Polygon<f32>,
     pub top_surface: RegularGridInterpolator<f32>,
     pub bottom_surface: RegularGridInterpolator<f32>,
+    pub priority: usize,
+
+    /// Internal representation of the model boundary as an interleaved array of x-y points.
+    bounds: Array1<f32>,
     /// Absolute top value of the surface
     z_abs_top: f32,
     /// Absolute bottom value of the surface
@@ -51,7 +56,7 @@ impl LayerGeometry {
     }
 
     pub fn new(
-        bounds: &Polygon<f32>,
+        bounds: &Polygon<f32>, // Still take the geo Polygon as input
         surface_x: Array1<f32>,
         surface_y: Array1<f32>,
         surface_z_top: Array2<f32>,
@@ -59,6 +64,14 @@ impl LayerGeometry {
         surface_interpolation_method: InterpolationMethod,
         surface_extrapolation_mode: ExtrapolateMode,
     ) -> Self {
+        let exterior = bounds.exterior();
+        let mut flat_coords = Vec::with_capacity(exterior.0.len() * 2);
+        for p in exterior.points() {
+            flat_coords.push(p.x());
+            flat_coords.push(p.y());
+        }
+        let bounds_array = Array1::from(flat_coords);
+
         let z_top = *surface_z_top.iter().min_by(|x, y| x.total_cmp(y)).unwrap();
         let z_bottom = *surface_z_bottom
             .iter()
@@ -73,6 +86,7 @@ impl LayerGeometry {
             surface_extrapolation_mode,
         )
         .unwrap();
+
         let bottom_surface = RegularGridInterpolator::new(
             rect_points,
             surface_z_bottom.into_dyn(),
@@ -80,62 +94,85 @@ impl LayerGeometry {
             surface_extrapolation_mode,
         )
         .unwrap();
+
         LayerGeometry {
-            bounds: bounds.clone(),
-            top_surface: top_surface,
-            bottom_surface: bottom_surface,
+            bounds: bounds_array, // Stored as flat Array1<f32>
+            top_surface,
+            bottom_surface,
             z_abs_top: z_top,
             z_abs_bottom: z_bottom,
             id: 0,
             node_index: 0,
+            priority: 0,
         }
     }
 }
 
 impl PointDistance<f32, 3> for LayerGeometry {
     fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
-        let mut projected_point = query_point;
+        // 1. Surface Interpolation (as before)
         let query_array = array![[query_point.x, query_point.y]];
         let query_view = query_array.view();
         let z_top_res = self.top_surface.__call__(&query_view);
         let z_bottom_res = self.bottom_surface.__call__(&query_view);
 
-        // Either or both of those surface resolutions could fail. In that case
-        // it is assumed that dz = 0, and so we set the projected point z to
-        // equal the query point z.
         let z_projected = match (z_top_res, z_bottom_res) {
             (Ok(z_top), Ok(z_bottom)) => query_point.z.clamp(z_top[0], z_bottom[0]),
             _ => query_point.z,
         };
-        projected_point.z = z_projected;
 
-        let dz_sq = (query_point.z - projected_point.z).powi(2);
-        let dxdy_sq = Euclidean
-            .distance(
-                &self.bounds,
-                &point!(x: projected_point.x, y: projected_point.y),
-            )
-            .powi(2);
+        let dz_sq = (query_point.z - z_projected).powi(2);
+
+        let coords_slice = self.bounds.as_slice().unwrap();
+        let dxdy_sq = polygon_distance_sq(query_point, coords_slice);
+
         dz_sq + dxdy_sq
     }
 }
 
 impl Bounded<f32, 3> for LayerGeometry {
     fn aabb(&self) -> Aabb<f32, 3> {
-        let bounding_rect = self.bounds.bounding_rect().unwrap();
-        let min_coord = bounding_rect.min();
-        let max_coord = bounding_rect.max();
+        let coords = self.bounds.as_slice().unwrap();
 
-        let min_point = Point3::new(min_coord.x, min_coord.y, self.z_abs_top);
-        let max_point = Point3::new(max_coord.x, max_coord.y, self.z_abs_bottom);
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_y = f32::MAX;
+        let mut max_y = f32::MIN;
+
+        for chunk in coords.chunks_exact(2) {
+            let x = chunk[0];
+            let y = chunk[1];
+
+            if x < min_x {
+                min_x = x;
+            }
+            if x > max_x {
+                max_x = x;
+            }
+            if y < min_y {
+                min_y = y;
+            }
+            if y > max_y {
+                max_y = y;
+            }
+        }
+
+        let min_point = Point3::new(min_x, min_y, self.z_abs_top);
+        let max_point = Point3::new(max_x, max_y, self.z_abs_bottom);
+
         Aabb::with_bounds(min_point, max_point)
     }
 }
 
 pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
-    // 1. Read Polygon from WKB dataset
     let wkb_dataset = group.dataset("bounds")?;
     let wkb_bytes: Vec<u8> = wkb_dataset.read_raw()?;
+
+    let priority = if group.link_exists("priority") {
+        group.attr("priority")?.read_scalar()?
+    } else {
+        0
+    };
 
     let geo_obj = Wkb(wkb_bytes).to_geo().map_err(|e| e.to_string())?;
 
@@ -147,13 +184,11 @@ pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
         _ => return Err("Bounds dataset is not a polygon".into()),
     };
 
-    // 2. Read Surface Arrays
     let x: Array1<f32> = group.dataset("surface_x")?.read_1d()?;
     let y: Array1<f32> = group.dataset("surface_y")?.read_1d()?;
     let z_top: Array2<f32> = group.dataset("surface_z_top")?.read_2d()?;
     let z_bottom: Array2<f32> = group.dataset("surface_z_bottom")?.read_2d()?;
-
-    Ok(LayerGeometry::new(
+    let mut geometry = LayerGeometry::new(
         &bounds,
         x,
         y,
@@ -161,7 +196,9 @@ pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
         z_bottom,
         InterpolationMethod::Linear,
         ExtrapolateMode::Nearest,
-    ))
+    );
+    geometry.priority = priority;
+    Ok(geometry)
 }
 
 pub fn deserialise_model(group: &Group) -> Result<Model> {
@@ -249,26 +286,47 @@ pub struct LayerTree<'a> {
 }
 
 impl<'a> LayerTree<'a> {
-    pub fn new(prisms: &'a mut [LayerGeometry], models: &'a [Model]) -> Self {
-        // Align geometry ids with model ids.
-        for (i, prism) in prisms.iter_mut().enumerate() {
-            prism.id = i;
+    pub fn new(shapes: &'a mut [LayerGeometry], models: &'a [Model]) -> Self {
+        // Align shape ids with model ids.
+        for (i, shape) in shapes.iter_mut().enumerate() {
+            shape.id = i;
         }
-        let bvh_tree = Bvh::build(prisms);
+        let bvh_tree = Bvh::build(shapes);
 
         Self {
-            shapes: prisms,
+            shapes,
             bvh_tree: bvh_tree,
             models: models,
         }
     }
 
     pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
-        self.bvh_tree
-            .nearest_to(point, self.shapes)
-            .map(|(shape, dist)| (&self.models[shape.id], dist))
-            .and_then(|(model, dist)| model.query(point).map(|q| (q, dist)))
+        let mut iter = nearest_to_point_iterator(&self.bvh_tree, &self.shapes, &point);
+
+        iter.next().and_then(|(shape, dist)| {
+            if dist < f32::EPSILON {
+                // Shape contains point, check for other shapes containing this point to resolve overlaps.
+                let other_shapes = iter
+                    // short-cut: no more than two extra models considered
+                    .take_while(|(_, dist)| *dist < f32::EPSILON)
+                    .map(|(shape, _)| shape);
+                // The preferred shape is the highest priority shape.
+                once(shape)
+                    .chain(other_shapes)
+                    .max_by_key(|shape| shape.priority)
+                    .and_then(|best_shape| {
+                        self.model_query_for(best_shape, point).map(|q| (q, dist))
+                    })
+            } else {
+                self.model_query_for(shape, point).map(|q| (q, dist))
+            }
+        })
     }
+
+    fn model_query_for(&self, shape: &LayerGeometry, point: Point3<f32>) -> Option<Quality> {
+        self.models[shape.id].query(point)
+    }
+
     pub fn pretty_print(&self) -> () {
         println!(
             "Disjoint layer models, having {} layers with structure:",

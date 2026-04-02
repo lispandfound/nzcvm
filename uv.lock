@@ -145,7 +145,7 @@ wheels = [
 ]
 
 [[package]]
-name = "nzcvm-real"
+name = "nzcvm"
 source = { editable = "." }
 dependencies = [
     { name = "numpy" },

@@ -1,24 +1,29 @@
-mod geometry;
-mod geomodelgrid;
-mod layers;
-mod mesh;
-mod model;
-mod quality;
-mod rfile;
-mod tree_query;
+pub mod geometry;
+pub mod geomodelgrid;
+pub mod layers;
+pub mod mesh;
+pub mod model;
+pub mod quality;
+pub mod rfile;
+pub mod tree_query;
 use pyo3::prelude::*;
+
 #[pymodule]
 mod nzcvm {
-    use crate::layers::{read_model_data, LayerTree};
+    use crate::layers::{read_model_data, LayerGeometry, LayerTree, Model};
     use crate::mesh::{load_mesh_from_hdf5, MeshModel};
     use crate::model::ModelTree;
     use crate::quality::Quality;
+    use geo::{Coord, LineString, Polygon};
     use nalgebra::Point3;
     use ndarray::Array2;
     use ndarray::Zip;
     use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+    use ordered_float::OrderedFloat;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
+    use scirs2_interpolate::interpnd::{ExtrapolateMode, InterpolationMethod};
+    use std::collections::BTreeMap;
 
     use std::sync::Arc;
 
@@ -49,8 +54,8 @@ mod nzcvm {
     }
 
     #[pyclass]
-    pub struct PyModel<'py> {
-        pub inner: ModelTree<'py>,
+    pub struct PyModel {
+        pub inner: Arc<ModelTree>,
     }
 
     #[pymethods]
@@ -100,15 +105,21 @@ mod nzcvm {
         pub fn print_structure(&self) {
             self.inner.pretty_print();
         }
+
+        /// Stacks two models: upper on top of lower
+        pub fn stack(&self, other: &Self) -> Self {
+            Self {
+                inner: Arc::new(ModelTree::Stack(self.inner.clone(), other.inner.clone())),
+            }
+        }
     }
 
     #[pyfunction]
-    pub fn layer_model<'py>(
-        py: Python<'py>,
+    pub fn mesh(
         vertices_py: PyReadonlyArray2<f32>,
         qualities_py: PyReadonlyArray2<f32>,
         dimensions: (usize, usize, usize),
-    ) -> PyResult<PyModel<'py>> {
+    ) -> PyResult<PyModel> {
         let (_, nj, nk) = dimensions;
         let chart = |i, j, k| k + j * nk + i * nj * nk;
         let vertices: Vec<Point3<f32>> = vertices_py
@@ -129,114 +140,99 @@ mod nzcvm {
                 qs: row[4],
             })
             .collect();
-        let mesh = MeshModel::curvilinear_mesh(&vertices, &qualities, dimensions, chart);
+        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, dimensions, chart);
         Ok(PyModel {
-            inner: ModelTree::mesh_model(mesh),
+            inner: Arc::new(ModelTree::mesh_model(mesh)),
         })
     }
 
-    #[pymethods]
-    impl ModelBuilder {
-        #[new]
-        pub fn new() -> Self {
-            ModelBuilder {}
-        }
+    /// Loads a mesh model from HDF5
+    #[pyfunction]
+    pub fn load_mesh(path: &str) -> PyResult<PyModel> {
+        // We use 'unsafe' or transmute lifetimes here only because we are
+        // tying the lifetime of the MeshModel to the PyModel struct that owns the Vecs.
+        let mesh = load_mesh_from_hdf5(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-        pub fn mesh(
-            &self,
-            vertices_py: PyReadonlyArray2<f32>,
-            qualities_py: PyReadonlyArray2<f32>,
-            dimensions: (usize, usize, usize),
-        ) -> PyResult<PyModel> {
-            let (_, nj, nk) = dimensions;
-            let chart = |i, j, k| k + j * nk + i * nj * nk;
-            let vertices: Vec<Point3<f32>> = vertices_py
-                .as_array()
-                .rows()
-                .into_iter()
-                .map(|row| Point3::from_slice(row.as_slice().unwrap()))
-                .collect();
-            let qualities: Vec<Quality> = qualities_py
-                .as_array()
-                .rows()
-                .into_iter()
-                .map(|row| Quality {
-                    rho: row[0],
-                    vp: row[1],
-                    vs: row[2],
-                    qp: row[3],
-                    qs: row[4],
-                })
-                .collect();
-            let mesh = MeshModel::curvilinear_mesh(&vertices, &qualities, dimensions, chart);
-            Ok(PyModel {
-                inner: Arc::new(ModelTree::mesh_model(unsafe { std::mem::transmute(mesh) })),
-                _vertices: Some(vertices),
-                _qualities: Some(qualities),
-            })
-        }
+        Ok(PyModel {
+            inner: Arc::new(ModelTree::mesh_model(mesh)),
+        })
+    }
 
-        /// Loads a mesh model from HDF5
-        pub fn load_mesh(&self, path: &str) -> PyResult<PyModel> {
-            let mut vertices = Vec::new();
-            let mut qualities = Vec::new();
+    /// Loads all .h5 files from a directory as a LayerTree
+    #[pyfunction]
+    pub fn load_layers_from_dir(directory: &str) -> PyResult<PyModel> {
+        let mut basins = Vec::new();
+        let mut models = Vec::new();
 
-            // We use 'unsafe' or transmute lifetimes here only because we are
-            // tying the lifetime of the MeshModel to the PyModel struct that owns the Vecs.
-            let mesh = load_mesh_from_hdf5(path, &mut vertices, &mut qualities)
-                .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let paths =
+            std::fs::read_dir(directory).map_err(|e| PyValueError::new_err(e.to_string()))?;
 
-            Ok(PyModel {
-                inner: Arc::new(ModelTree::mesh_model(mesh)),
-            })
-        }
-
-        /// Loads all .h5 files from a directory as a LayerTree
-        pub fn load_layers_from_dir(&self, directory: &str) -> PyResult<PyModel> {
-            let mut basins = Vec::new();
-            let mut models = Vec::new();
-
-            let paths =
-                std::fs::read_dir(directory).map_err(|e| PyValueError::new_err(e.to_string()))?;
-
-            for entry in paths.flatten() {
-                if entry.path().extension().map_or(false, |ext| ext == "h5") {
-                    if let Ok((geo, mod_data)) = read_model_data(entry.path()) {
-                        basins.push(geo);
-                        models.push(mod_data);
-                    }
+        for entry in paths.flatten() {
+            if entry.path().extension().map_or(false, |ext| ext == "h5") {
+                if let Ok((geo, mod_data)) = read_model_data(entry.path()) {
+                    basins.push(geo);
+                    models.push(mod_data);
                 }
             }
-
-            let layer_tree = LayerTree::new(&mut basins, &models);
-
-            Ok(PyModel {
-                inner: Arc::new(ModelTree::layered_model(unsafe {
-                    std::mem::transmute(layer_tree)
-                })),
-                _vertices: None,
-                _qualities: None,
-            })
         }
 
-        /// Stacks two models: upper on top of lower
-        pub fn stack(&self, upper: &PyModel, lower: &PyModel) -> PyModel {
-            PyModel {
-                // This is where the recursive Enum logic happens
-                inner: Arc::new(ModelTree::Stack(
-                    unsafe { std::mem::transmute(&*upper.inner) },
-                    unsafe { std::mem::transmute(&*lower.inner) },
-                )),
-                // Keep references to parent buffers to prevent dropping
-                _vertices: None,
-                _qualities: None,
-            }
-        }
+        let layer_tree = LayerTree::new(basins, models);
+
+        Ok(PyModel {
+            inner: Arc::new(ModelTree::layered_model(layer_tree)),
+        })
     }
-}
 
-#[pyclass]
-pub struct PyMeshModel {
-    vertices: Vec<Point3<f32>>,
-    qualities: Vec<Point3<f32>>,
+    #[pyfunction]
+    pub fn create_layer_model(
+        bounds_py: PyReadonlyArray2<f32>,
+        surface_x_py: PyReadonlyArray1<f32>,
+        surface_y_py: PyReadonlyArray1<f32>,
+        z_top_py: PyReadonlyArray2<f32>,
+        z_bottom_py: PyReadonlyArray2<f32>,
+        layer_params_py: PyReadonlyArray2<f32>, // [z, rho, vp, vs, qp, qs]
+        priority: usize,
+    ) -> PyResult<PyModel> {
+        let bounds_arr = bounds_py.as_array();
+        let coords: Vec<Coord<f32>> = bounds_arr
+            .rows()
+            .into_iter()
+            .map(|r| Coord { x: r[0], y: r[1] })
+            .collect();
+
+        let poly = Polygon::new(LineString::new(coords), vec![]);
+
+        let mut geometry = LayerGeometry::new(
+            &poly,
+            surface_x_py.as_array().to_owned(),
+            surface_y_py.as_array().to_owned(),
+            z_top_py.as_array().to_owned(),
+            z_bottom_py.as_array().to_owned(),
+            InterpolationMethod::Linear,
+            ExtrapolateMode::Nearest,
+        );
+        geometry.priority = priority;
+
+        let params_arr = layer_params_py.as_array();
+        let mut layers = BTreeMap::new();
+        for row in params_arr.rows() {
+            layers.insert(
+                OrderedFloat(row[0]),
+                Quality {
+                    rho: row[1],
+                    vp: row[2],
+                    vs: row[3],
+                    qp: row[4],
+                    qs: row[5],
+                },
+            );
+        }
+        let model = Model::Layered { layers };
+
+        let layer_tree = LayerTree::new(vec![geometry], vec![model]);
+
+        Ok(PyModel {
+            inner: Arc::new(ModelTree::layered_model(layer_tree)),
+        })
+    }
 }

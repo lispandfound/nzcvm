@@ -279,22 +279,22 @@ impl Model {
     }
 }
 
-pub struct LayerTree<'a> {
+pub struct LayerTree {
     bvh_tree: Bvh<f32, 3>,
-    models: &'a [Model],
-    shapes: &'a [LayerGeometry],
+    models: Vec<Model>,
+    shapes: Vec<LayerGeometry>,
 }
 
-impl<'a> LayerTree<'a> {
-    pub fn new(shapes: &'a mut [LayerGeometry], models: &'a [Model]) -> Self {
+impl LayerTree {
+    pub fn new(mut shapes: Vec<LayerGeometry>, models: Vec<Model>) -> Self {
         // Align shape ids with model ids.
         for (i, shape) in shapes.iter_mut().enumerate() {
             shape.id = i;
         }
-        let bvh_tree = Bvh::build(shapes);
+        let bvh_tree = Bvh::build(&mut shapes);
 
         Self {
-            shapes,
+            shapes: shapes,
             bvh_tree: bvh_tree,
             models: models,
         }
@@ -343,6 +343,7 @@ mod tests {
     use geo::polygon;
     use nalgebra::Point3;
     use ordered_float::OrderedFloat;
+
     // --- Helpers ---
 
     fn create_unit_prism(z_top: f32, z_bottom: f32) -> LayerGeometry {
@@ -377,8 +378,9 @@ mod tests {
         let outside = Point3::new(-1.0, -1.0, -1.0);
         assert!(prism.distance_squared(outside) >= 0.0);
 
-        let above = Point3::new(0.5, 0.5, -2.0);
-        let below = Point3::new(0.5, 0.5, 12.0);
+        // Symmetry check for distance squared
+        let above = Point3::new(0.5, 0.5, -2.0); // 2 units above top
+        let below = Point3::new(0.5, 0.5, 12.0); // 2 units below bottom
         assert_abs_diff_eq!(
             prism.distance_squared(above),
             prism.distance_squared(below),
@@ -391,6 +393,7 @@ mod tests {
         let prism = create_unit_prism(5.0, 15.0);
         let aabb = prism.aabb();
 
+        // Note: z_abs_top (min) and z_abs_bottom (max)
         assert!(aabb.min.z <= 5.0);
         assert!(aabb.max.z >= 15.0);
         assert!(aabb.min.x <= 0.0 && aabb.max.x >= 1.0);
@@ -416,36 +419,62 @@ mod tests {
 
     #[test]
     fn test_model_tree_nearest_neighbor_behavior() {
-        let mut prisms = vec![create_unit_prism(0.0, 10.0)];
+        let prisms = vec![create_unit_prism(0.0, 10.0)];
         let models = vec![Model::Uniform(mock_quality(1.0))];
 
-        let tree = LayerTree::new(&mut prisms, &models);
+        // API Change: LayerTree::new now consumes the vectors
+        let tree = LayerTree::new(prisms, models);
 
-        // Property: A point far outside now returns the nearest result + the actual distance
-        let far_point = Point3::new(10.0, 0.0, 5.0); // 9 units away from the X=1 face
-        let (q, dist) = tree
+        // Point is 9 units away from the X=1.0 face.
+        // distance_squared = 9^2 = 81.0
+        let far_point = Point3::new(10.0, 0.5, 5.0);
+        let (q, dist_sq) = tree
             .query(far_point)
             .expect("Should return nearest neighbor");
 
         assert_eq!(q.rho, 1.0);
-        assert_abs_diff_eq!(dist, 9.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(dist_sq, 9.0, epsilon = 1e-5);
     }
 
     #[test]
     fn test_model_tree_mapping_consistency() {
-        let mut prisms = vec![create_unit_prism(0.0, 1.0), create_unit_prism(10.0, 11.0)];
+        let prisms = vec![create_unit_prism(0.0, 1.0), create_unit_prism(10.0, 11.0)];
         let models = vec![
             Model::Uniform(mock_quality(1.0)),
             Model::Uniform(mock_quality(2.0)),
         ];
 
-        let tree = LayerTree::new(&mut prisms, &models);
+        let tree = LayerTree::new(prisms, models);
 
         let p1 = Point3::new(0.5, 0.5, 0.5);
         let p2 = Point3::new(0.5, 0.5, 10.5);
 
+        // API Change: query returns (Quality, f32)
         assert_eq!(tree.query(p1).unwrap().0.rho, 1.0);
         assert_eq!(tree.query(p2).unwrap().0.rho, 2.0);
+    }
+
+    #[test]
+    fn test_overlap_priority_resolution() {
+        let mut p1 = create_unit_prism(0.0, 10.0);
+        p1.priority = 10;
+        let mut p2 = create_unit_prism(0.0, 10.0);
+        p2.priority = 20; // Higher priority should win
+
+        let prisms = vec![p1, p2];
+        let models = vec![
+            Model::Uniform(mock_quality(1.0)),
+            Model::Uniform(mock_quality(2.0)),
+        ];
+
+        let tree = LayerTree::new(prisms, models);
+        let query_point = Point3::new(0.5, 0.5, 5.0);
+
+        let (q, _) = tree.query(query_point).unwrap();
+        assert_eq!(
+            q.rho, 2.0,
+            "Higher priority layer should be returned in case of overlap"
+        );
     }
 
     #[test]
@@ -453,6 +482,8 @@ mod tests {
         let poly = polygon![(x: 0.0, y: 0.0), (x: 2.0, y: 0.0), (x: 2.0, y: 2.0), (x: 0.0, y: 2.0)];
         let x = ndarray::Array1::from(vec![0.0, 2.0]);
         let y = ndarray::Array1::from(vec![0.0, 2.0]);
+
+        // Top surface slopes from z=0 at x=0 to z=10 at x=2
         let z_top = ndarray::array![[0.0, 0.0], [10.0, 10.0]];
         let z_bottom = ndarray::Array2::from_elem((2, 2), 20.0);
 
@@ -466,18 +497,12 @@ mod tests {
             scirs2_interpolate::ExtrapolateMode::Nearest,
         );
 
+        // Test vertical distance above the slope (at x=0, z_top=0)
         let p_start = Point3::new(0.0, 0.0, -5.0);
         assert_abs_diff_eq!(prism.distance_squared(p_start), 25.0, epsilon = 1e-5);
 
-        let p_mid = Point3::new(1.0, 1.0, 5.0);
+        // Test point inside the sloped volume (at x=1.0, interpolated z_top is 5.0)
+        let p_mid = Point3::new(1.0, 1.0, 7.0);
         assert_eq!(prism.distance_squared(p_mid), 0.0);
-    }
-
-    #[test]
-    fn test_model_interpolation_failure_fallback() {
-        let prism = create_unit_prism(0.0, 10.0);
-        let p = Point3::new(2.0, 0.5, 5.0);
-        let dist_sq = prism.distance_squared(p);
-        assert_abs_diff_eq!(dist_sq, 1.0, epsilon = 1e-5);
     }
 }

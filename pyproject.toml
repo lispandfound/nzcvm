@@ -3,7 +3,7 @@ requires = ["maturin>=1.12,<2.0", "cffi"] # Maturin requires cffi to build with!
 build-backend = "maturin"
 
 [project]
-name = "nzcvm_real"
+name = "nzcvm"
 requires-python = ">=3.13"
 classifiers = [
     "Programming Language :: Rust",

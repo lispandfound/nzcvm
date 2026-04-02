@@ -1,5 +1,4 @@
 use nalgebra::Point3;
-use ndarray::ArrayView1;
 #[inline(always)]
 fn line_to_point_dist_sq(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     let dx = x2 - x1;

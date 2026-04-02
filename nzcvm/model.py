@@ -1,9 +1,13 @@
-from .nzcvm import ModelBuilder, PyModel
 from dataclasses import dataclass
-import xarray as xr
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import xarray as xr
 import xoak
+
+from nzcvm import nzcvm
+
+from .nzcvm import PyModel
 
 
 @dataclass
@@ -20,7 +24,6 @@ class Model:
 
     def __init__(self, internal_py_model: PyModel):
         self._raw = internal_py_model
-        self._builder = ModelBuilder()
 
     @classmethod
     def from_dataset(cls, ds: xr.Dataset):
@@ -56,28 +59,75 @@ class Model:
             axis=-1,
         ).astype(np.float32)
 
-        # 4. Call the Rust mesh method
-        # We use a temporary builder to generate the PyModel
-        builder = ModelBuilder()
-        internal_model = builder.mesh(vertices, qualities, padded_shape)
+        internal_model = nzcvm.mesh(vertices, qualities, padded_shape)
 
         return cls(internal_model)
 
     @classmethod
     def from_mesh(cls, path: Path | str):
-        raw = ModelBuilder().load_mesh(str(path))
+        raw = nzcvm.load_mesh(str(path))
         return cls(raw)
 
     @classmethod
     def from_layers(cls, directory: Path | str):
-        raw = ModelBuilder().load_layers_from_dir(str(directory))
+        raw = nzcvm._layers_from_dir(str(directory))
         return Model(raw)
+
+    @classmethod
+    def from_layer(
+        cls,
+        quality_ds: xr.Dataset,
+        top_surface: xr.DataArray,
+        bottom_surface: xr.DataArray,
+        polygon: np.ndarray,
+        priority: int = 0,
+    ) -> "Model":
+        """
+        Creates a Layer Model (prism with sloped surfaces).
+
+        Args:
+            quality_ds: Dataset with 'z' coord and vars 'rho', 'vp', 'vs', 'qp', 'qs'.
+            top_surface: 2D DataArray (x, y) for the top boundary.
+            bottom_surface: 2D DataArray (x, y) for the bottom boundary.
+            polygon: (N, 2) array of coordinates defining the horizontal extent.
+            priority: Integer priority for resolving overlaps.
+        """
+        surface_x = top_surface.x.values.astype(np.float32)
+        surface_y = top_surface.y.values.astype(np.float32)
+
+        z_top = top_surface.values.astype(np.float32)
+        z_bottom = bottom_surface.values.astype(np.float32)
+
+        q_sorted = quality_ds.sortby("z")
+        layer_params = np.stack(
+            [
+                q_sorted.z.values,
+                q_sorted.rho.values,
+                q_sorted.vp.values,
+                q_sorted.vs.values,
+                q_sorted.qp.values,
+                q_sorted.qs.values,
+            ],
+            axis=-1,
+        ).astype(np.float32)
+
+        internal_model = nzcvm.create_layer_model(
+            polygon.astype(np.float32),
+            surface_x,
+            surface_y,
+            z_top,
+            z_bottom,
+            layer_params,
+            priority,
+        )
+
+        return cls(internal_model)
 
     def __add__(self, other):
         """Allows stacking using the '+' operator: model = top + bottom"""
         if not isinstance(other, Model):
             raise TypeError("Can only stack with another Model")
-        stacked_raw = self._builder.stack(self._raw, other._raw)
+        stacked_raw = self._raw.stack(other._raw)
         return Model(stacked_raw)
 
     def query(self, x, y, z):

@@ -2,19 +2,20 @@ use crate::layers::LayerTree;
 use crate::mesh::MeshModel;
 use crate::quality::Quality;
 use nalgebra::Point3;
+use std::sync::Arc;
 
-pub enum ModelTree<'a> {
-    Stack(&'a ModelTree<'a>, &'a ModelTree<'a>),
-    Mesh { mesh_model: MeshModel<'a> },
-    Layers { layer_tree: LayerTree<'a> },
+pub enum ModelTree {
+    Stack(Arc<ModelTree>, Arc<ModelTree>),
+    Mesh { mesh_model: MeshModel },
+    Layers { layer_tree: LayerTree },
 }
 
-impl<'a> ModelTree<'a> {
-    pub fn layered_model(layer_tree: LayerTree<'a>) -> Self {
+impl ModelTree {
+    pub fn layered_model(layer_tree: LayerTree) -> Self {
         Self::Layers { layer_tree }
     }
 
-    pub fn mesh_model(mesh_model: MeshModel<'a>) -> Self {
+    pub fn mesh_model(mesh_model: MeshModel) -> Self {
         Self::Mesh { mesh_model }
     }
 

@@ -217,7 +217,7 @@ impl MeshModel {
     pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
         self.bvh_tree
             .nearest_to(point, &self.simplices)
-            .and_then(|(simplex, dist)| {
+            .map(|(simplex, dist)| {
                 let bary = simplex.barycentric_coordinates(point);
                 let vertex_indices = self.vertex_map[simplex.id];
                 let q0 = self.qualities[vertex_indices.w];
@@ -225,10 +225,10 @@ impl MeshModel {
                 let q2 = self.qualities[vertex_indices.y];
                 let q3 = self.qualities[vertex_indices.z];
                 let q = q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z;
-                Some((q, dist))
+                (q, dist)
             })
     }
-    pub fn pretty_print(&self) -> () {
+    pub fn pretty_print(&self) {
         fn max_depth(nodes: &[BvhNode<f32, 3>], node_index: usize) -> usize {
             match nodes[node_index] {
                 BvhNode::Node {

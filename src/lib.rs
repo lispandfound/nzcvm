@@ -168,12 +168,11 @@ mod nzcvm {
             std::fs::read_dir(directory).map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         for entry in paths.flatten() {
-            if entry.path().extension().map_or(false, |ext| ext == "h5") {
-                if let Ok((geo, mod_data)) = read_model_data(entry.path()) {
+            if entry.path().extension().is_some_and(|ext| ext == "h5")
+                && let Ok((geo, mod_data)) = read_model_data(entry.path()) {
                     basins.push(geo);
                     models.push(mod_data);
                 }
-            }
         }
 
         let layer_tree = LayerTree::new(basins, models);

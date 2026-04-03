@@ -469,7 +469,7 @@ impl GeoModelGrid {
                 surfaces.push(Surface {
                     resolution_horiz: ds.attr("resolution_horiz")?.read_scalar()?,
                     surface: ds.read()?,
-                    name: name,
+                    name,
                 });
             }
         }
@@ -486,7 +486,7 @@ impl GeoModelGrid {
                     resolution_vert: ds.attr("resolution_vert")?.read_scalar()?,
                     z_top: ds.attr("z_top")?.read_scalar()?,
                     block: ds.read()?,
-                    name: name,
+                    name,
                 });
             }
         }

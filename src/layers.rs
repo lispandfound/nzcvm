@@ -328,9 +328,9 @@ impl LayerTree {
         let bvh_tree = Bvh::build(&mut shapes);
 
         Self {
-            shapes: shapes,
-            bvh_tree: bvh_tree,
-            models: models,
+            shapes,
+            bvh_tree,
+            models,
         }
     }
 
@@ -361,7 +361,7 @@ impl LayerTree {
         self.models[shape.id].query(point)
     }
 
-    pub fn pretty_print(&self) -> () {
+    pub fn pretty_print(&self) {
         println!(
             "Disjoint layer models, having {} layers with structure:",
             self.models.len()

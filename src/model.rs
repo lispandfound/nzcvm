@@ -29,7 +29,7 @@ impl ModelTree {
             Self::Mesh { mesh_model } => mesh_model.query(point),
         }
     }
-    pub fn pretty_print(&self) -> () {
+    pub fn pretty_print(&self) {
         match self {
             Self::Stack(left, right) => {
                 println!("Stacked models, left:");

@@ -9,7 +9,6 @@ pub struct Quality {
     pub qs: f32,
 }
 
-// Enables: quality_a + quality_b
 impl Add for Quality {
     type Output = Self;
 
@@ -24,7 +23,6 @@ impl Add for Quality {
     }
 }
 
-// Enables: quality * 0.5
 impl Mul<f32> for Quality {
     type Output = Self;
 
@@ -39,7 +37,6 @@ impl Mul<f32> for Quality {
     }
 }
 
-// Optional: Enables 0.5 * quality (LHS multiplication)
 impl Mul<Quality> for f32 {
     type Output = Quality;
 

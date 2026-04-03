@@ -106,7 +106,6 @@ mod nzcvm {
             self.inner.pretty_print();
         }
 
-        /// Stacks two models: upper on top of lower
         pub fn stack(&self, other: &Self) -> Self {
             Self {
                 inner: Arc::new(ModelTree::Stack(self.inner.clone(), other.inner.clone())),
@@ -149,8 +148,6 @@ mod nzcvm {
     /// Loads a mesh model from HDF5
     #[pyfunction]
     pub fn load_mesh(path: &str) -> PyResult<PyModel> {
-        // We use 'unsafe' or transmute lifetimes here only because we are
-        // tying the lifetime of the MeshModel to the PyModel struct that owns the Vecs.
         let mesh = load_mesh_from_hdf5(path).map_err(|e| PyValueError::new_err(e.to_string()))?;
 
         Ok(PyModel {
@@ -189,7 +186,7 @@ mod nzcvm {
         surface_y_py: PyReadonlyArray1<f32>,
         z_top_py: PyReadonlyArray2<f32>,
         z_bottom_py: PyReadonlyArray2<f32>,
-        layer_params_py: PyReadonlyArray2<f32>, // [z, rho, vp, vs, qp, qs]
+        layer_params_py: PyReadonlyArray2<f32>,
         priority: usize,
     ) -> PyResult<PyModel> {
         let bounds_arr = bounds_py.as_array();

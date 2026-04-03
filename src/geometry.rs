@@ -1,4 +1,5 @@
 use nalgebra::Point3;
+
 #[inline(always)]
 fn line_to_point_dist_sq(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     let dx = x2 - x1;
@@ -51,9 +52,9 @@ pub fn polygon_distance_sq(point: Point3<f32>, coords: &[f32]) -> f32 {
     }
 
     if is_inside {
-        0.0 // Point is inside the polygon
+        0.0
     } else {
-        min_d2 // Point is outside, return squared distance
+        min_d2
     }
 }
 

@@ -22,7 +22,7 @@ pub struct Simplex {
     c0: Point2<f32>,
     c1: Point2<f32>,
     c2: Point2<f32>,
-    // Store the components of the inverse matrix directly
+    // Components of the inverse matrix
     // [ m00 m01 ]
     // [ m10 m11 ]
     inv_m: [f32; 4],
@@ -82,7 +82,6 @@ impl Simplex {
     }
 }
 
-// Implement required traits for BVH
 impl Bounded<f32, 2> for Simplex {
     fn aabb(&self) -> Aabb<f32, 2> {
         let min_x = self.c0.x.min(self.c1.x).min(self.c2.x);
@@ -117,9 +116,9 @@ impl PointDistance<f32, 2> for Simplex {
 pub struct Surface {
     pub bvh_tree: Bvh<f32, 2>,
     pub simplices: Vec<Simplex>,
-    // Maps simplex to vertex indices (x, y, z) in the elevation buffers
+    /// Maps simplex to vertex indices (x, y, z) in the elevation buffers
     pub vertex_map: Vec<Point3<usize>>,
-    // Elevation data stored at vertices
+    /// Elevation data stored at vertices
     pub elevations: Vec<SurfacePoint>,
 }
 
@@ -127,20 +126,16 @@ impl Surface {
     /// Queries the surface at a specific (x, y) coordinate.
     /// Returns (Top Elevation, Bottom Elevation, Inclusion Status)
     pub fn query(&self, point: Point2<f32>) -> Option<(f32, f32, Inclusion)> {
-        // 1. Use BVH to find the triangle containing (or nearest to) the point
         self.bvh_tree
             .nearest_to(point, &self.simplices)
             .map(|(simplex, _dist)| {
-                // 2. Calculate interpolation weights
                 let bary = simplex.barycentric_coordinates(point);
 
-                // 3. Get elevation values for the 3 vertices of this triangle
                 let indices = self.vertex_map[simplex.id];
                 let p0 = self.elevations[indices.x];
                 let p1 = self.elevations[indices.y];
                 let p2 = self.elevations[indices.z];
 
-                // 4. Perform barycentric interpolation
                 let top = p0.top * bary.x + p1.top * bary.y + p2.top * bary.z;
                 let bottom = p0.bottom * bary.x + p1.bottom * bary.y + p2.bottom * bary.z;
 
@@ -176,13 +171,10 @@ mod tests {
         )
     }
 
-    // --- Simplex Unit Tests ---
-
     #[test]
     fn test_simplex_barycentric_identity() {
         let simplex = mock_unit_simplex(0, Inclusion::Inside);
 
-        // Test vertices (Note: w2 is the weight for c2)
         let b0 = simplex.barycentric_coordinates(Point2::new(0.0, 0.0));
         let b1 = simplex.barycentric_coordinates(Point2::new(1.0, 0.0));
         let b2 = simplex.barycentric_coordinates(Point2::new(0.0, 1.0));
@@ -196,7 +188,6 @@ mod tests {
     fn test_simplex_centroid() {
         let simplex = mock_unit_simplex(0, Inclusion::Inside);
 
-        // Centroid of (0,0), (1,0), (0,1) is (1/3, 1/3)
         let p = Point2::new(1.0 / 3.0, 1.0 / 3.0);
         let bary = simplex.barycentric_coordinates(p);
 
@@ -210,10 +201,8 @@ mod tests {
     fn test_simplex_distance_squared() {
         let simplex = mock_unit_simplex(0, Inclusion::Inside);
 
-        // Inside point
         assert_eq!(simplex.distance_squared(Point2::new(0.2, 0.2)), 0.0);
 
-        // Outside point (1 unit left of x=0)
         let dist = simplex.distance_squared(Point2::new(-1.0, 0.2));
         assert!(dist > 0.0);
     }
@@ -232,8 +221,6 @@ mod tests {
         assert_eq!(aabb.min, Point2::new(-5.0, -3.0));
         assert_eq!(aabb.max, Point2::new(4.0, 10.0));
     }
-
-    // --- Surface Integration Tests ---
 
     #[test]
     fn test_surface_query_interpolation() {

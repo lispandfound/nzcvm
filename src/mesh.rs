@@ -16,8 +16,10 @@ struct Simplex {
     c2: Point3<f32>,
     c3: Point3<f32>,
 
-    // Pre-calculated inverse matrix for fast projection
+    /// Pre-calculated inverse matrix for fast projection
     inv_matrix: Matrix3<f32>,
+
+    /// Id to lookup qualities from qualities buffer
     id: usize,
     node_index: usize,
 }
@@ -61,16 +63,13 @@ impl PointDistance<f32, 3> for Simplex {
     fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
         let bary = self.barycentric_coordinates(query_point);
 
-        // 1. Inside check: All barycentric coords non-negative
         if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 && bary.w >= 0.0 {
             return 0.0;
         }
 
-        // 2. Outside: Min distance to faces with negative weights
         let mut min_dist_sq = f32::INFINITY;
 
         if bary.x < 0.0 {
-            // Face opposite c0: (c1, c2, c3)
             min_dist_sq = min_dist_sq.min(point_triangle_distance_sq(
                 query_point,
                 self.c1,
@@ -79,7 +78,6 @@ impl PointDistance<f32, 3> for Simplex {
             ));
         }
         if bary.y < 0.0 {
-            // Face opposite c1: (c0, c2, c3)
             min_dist_sq = min_dist_sq.min(point_triangle_distance_sq(
                 query_point,
                 self.c0,
@@ -88,7 +86,6 @@ impl PointDistance<f32, 3> for Simplex {
             ));
         }
         if bary.z < 0.0 {
-            // Face opposite c2: (c0, c1, c3)
             min_dist_sq = min_dist_sq.min(point_triangle_distance_sq(
                 query_point,
                 self.c0,
@@ -97,7 +94,6 @@ impl PointDistance<f32, 3> for Simplex {
             ));
         }
         if bary.w < 0.0 {
-            // Face opposite c3: (c0, c1, c2)
             min_dist_sq = min_dist_sq.min(point_triangle_distance_sq(
                 query_point,
                 self.c0,
@@ -252,7 +248,7 @@ impl MeshModel {
 
 pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Error> {
     let file = File::open(file_path)?;
-    // Read datasets as dynamic-dimensional arrays
+
     let ds_x = file.dataset("X_NZTM")?.read_dyn::<f64>()?;
     let ds_y = file.dataset("Y_NZTM")?.read_dyn::<f64>()?;
     let ds_z = file.dataset("Z_meters")?.read_dyn::<f64>()?;
@@ -269,7 +265,6 @@ pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Err
     let mut vertices_buf = Vec::with_capacity(nx * ny * nz);
     let mut qualities_buf = Vec::with_capacity(nx * ny * nz);
 
-    // Iterate through the 3D grid and flatten into our vectors
     for z in 0..nz {
         for y in 0..ny {
             for x in 0..nx {
@@ -292,7 +287,6 @@ pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Err
         }
     }
 
-    // Chart function to map 3D grid coords to the flat index in vertices_buf
     let chart = move |z: usize, y: usize, x: usize| -> usize { (z * ny * nx) + (y * nx) + x };
 
     Ok(MeshModel::curvilinear_mesh(
@@ -308,8 +302,6 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
     use nalgebra::{Point3, Point4};
-
-    // --- Helpers ---
 
     fn unit_tetrahedron_universe() -> Vec<Point3<f32>> {
         vec![
@@ -342,18 +334,12 @@ mod tests {
         vertices
     }
 
-    // --- Simplex Unit Tests ---
-
     #[test]
     fn test_simplex_barycentric_properties() {
         let v = unit_tetrahedron_universe();
-        // API Change: Pass points directly, no more universe index + reference
         let simplex = Simplex::new(v[0], v[1], v[2], v[3], 0);
 
-        let points_to_test = [
-            Point3::new(0.25, 0.25, 0.25), // Centroid
-            Point3::new(10.0, -5.0, 2.0),  // Far outside
-        ];
+        let points_to_test = [Point3::new(0.25, 0.25, 0.25), Point3::new(10.0, -5.0, 2.0)];
 
         for p in points_to_test.iter() {
             let bary = simplex.barycentric_coordinates(*p);
@@ -377,14 +363,12 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let simplex = Simplex::new(v[0], v[1], v[2], v[3], 0);
 
-        // Inside point
         assert_relative_eq!(
             simplex.distance_squared(Point3::new(0.1, 0.1, 0.1)),
             0.0,
             epsilon = 1e-5
         );
 
-        // Outside point: 2.0 units below the z=0 face. DistSq = 4.0
         let below_face = Point3::new(0.5, 0.5, -2.0);
         assert_relative_eq!(simplex.distance_squared(below_face), 4.0, epsilon = 1e-5);
     }
@@ -405,8 +389,6 @@ mod tests {
         assert_relative_eq!(aabb.max.z, 5.0);
     }
 
-    // --- MeshModel Integration Tests ---
-
     #[test]
     fn test_mesh_model_query_interpolation() {
         let ni = 2;
@@ -417,7 +399,6 @@ mod tests {
             .map(|idx| mock_quality(idx as f32))
             .collect();
 
-        // Assuming curvilinear_mesh now consumes the vectors
         let chart = |i, j, k| i + j * ni + k * ni * nj;
         let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart);
 
@@ -450,7 +431,7 @@ mod tests {
         assert_relative_eq!(dist_sq, 0.0, epsilon = 1e-5);
         assert_relative_eq!(q_in.rho, 7.4, epsilon = 1e-5);
 
-        // Exterior: Query (6,4,4) while Max is (4,4,4). Dist = 2.0, DistSq = 4.0
+        // Exterior: Query (6,4,4) while Max is (4,4,4). Dist = 2.0
         let p_out = Point3::new(6.0, 4.0, 4.0);
         let (q_out, dist_sq_out) = mesh.query(p_out).expect("Should extrapolate");
 

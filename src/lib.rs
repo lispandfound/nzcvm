@@ -23,7 +23,6 @@ mod nzcvm {
     use ordered_float::OrderedFloat;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
-    use scirs2_interpolate::interpnd::{ExtrapolateMode, InterpolationMethod};
     use std::collections::BTreeMap;
 
     use std::sync::Arc;
@@ -209,8 +208,6 @@ mod nzcvm {
             surface_y_py.as_array().to_owned(),
             z_top_py.as_array().to_owned(),
             z_bottom_py.as_array().to_owned(),
-            InterpolationMethod::Linear,
-            ExtrapolateMode::Nearest,
         );
         geometry.priority = priority;
 

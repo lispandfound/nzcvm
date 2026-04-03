@@ -12,8 +12,6 @@ use nzcvm::layers::{LayerGeometry, LayerTree, Model};
 use nzcvm::mesh::MeshModel;
 use nzcvm::model::ModelTree;
 use nzcvm::quality::Quality;
-use scirs2_interpolate::interpnd::InterpolationMethod;
-use scirs2_interpolate::ExtrapolateMode;
 
 fn mock_quality() -> Quality {
     Quality {
@@ -101,15 +99,7 @@ fn bench_layer_poly_complexity(c: &mut Criterion) {
 
     for v_count in [4, 16, 64, 256, 1024, 4096].iter() {
         let poly = generate_ngon(*v_count, 50.0, 50.0, 40.0);
-        let geom = LayerGeometry::new(
-            &poly,
-            x.clone(),
-            y.clone(),
-            z_t.clone(),
-            z_b.clone(),
-            InterpolationMethod::Linear,
-            ExtrapolateMode::Nearest,
-        );
+        let geom = LayerGeometry::new(&poly, x.clone(), y.clone(), z_t.clone(), z_b.clone());
         let mut layers = BTreeMap::new();
         layers.insert(OrderedFloat(0.0), mock_quality());
         let tree =
@@ -142,15 +132,7 @@ fn bench_layer_surface_complexity(c: &mut Criterion) {
             Array2::from_elem((*n, *n), 50.0),
         );
 
-        let geom = LayerGeometry::new(
-            &poly,
-            x,
-            y,
-            z_t,
-            z_b,
-            InterpolationMethod::Linear,
-            ExtrapolateMode::Nearest,
-        );
+        let geom = LayerGeometry::new(&poly, x, y, z_t, z_b);
         let mut layers = BTreeMap::new();
         layers.insert(OrderedFloat(0.0), mock_quality());
         let tree =

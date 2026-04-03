@@ -16,8 +16,6 @@ use hdf5_metno::{File, Group, Result};
 use nalgebra::{Point2, Point3};
 use ndarray::{Array1, Array2};
 use ordered_float::OrderedFloat;
-use scirs2_interpolate::interpnd::InterpolationMethod;
-use scirs2_interpolate::ExtrapolateMode;
 use std::collections::BTreeMap;
 use std::iter::once;
 use std::path::Path;
@@ -46,15 +44,7 @@ impl LayerGeometry {
         let z_top_array = Array2::from_elem((2, 2), z_top);
         let z_bottom_array = Array2::from_elem((2, 2), z_bottom);
 
-        LayerGeometry::new(
-            bounds,
-            x,
-            y,
-            z_top_array,
-            z_bottom_array,
-            InterpolationMethod::Nearest,
-            ExtrapolateMode::Nearest,
-        )
+        LayerGeometry::new(bounds, x, y, z_top_array, z_bottom_array)
     }
 
     pub fn new(
@@ -63,9 +53,6 @@ impl LayerGeometry {
         surface_y: Array1<f32>,
         surface_z_top: Array2<f32>,
         surface_z_bottom: Array2<f32>,
-        // Note: interpolation method ignored as we are now strictly Linear (Barycentric)
-        _method: InterpolationMethod,
-        _extrapolate: ExtrapolateMode,
     ) -> Self {
         let nx = surface_x.len();
         let ny = surface_y.len();
@@ -243,15 +230,7 @@ pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
     let y: Array1<f32> = group.dataset("surface_y")?.read_1d()?;
     let z_top: Array2<f32> = group.dataset("surface_z_top")?.read_2d()?;
     let z_bottom: Array2<f32> = group.dataset("surface_z_bottom")?.read_2d()?;
-    let mut geometry = LayerGeometry::new(
-        &bounds,
-        x,
-        y,
-        z_top,
-        z_bottom,
-        InterpolationMethod::Linear,
-        ExtrapolateMode::Nearest,
-    );
+    let mut geometry = LayerGeometry::new(&bounds, x, y, z_top, z_bottom);
     geometry.priority = priority;
     Ok(geometry)
 }
@@ -541,15 +520,7 @@ mod tests {
         let z_top = ndarray::array![[0.0, 0.0], [10.0, 10.0]];
         let z_bottom = ndarray::Array2::from_elem((2, 2), 20.0);
 
-        let prism = LayerGeometry::new(
-            &poly,
-            x,
-            y,
-            z_top,
-            z_bottom,
-            scirs2_interpolate::interpnd::InterpolationMethod::Linear,
-            scirs2_interpolate::ExtrapolateMode::Nearest,
-        );
+        let prism = LayerGeometry::new(&poly, x, y, z_top, z_bottom);
 
         // Test vertical distance above the slope (at x=0, z_top=0)
         let p_start = Point3::new(0.0, 0.0, -5.0);

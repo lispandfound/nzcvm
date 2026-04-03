@@ -191,3 +191,5 @@ Cargo.lock
 # End of https://www.toptal.com/developers/gitignore/api/python,rust
 
 /hdf5/
+/.envrc
+*.h5

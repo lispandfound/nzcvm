@@ -10,11 +10,11 @@ use hdf5_metno::File;
 use nalgebra::{Matrix3, Point3, Point4};
 
 #[derive(Debug)]
-pub struct Simplex {
-    pub c0: Point3<f32>,
-    pub c1: Point3<f32>,
-    pub c2: Point3<f32>,
-    pub c3: Point3<f32>,
+struct Simplex {
+    c0: Point3<f32>,
+    c1: Point3<f32>,
+    c2: Point3<f32>,
+    c3: Point3<f32>,
 
     // Pre-calculated inverse matrix for fast projection
     inv_matrix: Matrix3<f32>,

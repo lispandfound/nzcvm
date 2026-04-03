@@ -1,19 +1,22 @@
 use crate::geometry::polygon_distance_sq;
 use crate::quality::Quality;
+use crate::surface::{Inclusion, Simplex, Surface, SurfacePoint};
 use crate::tree_query::nearest_to_point_iterator;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
+use geo::Contains;
+use geo::Intersects;
 use geo::{Coord, Geometry, MapCoords, Polygon};
 use geozero::wkb::Wkb;
 use geozero::ToGeo;
 use hdf5_metno::types::VarLenUnicode;
 use hdf5_metno::{File, Group, Result};
-use nalgebra::Point3;
-use ndarray::{array, Array1, Array2};
+use nalgebra::{Point2, Point3};
+use ndarray::{Array1, Array2};
 use ordered_float::OrderedFloat;
-use scirs2_interpolate::interpnd::{InterpolationMethod, RegularGridInterpolator};
+use scirs2_interpolate::interpnd::InterpolationMethod;
 use scirs2_interpolate::ExtrapolateMode;
 use std::collections::BTreeMap;
 use std::iter::once;
@@ -22,15 +25,13 @@ use std::path::Path;
 #[derive(Debug)]
 pub struct LayerGeometry {
     pub id: usize,
-    pub top_surface: RegularGridInterpolator<f32>,
-    pub bottom_surface: RegularGridInterpolator<f32>,
     pub priority: usize,
+    /// The new unified surface containing Top, Bottom, and Inclusion metadata
+    pub surface: Surface,
 
-    /// Internal representation of the model boundary as an interleaved array of x-y points.
-    bounds: Array1<f32>,
-    /// Absolute top value of the surface
+    /// Still kept for the final precise distance check for Boundary/Outside cases
+    bounds: Vec<f32>,
     z_abs_top: f32,
-    /// Absolute bottom value of the surface
     z_abs_bottom: f32,
     node_index: usize,
 }
@@ -44,6 +45,7 @@ impl LayerGeometry {
         let y = Array1::from(vec![0.0, 1.0]);
         let z_top_array = Array2::from_elem((2, 2), z_top);
         let z_bottom_array = Array2::from_elem((2, 2), z_bottom);
+
         LayerGeometry::new(
             bounds,
             x,
@@ -56,83 +58,136 @@ impl LayerGeometry {
     }
 
     pub fn new(
-        bounds: &Polygon<f32>, // Still take the geo Polygon as input
+        bounds: &Polygon<f32>,
         surface_x: Array1<f32>,
         surface_y: Array1<f32>,
         surface_z_top: Array2<f32>,
         surface_z_bottom: Array2<f32>,
-        surface_interpolation_method: InterpolationMethod,
-        surface_extrapolation_mode: ExtrapolateMode,
+        // Note: interpolation method ignored as we are now strictly Linear (Barycentric)
+        _method: InterpolationMethod,
+        _extrapolate: ExtrapolateMode,
     ) -> Self {
+        let nx = surface_x.len();
+        let ny = surface_y.len();
+
+        // 1. Create SurfacePoints (Elevations)
+        let mut elevations = Vec::with_capacity(nx * ny);
+        for j in 0..ny {
+            for i in 0..nx {
+                elevations.push(SurfacePoint {
+                    top: surface_z_top[[j, i]],
+                    bottom: surface_z_bottom[[j, i]],
+                });
+            }
+        }
+
+        // 2. Generate Triangles from the rectilinear grid
+        let mut simplices = Vec::new();
+        let mut vertex_map = Vec::new();
+        let mut simplex_id = 0;
+
+        for j in 0..ny - 1 {
+            for i in 0..nx - 1 {
+                let i00 = j * nx + i;
+                let i10 = j * nx + (i + 1);
+                let i01 = (j + 1) * nx + i;
+                let i11 = (j + 1) * nx + (i + 1);
+
+                let coords = [
+                    Point2::new(surface_x[i], surface_y[j]),         // 0,0
+                    Point2::new(surface_x[i + 1], surface_y[j]),     // 1,0
+                    Point2::new(surface_x[i + 1], surface_y[j + 1]), // 1,1
+                    Point2::new(surface_x[i], surface_y[j + 1]),     // 0,1
+                ];
+
+                // Split each grid cell into 2 triangles
+                let tri_indices = [[i00, i10, i11], [i00, i11, i01]];
+                let tri_coords = [
+                    [coords[0], coords[1], coords[2]],
+                    [coords[0], coords[2], coords[3]],
+                ];
+
+                for (idx, pts) in tri_indices.iter().zip(tri_coords.iter()) {
+                    // Create a geo-polygon for this triangle to check against the bounds
+                    let tri_poly = Polygon::new(
+                        geo::LineString::from(vec![
+                            (pts[0].x, pts[0].y),
+                            (pts[1].x, pts[1].y),
+                            (pts[2].x, pts[2].y),
+                            (pts[0].x, pts[0].y),
+                        ]),
+                        vec![],
+                    );
+
+                    let mask = if bounds.contains(&tri_poly) {
+                        Inclusion::Inside
+                    } else if bounds.intersects(&tri_poly) {
+                        Inclusion::Boundary
+                    } else {
+                        Inclusion::Outside
+                    };
+
+                    simplices.push(Simplex::new(pts[0], pts[1], pts[2], mask, simplex_id));
+                    vertex_map.push(Point3::new(idx[0], idx[1], idx[2]));
+                    simplex_id += 1;
+                }
+            }
+        }
+
+        let bvh_tree = Bvh::build(&mut simplices);
+        let surface = Surface {
+            bvh_tree,
+            simplices,
+            vertex_map,
+            elevations,
+        };
+
+        // Flat bounds for distance calculation fallback
         let exterior = bounds.exterior();
         let mut flat_coords = Vec::with_capacity(exterior.0.len() * 2);
         for p in exterior.points() {
             flat_coords.push(p.x());
             flat_coords.push(p.y());
         }
-        let bounds_array = Array1::from(flat_coords);
-
-        let z_top = *surface_z_top.iter().min_by(|x, y| x.total_cmp(y)).unwrap();
-        let z_bottom = *surface_z_bottom
-            .iter()
-            .max_by(|x, y| x.total_cmp(y))
-            .unwrap();
-
-        let rect_points = vec![surface_x, surface_y];
-        let top_surface = RegularGridInterpolator::new(
-            rect_points.clone(),
-            surface_z_top.into_dyn(),
-            surface_interpolation_method,
-            surface_extrapolation_mode,
-        )
-        .unwrap();
-
-        let bottom_surface = RegularGridInterpolator::new(
-            rect_points,
-            surface_z_bottom.into_dyn(),
-            surface_interpolation_method,
-            surface_extrapolation_mode,
-        )
-        .unwrap();
 
         LayerGeometry {
-            bounds: bounds_array, // Stored as flat Array1<f32>
-            top_surface,
-            bottom_surface,
-            z_abs_top: z_top,
-            z_abs_bottom: z_bottom,
             id: 0,
-            node_index: 0,
             priority: 0,
+            surface,
+            bounds: flat_coords,
+            z_abs_top: *surface_z_top.iter().min_by(|a, b| a.total_cmp(b)).unwrap(),
+            z_abs_bottom: *surface_z_bottom
+                .iter()
+                .max_by(|a, b| a.total_cmp(b))
+                .unwrap(),
+            node_index: 0,
         }
     }
 }
 
 impl PointDistance<f32, 3> for LayerGeometry {
     fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
-        // 1. Surface Interpolation (as before)
-        let query_array = array![[query_point.x, query_point.y]];
-        let query_view = query_array.view();
-        let z_top_res = self.top_surface.__call__(&query_view);
-        let z_bottom_res = self.bottom_surface.__call__(&query_view);
-
-        let z_projected = match (z_top_res, z_bottom_res) {
-            (Ok(z_top), Ok(z_bottom)) => query_point.z.clamp(z_top[0], z_bottom[0]),
-            _ => query_point.z,
+        let (z_top, z_bottom, inclusion) = match self.surface.query(query_point.xy()) {
+            Some(res) => res,
+            None => return f32::INFINITY,
         };
 
-        let dz_sq = (query_point.z - z_projected).powi(2);
+        let z_clamped = query_point.z.clamp(z_top, z_bottom);
+        let dz_sq = (query_point.z - z_clamped).powi(2);
 
-        let coords_slice = self.bounds.as_slice().unwrap();
-        let dxdy_sq = polygon_distance_sq(query_point, coords_slice);
-
+        let dxdy_sq = match inclusion {
+            Inclusion::Inside => 0.0, // Guaranteed inside, skip O(N) check
+            Inclusion::Boundary | Inclusion::Outside => {
+                polygon_distance_sq(query_point, &self.bounds)
+            }
+        };
         dz_sq + dxdy_sq
     }
 }
 
 impl Bounded<f32, 3> for LayerGeometry {
     fn aabb(&self) -> Aabb<f32, 3> {
-        let coords = self.bounds.as_slice().unwrap();
+        let coords = self.bounds.as_slice();
 
         let mut min_x = f32::MAX;
         let mut max_x = f32::MIN;
@@ -426,14 +481,13 @@ mod tests {
         let tree = LayerTree::new(prisms, models);
 
         // Point is 9 units away from the X=1.0 face.
-        // distance_squared = 9^2 = 81.0
         let far_point = Point3::new(10.0, 0.5, 5.0);
-        let (q, dist_sq) = tree
+        let (q, dist) = tree
             .query(far_point)
-            .expect("Should return nearest neighbor");
+            .expect("Should return nearest neighbour");
 
         assert_eq!(q.rho, 1.0);
-        assert_abs_diff_eq!(dist_sq, 9.0, epsilon = 1e-5);
+        assert_abs_diff_eq!(dist, 9.0, epsilon = 1e-5);
     }
 
     #[test]

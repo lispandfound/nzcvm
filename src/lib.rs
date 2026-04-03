@@ -5,6 +5,7 @@ pub mod mesh;
 pub mod model;
 pub mod quality;
 pub mod rfile;
+pub mod surface;
 pub mod tree_query;
 use pyo3::prelude::*;
 

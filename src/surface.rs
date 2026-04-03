@@ -240,14 +240,14 @@ mod tests {
         // Create two triangles forming a square from (0,0) to (1,1)
         // T0: (0,0), (1,0), (1,1)
         // T1: (0,0), (1,1), (0,1)
-        let mut s0 = Simplex::new(
+        let s0 = Simplex::new(
             Point2::new(0.0, 0.0),
             Point2::new(1.0, 0.0),
             Point2::new(1.0, 1.0),
             Inclusion::Inside,
             0,
         );
-        let mut s1 = Simplex::new(
+        let s1 = Simplex::new(
             Point2::new(0.0, 0.0),
             Point2::new(1.0, 1.0),
             Point2::new(0.1, 1.0),

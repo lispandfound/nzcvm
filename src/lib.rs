@@ -4,9 +4,11 @@ pub mod layers;
 pub mod mesh;
 pub mod model;
 pub mod quality;
-pub mod rfile;
 pub mod surface;
 pub mod tree_query;
+pub mod writer;
+pub mod coordinates;
+pub mod generate;
 use pyo3::prelude::*;
 
 #[pymodule]
@@ -15,6 +17,7 @@ mod nzcvm {
     use crate::mesh::{load_mesh_from_hdf5, MeshModel};
     use crate::model::ModelTree;
     use crate::quality::Quality;
+    use bvh::aabb::Bounded;
     use geo::{Coord, LineString, Polygon};
     use nalgebra::Point3;
     use ndarray::Array2;
@@ -23,6 +26,7 @@ mod nzcvm {
     use ordered_float::OrderedFloat;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
+    use pyo3::types::PyDict;
     use std::collections::BTreeMap;
 
     use std::sync::Arc;
@@ -111,6 +115,39 @@ mod nzcvm {
                 inner: Arc::new(ModelTree::Stack(self.inner.clone(), other.inner.clone())),
             }
         }
+
+        fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
+            fn aux<'py>(py: Python<'py>, model_tree: &ModelTree) -> PyResult<Bound<'py, PyDict>> {
+                let dict = PyDict::new(py);
+
+                match model_tree {
+                    ModelTree::Stack(left, right) => {
+                        dict.set_item("type", "stack")?;
+                        dict.set_item("left", aux(py, left)?)?;
+                        dict.set_item("right", aux(py, right)?)?;
+                        Ok(dict)
+                    },
+                    ModelTree::Layers {layer_tree} => {
+                        dict.set_item("type", "layered_models")?;
+                        let aabb_tuples: Vec<(f32, f32, f32, f32, f32, f32)> = layer_tree.bounds().iter().map(|aabb| (aabb.min.x, aabb.min.y, aabb.min.z, aabb.max.x, aabb.max.y, aabb.max.z)).collect();
+                        let priorities = layer_tree.priorities();
+                        dict.set_item("bounds", aabb_tuples)?;
+                        dict.set_item("priorities", priorities)?;
+                        Ok(dict)
+                    },
+                    ModelTree::Mesh {mesh_model} => {
+                        let aabb = mesh_model.aabb();
+                        let aabb_tuple = (aabb.min.x, aabb.min.y, aabb.min.z, aabb.max.x, aabb.max.y, aabb.max.z);
+                        dict.set_item("type", "mesh")?;
+                        dict.set_item("bounds", aabb_tuple)?;
+                        dict.set_item("points", mesh_model.points())?;
+                        Ok(dict)
+                    }
+
+                }
+            }
+            aux(py, &self.inner)
+        }
     }
 
     #[pyfunction]
@@ -182,8 +219,8 @@ mod nzcvm {
     #[pyfunction]
     pub fn create_layer_model(
         bounds_py: PyReadonlyArray2<f32>,
-        surface_x_py: PyReadonlyArray1<f32>,
-        surface_y_py: PyReadonlyArray1<f32>,
+        surface_x_py: PyReadonlyArray2<f32>,
+        surface_y_py: PyReadonlyArray2<f32>,
         z_top_py: PyReadonlyArray2<f32>,
         z_bottom_py: PyReadonlyArray2<f32>,
         layer_params_py: PyReadonlyArray2<f32>,

@@ -1,3 +1,4 @@
+use ndarray::Array1;
 use std::ops::{Add, Mul};
 
 #[derive(Clone, Debug, Copy)]
@@ -7,6 +8,12 @@ pub struct Quality {
     pub vs: f32,
     pub qp: f32,
     pub qs: f32,
+}
+
+impl Into<Array1<f32>> for Quality {
+    fn into(self) -> Array1<f32> {
+        Array1::from_iter([self.rho, self.vp, self.vs, self.qp, self.qs].into_iter())
+    }
 }
 
 impl Add for Quality {

@@ -137,8 +137,8 @@ impl Surface {
                 let p2 = self.elevations[indices.z];
 
                 let top = p0.top * bary.x + p1.top * bary.y + p2.top * bary.z;
-                let bottom = p0.bottom * bary.x + p1.bottom * bary.y + p2.bottom * bary.z;
-
+                let bottom =
+                    (p0.bottom * bary.x + p1.bottom * bary.y + p2.bottom * bary.z).max(top);
                 // If barycentric coordinates indicate that we are
                 // inside the simplex, we can use the simplex mask,
                 // otherwise we don't know anything (so we default to

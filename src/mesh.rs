@@ -138,6 +138,7 @@ pub struct MeshModel {
     simplices: Vec<Simplex>,
     vertex_map: Vec<Point4<usize>>,
     qualities: Vec<Quality>,
+    aabb: Aabb<f32, 3>,
 }
 
 impl MeshModel {
@@ -183,10 +184,24 @@ impl MeshModel {
                 }
             }
         }
+
         Self::new(vertices, faces, qualities)
     }
 
     fn new(vertices: Vec<Point3<f32>>, faces: Vec<Point4<usize>>, qualities: Vec<Quality>) -> Self {
+        let min_point = vertices
+            .iter()
+            .fold(Point3::new(f32::MAX, f32::MAX, f32::MAX), |acc, p| {
+                Point3::new(acc.x.min(p.x), acc.y.min(p.y), acc.z.min(p.z))
+            });
+
+        let max_point = vertices
+            .iter()
+            .fold(Point3::new(f32::MIN, f32::MIN, f32::MIN), |acc, p| {
+                Point3::new(acc.x.max(p.x), acc.y.max(p.y), acc.z.max(p.z))
+            });
+        let aabb = Aabb::with_bounds(min_point, max_point);
+
         let mut simplices: Vec<Simplex> = faces
             .iter()
             .enumerate()
@@ -206,8 +221,13 @@ impl MeshModel {
             bvh_tree,
             simplices,
             qualities,
+            aabb,
             vertex_map: faces,
         }
+    }
+
+    pub fn points(&self) -> usize {
+        self.qualities.len()
     }
 
     pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
@@ -224,6 +244,7 @@ impl MeshModel {
                 (q, dist)
             })
     }
+
     pub fn pretty_print(&self) {
         fn max_depth(nodes: &[BvhNode<f32, 3>], node_index: usize) -> usize {
             match nodes[node_index] {
@@ -243,6 +264,12 @@ impl MeshModel {
             self.simplices.len(),
             depth
         )
+    }
+}
+
+impl Bounded<f32, 3> for MeshModel {
+    fn aabb(&self) -> Aabb<f32, 3> {
+        self.aabb
     }
 }
 

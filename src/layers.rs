@@ -6,15 +6,14 @@ use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
-use geo::Contains;
-use geo::Intersects;
+use geo::{coord, PreparedGeometry, Relate, Triangle};
 use geo::{Coord, Geometry, MapCoords, Polygon};
 use geozero::wkb::Wkb;
 use geozero::ToGeo;
 use hdf5_metno::types::VarLenUnicode;
 use hdf5_metno::{File, Group, Result};
 use nalgebra::{Point2, Point3};
-use ndarray::{Array1, Array2};
+use ndarray::{array, Array2};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 use std::iter::once;
@@ -39,8 +38,8 @@ impl LayerGeometry {
         // Due to extrapolation, we can treat the "interpolation" onto a flat
         // surface at the top and bottom using nearest-neighbour interpolation
         // with just four points.
-        let x = Array1::from(vec![0.0, 1.0]);
-        let y = Array1::from(vec![0.0, 1.0]);
+        let x = array!([0.0, 1.0], [0.0, 1.0]);
+        let y = array!([0.0, 0.0], [1.0, 1.0]);
         let z_top_array = Array2::from_elem((2, 2), z_top);
         let z_bottom_array = Array2::from_elem((2, 2), z_bottom);
 
@@ -49,21 +48,21 @@ impl LayerGeometry {
 
     pub fn new(
         bounds: &Polygon<f32>,
-        surface_x: Array1<f32>,
-        surface_y: Array1<f32>,
+        surface_x: Array2<f32>,
+        surface_y: Array2<f32>,
         surface_z_top: Array2<f32>,
         surface_z_bottom: Array2<f32>,
     ) -> Self {
-        let nx = surface_x.len();
-        let ny = surface_y.len();
+        let (nx, ny) = surface_x.dim();
 
         // 1. Create SurfacePoints (Elevations)
-        let mut elevations = Vec::with_capacity(nx * ny);
-        for j in 0..ny {
-            for i in 0..nx {
+        let mut elevations = Vec::with_capacity(surface_x.len());
+
+        for i in 0..nx {
+            for j in 0..ny {
                 elevations.push(SurfacePoint {
-                    top: surface_z_top[[j, i]],
-                    bottom: surface_z_bottom[[j, i]],
+                    top: surface_z_top[[i, j]],
+                    bottom: surface_z_bottom[[i, j]],
                 });
             }
         }
@@ -71,50 +70,48 @@ impl LayerGeometry {
         // 2. Generate Triangles from the rectilinear grid
         let mut simplices = Vec::new();
         let mut vertex_map = Vec::new();
+
         let mut simplex_id = 0;
+        let prepared_geom = PreparedGeometry::from(bounds);
 
-        for j in 0..ny - 1 {
-            for i in 0..nx - 1 {
-                let i00 = j * nx + i;
-                let i10 = j * nx + (i + 1);
-                let i01 = (j + 1) * nx + i;
-                let i11 = (j + 1) * nx + (i + 1);
-
+        for i in 0..nx - 1 {
+            for j in 0..ny - 1 {
                 let coords = [
-                    Point2::new(surface_x[i], surface_y[j]),         // 0,0
-                    Point2::new(surface_x[i + 1], surface_y[j]),     // 1,0
-                    Point2::new(surface_x[i + 1], surface_y[j + 1]), // 1,1
-                    Point2::new(surface_x[i], surface_y[j + 1]),     // 0,1
+                    coord!(x: surface_x[[i, j]], y: surface_y[[i, j]]), // 0,0
+                    coord!(x: surface_x[[i + 1, j]], y: surface_y[[i + 1, j]]), // 1,0
+                    coord!(x: surface_x[[i + 1, j + 1]], y: surface_y[[i + 1, j + 1]]), // 1,1
+                    coord!(x: surface_x[[i, j + 1]], y: surface_y[[i, j + 1]]), // 0,1
                 ];
 
                 // Split each grid cell into 2 triangles
-                let tri_indices = [[i00, i10, i11], [i00, i11, i01]];
-                let tri_coords = [
-                    [coords[0], coords[1], coords[2]],
-                    [coords[0], coords[2], coords[3]],
-                ];
+                let tri1 = Triangle::new(coords[0], coords[1], coords[2]);
+                let tri2 = Triangle::new(coords[0], coords[2], coords[3]);
+                let triangles = [tri1, tri2];
 
-                for (idx, pts) in tri_indices.iter().zip(tri_coords.iter()) {
-                    // Create a geo-polygon for this triangle to check against the bounds
-                    let tri_poly = Polygon::new(
-                        geo::LineString::from(vec![
-                            (pts[0].x, pts[0].y),
-                            (pts[1].x, pts[1].y),
-                            (pts[2].x, pts[2].y),
-                            (pts[0].x, pts[0].y),
-                        ]),
-                        vec![],
-                    );
+                // Map 2D indices to flat array indices for the quad corners
+                let idx_v0 = i * ny + j;
+                let idx_v1 = (i + 1) * ny + j;
+                let idx_v2 = (i + 1) * ny + j + 1;
+                let idx_v3 = i * ny + j + 1;
 
-                    let mask = if bounds.contains(&tri_poly) {
+                let indices = [[idx_v0, idx_v1, idx_v2], [idx_v0, idx_v2, idx_v3]];
+
+                for (idx, tri) in indices.iter().zip(triangles.iter()) {
+                    let mask = if prepared_geom.relate(&tri1).is_contains() {
                         Inclusion::Inside
-                    } else if bounds.intersects(&tri_poly) {
-                        Inclusion::Boundary
                     } else {
-                        Inclusion::Outside
+                        Inclusion::Boundary
                     };
+                    let coords = tri.to_array();
+                    let points: [Point2<f32>; 3] = [
+                        Point2::new(coords[0].x, coords[0].y),
+                        Point2::new(coords[1].x, coords[1].y),
+                        Point2::new(coords[2].x, coords[2].y),
+                    ];
 
-                    simplices.push(Simplex::new(pts[0], pts[1], pts[2], mask, simplex_id));
+                    simplices.push(Simplex::new(
+                        points[0], points[1], points[2], mask, simplex_id,
+                    ));
                     vertex_map.push(Point3::new(idx[0], idx[1], idx[2]));
                     simplex_id += 1;
                 }
@@ -226,8 +223,8 @@ pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
         _ => return Err("Bounds dataset is not a polygon".into()),
     };
 
-    let x: Array1<f32> = group.dataset("surface_x")?.read_1d()?;
-    let y: Array1<f32> = group.dataset("surface_y")?.read_1d()?;
+    let x: Array2<f32> = group.dataset("surface_x")?.read_2d()?;
+    let y: Array2<f32> = group.dataset("surface_y")?.read_2d()?;
     let z_top: Array2<f32> = group.dataset("surface_z_top")?.read_2d()?;
     let z_bottom: Array2<f32> = group.dataset("surface_z_bottom")?.read_2d()?;
     let mut geometry = LayerGeometry::new(&bounds, x, y, z_top, z_bottom);
@@ -308,7 +305,8 @@ impl Model {
             Self::Layered { layers } => layers
                 .range(..=OrderedFloat(point.z))
                 .next_back()
-                .map(|(_, &q)| q),
+                .map(|(_, &q)| q)
+                .or(layers.first_key_value().map(|(_, &q)| q)),
         }
     }
 }
@@ -357,8 +355,23 @@ impl LayerTree {
         })
     }
 
+    pub fn priorities(&self) -> Vec<usize> {
+        self.shapes.iter().map(|shape| shape.priority).collect()
+    }
+
+    pub fn bounds(&self) -> Vec<Aabb<f32, 3>> {
+        self.shapes.iter().map(|shape| shape.aabb()).collect()
+    }
+
     fn model_query_for(&self, shape: &LayerGeometry, point: Point3<f32>) -> Option<Quality> {
-        self.models[shape.id].query(point)
+        let z_top = shape
+            .surface
+            .query(point.xy())
+            .map(|(z_top, _, _)| z_top)
+            .unwrap_or(0.0);
+        let mut projected_point = point;
+        projected_point.z -= z_top;
+        self.models[shape.id].query(projected_point)
     }
 
     pub fn pretty_print(&self) {
@@ -513,12 +526,12 @@ mod tests {
     #[test]
     fn test_sloped_surface_distance() {
         let poly = polygon![(x: 0.0, y: 0.0), (x: 2.0, y: 0.0), (x: 2.0, y: 2.0), (x: 0.0, y: 2.0)];
-        let x = ndarray::Array1::from(vec![0.0, 2.0]);
-        let y = ndarray::Array1::from(vec![0.0, 2.0]);
+        let x = array!([0.0, 2.0], [2.0, 0.0]);
+        let y = array!([0.0, 0.0], [2.0, 2.0]);
 
         // Top surface slopes from z=0 at x=0 to z=10 at x=2
-        let z_top = ndarray::array![[0.0, 0.0], [10.0, 10.0]];
-        let z_bottom = ndarray::Array2::from_elem((2, 2), 20.0);
+        let z_top = array![[0.0, 0.0], [10.0, 10.0]];
+        let z_bottom = Array2::from_elem((2, 2), 20.0);
 
         let prism = LayerGeometry::new(&poly, x, y, z_top, z_bottom);
 
@@ -529,5 +542,27 @@ mod tests {
         // Test point inside the sloped volume (at x=1.0, interpolated z_top is 5.0)
         let p_mid = Point3::new(1.0, 1.0, 7.0);
         assert_eq!(prism.distance_squared(p_mid), 0.0);
+    }
+
+    #[test]
+    fn test_mesh_grid_to_simplex_indexing() {
+        // Creates a 2x2 grid (nx=2, ny=2) consisting of 1 quad, divided into 2 triangles.
+        let poly = polygon![(x: 0.0, y: 0.0), (x: 1.0, y: 0.0), (x: 1.0, y: 1.0), (x: 0.0, y: 1.0)];
+        let x = array![[0.0, 0.0], [1.0, 1.0]];
+        let y = array![[0.0, 1.0], [0.0, 1.0]];
+        let z_top = array![[0.0, 0.0], [0.0, 0.0]];
+        let z_bottom = array![[1.0, 1.0], [1.0, 1.0]];
+
+        let layer = LayerGeometry::new(&poly, x, y, z_top, z_bottom);
+
+        assert_eq!(layer.surface.simplices.len(), 2);
+
+        // Assert the first triangle correctly targets the flat 1D coordinates of [0,0], [1,0], and [1,1]
+        let t1_verts = layer.surface.vertex_map[0];
+        assert_eq!(t1_verts, Point3::new(0, 2, 3));
+
+        // Assert the second triangle correctly targets [0,0], [1,1], and [0,1]
+        let t2_verts = layer.surface.vertex_map[1];
+        assert_eq!(t2_verts, Point3::new(0, 3, 1));
     }
 }

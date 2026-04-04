@@ -1,7 +1,10 @@
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict
 
 import numpy as np
+import printree
+import shapely
 import xarray as xr
 import xoak
 
@@ -70,7 +73,7 @@ class Model:
 
     @classmethod
     def from_layers(cls, directory: Path | str):
-        raw = nzcvm._layers_from_dir(str(directory))
+        raw = nzcvm.load_layers_from_dir(str(directory))
         return Model(raw)
 
     @classmethod
@@ -177,3 +180,47 @@ class Model:
 
     def inspect(self):
         self._raw.print_structure()
+
+    def __repr__(self) -> str:
+        dict_repr: ModelTreeDict = self._raw.to_dict()
+
+        def aux(root):
+            match root["type"]:
+                case "stack":
+                    return {
+                        "Stacked models": {
+                            "left": aux(root["left"]),
+                            "right": aux(root["right"]),
+                        }
+                    }
+                case "layered_models":
+                    return {
+                        "Layered models": [
+                            {
+                                "bounds": shapely.box(min_x, min_y, max_x, max_y),
+                                "z_top": min_z,
+                                "z_bottom": max_z,
+                                "priority": priority,
+                            }
+                            for (
+                                min_x,
+                                min_y,
+                                min_z,
+                                max_x,
+                                max_y,
+                                max_z,
+                            ), priority in zip(root["bounds"], root["priorities"])
+                        ]
+                    }
+                case "mesh":
+                    (min_x, min_y, min_z, max_x, max_y, max_z) = root["bounds"]
+                    return {
+                        "Mesh Model": {
+                            "bounds": shapely.box(min_x, min_y, max_x, max_y),
+                            "z_top": min_z,
+                            "z_bottom": max_z,
+                            "points": root["points"],
+                        }
+                    }
+
+        return printree.ftree(aux(dict_repr))

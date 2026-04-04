@@ -1,7 +1,7 @@
 use hdf5_metno::types::{FixedAscii, FixedUnicode};
 use hdf5_metno::{
-    Attribute, Error, File, Group, Result, types::TypeDescriptor, types::VarLenAscii,
-    types::VarLenUnicode,
+    types::TypeDescriptor, types::VarLenAscii, types::VarLenUnicode, Attribute, Error, File, Group,
+    Result,
 };
 use ndarray::{Array2, Array4};
 use std::{path::PathBuf, str::FromStr};
@@ -67,18 +67,38 @@ pub struct ModelMetadata {
 
 pub type Dimensions = (usize, usize, usize, usize);
 
+#[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub resolution_horiz: f32,
     pub resolution_vert: f32,
     pub z_top: f32,
-    pub block: Array4<f32>,
+    pub shape: Dimensions,
     pub name: String,
 }
 
+impl Block {
+    pub fn components(&self) -> usize {
+        let (_, _, _, nc) = self.shape;
+        nc
+    }
+
+    pub fn size(&self) -> usize {
+        let (nx, ny, nz, nc) = self.shape;
+        nx * ny * nz * nc * size_of::<f32>()
+    }
+}
+
 pub struct Surface {
-    pub surface: Array2<f32>,
+    pub shape: (usize, usize),
     pub resolution_horiz: f32,
     pub name: String,
+}
+
+impl Surface {
+    pub fn size(&self) -> usize {
+        let (nx, ny) = self.shape;
+        nx * ny * size_of::<f32>()
+    }
 }
 
 pub struct GeoModelGrid {
@@ -297,206 +317,6 @@ impl GeoModelGrid {
     pub fn builder() -> GeoModelGridBuilder {
         GeoModelGridBuilder::new()
     }
-
-    pub fn save(&self, path: &str) -> Result<()> {
-        let file = File::create(path)?;
-        let root = file.as_group()?;
-
-        self.write_metadata(&root)?;
-
-        let surfaces_group = root.create_group("surfaces")?;
-        for surface_data in self.surfaces.iter() {
-            let ds = surfaces_group
-                .new_dataset::<f32>()
-                .shape(surface_data.surface.shape())
-                .create(surface_data.name.as_str())?;
-            ds.write(&surface_data.surface)?;
-
-            ds.new_attr::<f32>()
-                .create("resolution_horiz")?
-                .write_scalar(&surface_data.resolution_horiz)?;
-        }
-
-        let blocks_group = root.create_group("blocks")?;
-        for block_data in self.blocks.iter() {
-            let ds = blocks_group
-                .new_dataset::<f32>()
-                .shape(block_data.block.shape())
-                .create(block_data.name.as_str())?;
-            ds.write(&block_data.block)?;
-
-            ds.new_attr::<f32>()
-                .create("resolution_horiz")?
-                .write_scalar(&block_data.resolution_horiz)?;
-            ds.new_attr::<f32>()
-                .create("resolution_vert")?
-                .write_scalar(&block_data.resolution_vert)?;
-            ds.new_attr::<f32>()
-                .create("z_top")?
-                .write_scalar(&block_data.z_top)?;
-        }
-
-        Ok(())
-    }
-
-    fn write_metadata(&self, group: &Group) -> Result<()> {
-        let write_str = |name: &str, val: &str| -> Result<()> {
-            group
-                .new_attr::<VarLenUnicode>()
-                .create(name)?
-                .write_scalar(&VarLenUnicode::from_str(val).unwrap())
-        };
-
-        let write_str_vec = |name: &str, vals: &[String]| -> Result<()> {
-            let vlu_data: Vec<VarLenUnicode> = vals
-                .iter()
-                .map(|s| VarLenUnicode::from_str(s).unwrap())
-                .collect();
-            group
-                .new_attr::<VarLenUnicode>()
-                .shape(vlu_data.len())
-                .create(name)?
-                .write(vlu_data.as_slice())
-        };
-
-        let write_f64 = |name: &str, val: f64| -> Result<()> {
-            group.new_attr::<f64>().create(name)?.write_scalar(&val)
-        };
-
-        // Basic Metadata
-        write_str("title", &self.metadata.basic.title)?;
-        write_str("id", &self.metadata.basic.id)?;
-        write_str("description", &self.metadata.basic.description)?;
-        write_str("version", &self.metadata.basic.version)?;
-        write_str("history", &self.metadata.basic.history)?;
-        write_str("comment", &self.metadata.basic.comment)?;
-        write_str("license", &self.metadata.basic.license)?;
-        write_str("auxiliary", &self.metadata.basic.auxiliary)?;
-        write_str_vec("keywords", &self.metadata.basic.keywords)?;
-
-        // Attribution
-        write_str("creator_name", &self.metadata.attribution.creator_name)?;
-        write_str("creator_email", &self.metadata.attribution.creator_email)?;
-        write_str(
-            "creator_institution",
-            &self.metadata.attribution.creator_institution,
-        )?;
-        write_str(
-            "acknowledgement",
-            &self.metadata.attribution.acknowledgement,
-        )?;
-        write_str_vec("authors", &self.metadata.attribution.authors)?;
-        write_str_vec("references", &self.metadata.attribution.references)?;
-
-        // Repository
-        write_str("repository_doi", &self.metadata.repository.repository_doi)?;
-        write_str("repository_name", &self.metadata.repository.repository_name)?;
-        write_str("repository_url", &self.metadata.repository.repository_url)?;
-
-        // Data
-        write_str("data_layout", &self.metadata.data.data_layout)?;
-        write_str_vec("data_units", &self.metadata.data.data_units)?;
-        write_str_vec("data_values", &self.metadata.data.data_values)?;
-
-        // Coordinates
-        write_str("crs", &self.metadata.coords.crs)?;
-        write_f64("origin_x", self.metadata.coords.origin_x)?;
-        write_f64("origin_y", self.metadata.coords.origin_y)?;
-        write_f64("y_azimuth", self.metadata.coords.y_azimuth)?;
-        write_f64("dim_x", self.metadata.coords.dim_x)?;
-        write_f64("dim_y", self.metadata.coords.dim_y)?;
-        write_f64("dim_z", self.metadata.coords.dim_z)?;
-
-        Ok(())
-    }
-
-    pub fn load(path: PathBuf) -> Result<Self> {
-        let file = File::open(path)?;
-        let root = file.as_group()?;
-
-        let read_str = |name: &str| -> Result<String> { read_h5_string(&root.attr(name)?) };
-        let read_str_vec =
-            |name: &str| -> Result<Vec<String>> { read_h5_string_array(&root.attr(name)?) };
-
-        let metadata = ModelMetadata {
-            basic: BasicMetadata {
-                title: read_str("title")?,
-                id: read_str("id")?,
-                description: read_str("description")?,
-                version: read_str("version")?,
-                history: read_str("history")?,
-                comment: read_str("comment")?,
-                license: read_str("license")?,
-                auxiliary: read_str("auxiliary")?,
-                keywords: read_str_vec("keywords")?,
-            },
-            attribution: AttributionMetadata {
-                creator_name: read_str("creator_name")?,
-                creator_email: read_str("creator_email")?,
-                creator_institution: read_str("creator_institution")?,
-                acknowledgement: read_str("acknowledgement")?,
-                authors: read_str_vec("authors")?,
-                references: read_str_vec("references")?,
-            },
-            repository: RepositoryMetadata {
-                repository_doi: read_str("repository_doi")?,
-                repository_name: read_str("repository_name")?,
-                repository_url: read_str("repository_url")?,
-            },
-            data: DataMetadata {
-                data_layout: read_str("data_layout")?,
-                data_units: read_str_vec("data_units")?,
-                data_values: read_str_vec("data_values")?,
-            },
-            coords: CoordinateMetadata {
-                crs: read_str("crs")?,
-                origin_x: root.attr("origin_x")?.read_scalar::<f64>()?,
-                origin_y: root.attr("origin_y")?.read_scalar::<f64>()?,
-                y_azimuth: root.attr("y_azimuth")?.read_scalar::<f64>()?,
-                dim_x: root.attr("dim_x")?.read_scalar::<f64>()?,
-                dim_y: root.attr("dim_y")?.read_scalar::<f64>()?,
-                dim_z: root.attr("dim_z")?.read_scalar::<f64>()?,
-            },
-        };
-
-        let mut surfaces = Vec::new();
-        if root.link_exists("surfaces") {
-            let surfaces_group = root.group("surfaces")?;
-            let names: Vec<_> = surfaces_group.member_names()?;
-
-            for name in names {
-                let ds = surfaces_group.dataset(&name)?;
-                surfaces.push(Surface {
-                    resolution_horiz: ds.attr("resolution_horiz")?.read_scalar()?,
-                    surface: ds.read()?,
-                    name,
-                });
-            }
-        }
-
-        let mut blocks = Vec::new();
-        if root.link_exists("blocks") {
-            let blocks_group = root.group("blocks")?;
-            let names: Vec<_> = blocks_group.member_names()?;
-
-            for name in names {
-                let ds = blocks_group.dataset(&name)?;
-                blocks.push(Block {
-                    resolution_horiz: ds.attr("resolution_horiz")?.read_scalar()?,
-                    resolution_vert: ds.attr("resolution_vert")?.read_scalar()?,
-                    z_top: ds.attr("z_top")?.read_scalar()?,
-                    block: ds.read()?,
-                    name,
-                });
-            }
-        }
-
-        Ok(GeoModelGrid {
-            metadata,
-            surfaces,
-            blocks,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -550,19 +370,19 @@ mod tests {
                 resolution_horiz: 1.0,
                 resolution_vert: 0.5,
                 z_top: 10.0,
-                block: Array4::from_elem((10, 10, 5, 1), 1.1),
+                shape: (10, 10, 5, 1),
             })
             .add_block(Block {
                 name: "test2".to_string(),
                 resolution_horiz: 1.0,
                 resolution_vert: 0.5,
                 z_top: 5.0,
-                block: Array4::from_elem((10, 10, 5, 1), 2.2),
+                shape: (10, 10, 5, 1),
             });
 
         if with_topography {
             builder = builder.add_surface(Surface {
-                surface: Array2::from_elem((10, 10), 5.5),
+                shape: (10, 10),
                 resolution_horiz: 1.0,
                 name: "surface".to_string(),
             });
@@ -571,103 +391,103 @@ mod tests {
         builder.build()
     }
 
-    #[test]
-    fn test_san_francisco() -> Result<()> {
-        let path = get_fixture_path("USGS_SFCVM_v21-0_detailed.berkeley.h5");
-        let loaded = GeoModelGrid::load(path)?;
+    // #[test]
+    // fn test_san_francisco() -> Result<()> {
+    //     let path = get_fixture_path("USGS_SFCVM_v21-0_detailed.berkeley.h5");
+    //     let loaded = GeoModelGrid::load(path)?;
 
-        // Assertions mapped to the newly grouped sub-structs
-        assert_eq!(loaded.metadata.attribution.acknowledgement, "");
-        assert_eq!(loaded.metadata.attribution.authors.len(), 2);
-        assert_eq!(loaded.metadata.attribution.authors[0], "Aagaard, Brad T.");
-        assert_eq!(loaded.metadata.attribution.authors[1], "Hirakawa, Evan T.");
-        assert_eq!(
-            loaded.metadata.basic.description,
-            "USGS 3D seismic velocity model for the San Francisco Bay region (detailed domain)"
-        );
-        assert_eq!(loaded.metadata.basic.version, "21.0");
-        assert_eq!(loaded.metadata.basic.id, "usgs-sfcvm-detailed");
+    //     // Assertions mapped to the newly grouped sub-structs
+    //     assert_eq!(loaded.metadata.attribution.acknowledgement, "");
+    //     assert_eq!(loaded.metadata.attribution.authors.len(), 2);
+    //     assert_eq!(loaded.metadata.attribution.authors[0], "Aagaard, Brad T.");
+    //     assert_eq!(loaded.metadata.attribution.authors[1], "Hirakawa, Evan T.");
+    //     assert_eq!(
+    //         loaded.metadata.basic.description,
+    //         "USGS 3D seismic velocity model for the San Francisco Bay region (detailed domain)"
+    //     );
+    //     assert_eq!(loaded.metadata.basic.version, "21.0");
+    //     assert_eq!(loaded.metadata.basic.id, "usgs-sfcvm-detailed");
 
-        assert_eq!(
-            loaded.metadata.coords.crs,
-            "PROJCS[\"unnamed\",GEOGCS[\"NAD83\",DATUM[\"North_American_Datum_1983\",SPHEROID[\"GRS 1980\",6378137,298.257222101,AUTHORITY[\"EPSG\",\"7019\"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY[\"EPSG\",\"6269\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AUTHORITY[\"EPSG\",\"4269\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",35],PARAMETER[\"central_meridian\",-123],PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"Meter\",1]]"
-        );
+    //     assert_eq!(
+    //         loaded.metadata.coords.crs,
+    //         "PROJCS[\"unnamed\",GEOGCS[\"NAD83\",DATUM[\"North_American_Datum_1983\",SPHEROID[\"GRS 1980\",6378137,298.257222101,AUTHORITY[\"EPSG\",\"7019\"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY[\"EPSG\",\"6269\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AUTHORITY[\"EPSG\",\"4269\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",35],PARAMETER[\"central_meridian\",-123],PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"Meter\",1]]"
+    //     );
 
-        assert_eq!(loaded.blocks.len(), 4);
+    //     assert_eq!(loaded.blocks.len(), 4);
 
-        let first_block = &loaded.blocks[0];
-        assert_abs_diff_eq!(first_block.block[[0, 0, 0, 0]], 2659.72, epsilon = 0.1);
-        assert_abs_diff_eq!(first_block.block[[0, 0, 0, 1]], 5459.42, epsilon = 0.1);
-        assert_abs_diff_eq!(first_block.block[[0, 0, 0, 5]], 22.0, epsilon = 0.1);
-        assert_abs_diff_eq!(first_block.block[[0, 0, 0, 6]], 12.0, epsilon = 0.1);
+    //     let first_block = &loaded.blocks[0];
+    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 0]], 2659.72, epsilon = 0.1);
+    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 1]], 5459.42, epsilon = 0.1);
+    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 5]], 22.0, epsilon = 0.1);
+    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 6]], 12.0, epsilon = 0.1);
 
-        assert_abs_diff_eq!(first_block.block[[0, 0, 1, 0]], 2660.61, epsilon = 0.1);
+    //     assert_abs_diff_eq!(first_block.block[[0, 0, 1, 0]], 2660.61, epsilon = 0.1);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_full_round_trip() -> Result<()> {
-        let tmp_file = NamedTempFile::new().unwrap();
-        let path = tmp_file.path().to_str().unwrap();
+    // #[test]
+    // fn test_full_round_trip() -> Result<()> {
+    //     let tmp_file = NamedTempFile::new().unwrap();
+    //     let path = tmp_file.path().to_str().unwrap();
 
-        let original = create_mock_grid(true);
+    //     let original = create_mock_grid(true);
 
-        original.save(path)?;
-        let loaded = GeoModelGrid::load(PathBuf::from(path))?;
+    //     original.save(path)?;
+    //     let loaded = GeoModelGrid::load(PathBuf::from(path))?;
 
-        // Assertions mapped to grouped structs
-        assert_eq!(loaded.metadata.basic.title, original.metadata.basic.title);
-        assert_eq!(
-            loaded.metadata.coords.origin_x,
-            original.metadata.coords.origin_x
-        );
-        assert_eq!(loaded.metadata.coords.crs, original.metadata.coords.crs);
-        assert_eq!(loaded.metadata.attribution.authors.len(), 2);
+    //     // Assertions mapped to grouped structs
+    //     assert_eq!(loaded.metadata.basic.title, original.metadata.basic.title);
+    //     assert_eq!(
+    //         loaded.metadata.coords.origin_x,
+    //         original.metadata.coords.origin_x
+    //     );
+    //     assert_eq!(loaded.metadata.coords.crs, original.metadata.coords.crs);
+    //     assert_eq!(loaded.metadata.attribution.authors.len(), 2);
 
-        assert!(loaded.surfaces.len() == 1);
-        let loaded_topo = &loaded.surfaces[0];
-        let orig_topo = &original.surfaces[0];
-        assert_eq!(loaded_topo.surface, orig_topo.surface);
-        assert_eq!(loaded_topo.name, orig_topo.name);
-        assert_eq!(loaded_topo.resolution_horiz, orig_topo.resolution_horiz);
+    //     assert!(loaded.surfaces.len() == 1);
+    //     let loaded_topo = &loaded.surfaces[0];
+    //     let orig_topo = &original.surfaces[0];
+    //     assert_eq!(loaded_topo.surface, orig_topo.surface);
+    //     assert_eq!(loaded_topo.name, orig_topo.name);
+    //     assert_eq!(loaded_topo.resolution_horiz, orig_topo.resolution_horiz);
 
-        assert_eq!(loaded.blocks.len(), 2);
-        assert_eq!(loaded.blocks[0].z_top, 10.0);
-        assert_eq!(loaded.blocks[1].block[[0, 0, 0, 0]], 2.2);
+    //     assert_eq!(loaded.blocks.len(), 2);
+    //     assert_eq!(loaded.blocks[0].z_top, 10.0);
+    //     assert_eq!(loaded.blocks[1].block[[0, 0, 0, 0]], 2.2);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_no_topography_round_trip() -> Result<()> {
-        let tmp_file = NamedTempFile::new().unwrap();
-        let path = tmp_file.path().to_str().unwrap();
+    // #[test]
+    // fn test_no_topography_round_trip() -> Result<()> {
+    //     let tmp_file = NamedTempFile::new().unwrap();
+    //     let path = tmp_file.path().to_str().unwrap();
 
-        let original = create_mock_grid(false);
+    //     let original = create_mock_grid(false);
 
-        original.save(path)?;
-        let loaded = GeoModelGrid::load(PathBuf::from(path))?;
+    //     original.save(path)?;
+    //     let loaded = GeoModelGrid::load(PathBuf::from(path))?;
 
-        assert!(loaded.surfaces.is_empty());
-        assert_eq!(loaded.blocks.len(), 2);
+    //     assert!(loaded.surfaces.is_empty());
+    //     assert_eq!(loaded.blocks.len(), 2);
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    #[test]
-    fn test_empty_blocks_round_trip() -> Result<()> {
-        let tmp_file = NamedTempFile::new().unwrap();
-        let path = tmp_file.path().to_str().unwrap();
+    // #[test]
+    // fn test_empty_blocks_round_trip() -> Result<()> {
+    //     let tmp_file = NamedTempFile::new().unwrap();
+    //     let path = tmp_file.path().to_str().unwrap();
 
-        // Easily override the builder to have no blocks
-        let mut original = create_mock_grid(false);
-        original.blocks = vec![];
+    //     // Easily override the builder to have no blocks
+    //     let mut original = create_mock_grid(false);
+    //     original.blocks = vec![];
 
-        original.save(path)?;
-        let loaded = GeoModelGrid::load(PathBuf::from(path))?;
+    //     original.save(path)?;
+    //     let loaded = GeoModelGrid::load(PathBuf::from(path))?;
 
-        assert!(loaded.blocks.is_empty());
-        Ok(())
-    }
+    //     assert!(loaded.blocks.is_empty());
+    //     Ok(())
+    // }
 }

@@ -31,6 +31,8 @@ mod nzcvm {
 
     use std::sync::Arc;
 
+    // TODO: Maybe AI can generate the annoying boilerplate for GeoModelGrid API?
+
     #[pyclass]
     pub struct PyQuality {
         #[pyo3(get)]
@@ -115,6 +117,7 @@ mod nzcvm {
                 inner: Arc::new(ModelTree::Stack(self.inner.clone(), other.inner.clone())),
             }
         }
+        // TODO: Blend endpoint
 
         fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
             fn aux<'py>(py: Python<'py>, model_tree: &ModelTree) -> PyResult<Bound<'py, PyDict>> {
@@ -176,7 +179,7 @@ mod nzcvm {
             .as_array()
             .rows()
             .into_iter()
-            .map(|row| Quality {
+            .map(|row| Quality { // TODO: quality should have a from ArrayView<f32>
                 rho: row[0],
                 vp: row[1],
                 vs: row[2],

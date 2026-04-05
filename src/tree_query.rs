@@ -271,7 +271,7 @@ mod tests {
         // Closest to 12.0 is ID 1 (10.0), then ID 3 (5.0), then ID 2 (20.0)
         let mut iterator = NearestIterator::new(&bvh, &query_point, &shapes);
 
-        // Retreive k=2 items
+        // Retrieve k=2 items
         let first = iterator.next().unwrap().0;
         assert_eq!(first.id, 1);
 
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn test_empty_bvh_does_not_panic() {
         let mut shapes: Vec<Sphere> = vec![];
-        // Bvh::build_par handles empty vecs by creating a stub node
+
         let bvh = Bvh::build(&mut shapes);
         let query_point = Point3::new(0.0, 0.0, 0.0);
 

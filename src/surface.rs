@@ -1,3 +1,4 @@
+// TODO: Scream about invalid simplices instead of creating degenerate matices
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
@@ -22,6 +23,7 @@ pub struct Simplex {
     c0: Point2<f32>,
     c1: Point2<f32>,
     c2: Point2<f32>,
+    // TODO: make this an actual matrix
     // Components of the inverse matrix
     // [ m00 m01 ]
     // [ m10 m11 ]
@@ -159,8 +161,6 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
-    // --- Helpers ---
-
     fn mock_unit_simplex(id: usize, mask: Inclusion) -> Simplex {
         // A right triangle: (0,0), (1,0), (0,1)
         Simplex::new(
@@ -247,7 +247,7 @@ mod tests {
         let bvh_tree = Bvh::build(&mut simplices);
 
         // Define elevations at vertices
-        // Let's say top is always 100.0 and bottom is 0.0, except at (1,1) where top is 200.0
+        // Let's say top is always 0.0 and bottom is 100.0, except at (1,1) where bottom is 200.0 and top is 50.0
         let elevations = vec![
             SurfacePoint {
                 top: 0.0,
@@ -313,7 +313,6 @@ mod tests {
             0,
         );
 
-        // Should not panic, but inv_m will be zeroed out by our new() implementation
         let bary = s.barycentric_coordinates(Point2::new(0.5, 0.0));
         assert_relative_eq!(bary.x + bary.y + bary.z, 1.0);
     }

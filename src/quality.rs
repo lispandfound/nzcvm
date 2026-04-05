@@ -15,7 +15,7 @@ impl Into<Array1<f32>> for Quality {
         Array1::from_iter([self.rho, self.vp, self.vs, self.qp, self.qs].into_iter())
     }
 }
-
+// TODO: How should qp/qs arithmetic be handled?
 impl Add for Quality {
     type Output = Self;
 

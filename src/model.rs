@@ -17,6 +17,7 @@ pub enum ModelTree {
     Layers {
         layer_tree: LayerTree,
     },
+    // TODO: Ely taper
 }
 
 impl ModelTree {

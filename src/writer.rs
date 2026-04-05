@@ -1,3 +1,4 @@
+// TODO: rethink this a little. Feels a little heavy handed. Benchmark to check it doesn't create a bottleneck.
 use byteorder::{LittleEndian, WriteBytesExt};
 use ndarray::{ArrayView4, Axis};
 use std::io::{Result, Write};

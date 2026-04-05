@@ -76,7 +76,6 @@ impl PointDistance<f32, 2> for LineShape {
 pub struct LayerGeometry {
     pub id: usize,
     pub priority: usize,
-    /// The new unified surface containing Top, Bottom, and Inclusion metadata
     pub surface: Surface,
 
     poly: Polygon<f32>,

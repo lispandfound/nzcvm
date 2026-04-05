@@ -16,10 +16,8 @@ struct Simplex {
     c2: Point3<f32>,
     c3: Point3<f32>,
 
-    /// Pre-calculated inverse matrix for fast projection
     inv_matrix: Matrix3<f32>,
 
-    /// Id to lookup qualities from qualities buffer
     id: usize,
     node_index: usize,
 }
@@ -275,7 +273,7 @@ impl Bounded<f32, 3> for MeshModel {
 
 pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Error> {
     let file = File::open(file_path)?;
-
+    // TODO: normalise the dataset names here they suck :P
     let ds_x = file.dataset("X_NZTM")?.read_dyn::<f64>()?;
     let ds_y = file.dataset("Y_NZTM")?.read_dyn::<f64>()?;
     let ds_z = file.dataset("Z_meters")?.read_dyn::<f64>()?;

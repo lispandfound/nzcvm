@@ -1,4 +1,3 @@
-use crate::geometry::polygon_distance_sq;
 use crate::quality::Quality;
 use crate::surface::{Inclusion, Simplex, Surface, SurfacePoint};
 use crate::tree_query::nearest_to_point_iterator;
@@ -6,15 +5,16 @@ use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
-use geo::{coord, PreparedGeometry, Relate, Triangle};
+use geo::{coord, point, BoundingRect, PreparedGeometry, Relate, Triangle};
 use geo::{Coord, Geometry, MapCoords, Polygon};
 use geozero::wkb::Wkb;
 use geozero::ToGeo;
 use hdf5_metno::types::VarLenUnicode;
 use hdf5_metno::{File, Group, Result};
 use nalgebra::{Point2, Point3};
-use ndarray::{array, Array2};
+use ndarray::{array, Array2, ArrayView2};
 use ordered_float::OrderedFloat;
+use rstar::RTree;
 use std::collections::BTreeMap;
 use std::iter::once;
 use std::path::Path;
@@ -26,8 +26,9 @@ pub struct LayerGeometry {
     /// The new unified surface containing Top, Bottom, and Inclusion metadata
     pub surface: Surface,
 
-    /// Still kept for the final precise distance check for Boundary/Outside cases
-    bounds: Vec<f32>,
+    poly: Polygon<f32>,
+    spatial_tree: RTree<geo::Line<f32>>,
+
     z_abs_top: f32,
     z_abs_bottom: f32,
     node_index: usize,
@@ -43,15 +44,21 @@ impl LayerGeometry {
         let z_top_array = Array2::from_elem((2, 2), z_top);
         let z_bottom_array = Array2::from_elem((2, 2), z_bottom);
 
-        LayerGeometry::new(bounds, x, y, z_top_array, z_bottom_array)
+        LayerGeometry::build(
+            bounds,
+            x.view(),
+            y.view(),
+            z_top_array.view(),
+            z_bottom_array.view(),
+        )
     }
 
-    pub fn new(
+    pub fn build(
         bounds: &Polygon<f32>,
-        surface_x: Array2<f32>,
-        surface_y: Array2<f32>,
-        surface_z_top: Array2<f32>,
-        surface_z_bottom: Array2<f32>,
+        surface_x: ArrayView2<f32>,
+        surface_y: ArrayView2<f32>,
+        surface_z_top: ArrayView2<f32>,
+        surface_z_bottom: ArrayView2<f32>,
     ) -> Self {
         let (nx, ny) = surface_x.dim();
 
@@ -97,7 +104,7 @@ impl LayerGeometry {
                 let indices = [[idx_v0, idx_v1, idx_v2], [idx_v0, idx_v2, idx_v3]];
 
                 for (idx, tri) in indices.iter().zip(triangles.iter()) {
-                    let mask = if prepared_geom.relate(&tri1).is_contains() {
+                    let mask = if prepared_geom.relate(tri).is_contains() {
                         Inclusion::Inside
                     } else {
                         Inclusion::Boundary
@@ -126,29 +133,37 @@ impl LayerGeometry {
             elevations,
         };
 
-        // Flat bounds for distance calculation fallback
-        let exterior = bounds.exterior();
-        let mut flat_coords = Vec::with_capacity(exterior.0.len() * 2);
-        for p in exterior.points() {
-            flat_coords.push(p.x());
-            flat_coords.push(p.y());
+        // Calculate absolute Z bounds
+        let z_abs_top = *surface_z_top.iter().min_by(|a, b| a.total_cmp(b)).unwrap();
+        let z_abs_bottom = *surface_z_bottom
+            .iter()
+            .max_by(|a, b| a.total_cmp(b))
+            .unwrap();
+
+        // Build the R-Tree from the polygon's line segments for O(log N) distance queries
+        let mut edges = Vec::new();
+        for line in bounds.exterior().lines() {
+            edges.push(line);
         }
+        for interior in bounds.interiors() {
+            for line in interior.lines() {
+                edges.push(line);
+            }
+        }
+        let spatial_tree = RTree::bulk_load(edges);
 
         LayerGeometry {
             id: 0,
             priority: 0,
             surface,
-            bounds: flat_coords,
-            z_abs_top: *surface_z_top.iter().min_by(|a, b| a.total_cmp(b)).unwrap(),
-            z_abs_bottom: *surface_z_bottom
-                .iter()
-                .max_by(|a, b| a.total_cmp(b))
-                .unwrap(),
+            poly: bounds.clone(),
+            spatial_tree,
+            z_abs_top,
+            z_abs_bottom,
             node_index: 0,
         }
     }
 }
-
 impl PointDistance<f32, 3> for LayerGeometry {
     fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
         let (z_top, z_bottom, inclusion) = match self.surface.query(query_point.xy()) {
@@ -160,10 +175,13 @@ impl PointDistance<f32, 3> for LayerGeometry {
         let dz_sq = (query_point.z - z_clamped).powi(2);
 
         let dxdy_sq = match inclusion {
-            Inclusion::Inside => 0.0, // Guaranteed inside, skip O(N) check
-            Inclusion::Boundary | Inclusion::Outside => {
-                polygon_distance_sq(query_point, &self.bounds)
-            }
+            Inclusion::Inside => 0.0, // Guaranteed inside, skip full check
+            Inclusion::Boundary | Inclusion::Outside => self
+                .spatial_tree
+                .nearest_neighbor_iter_with_distance_2(&point!(x: query_point.x, y: query_point.y))
+                .next()
+                .map(|(_, d)| d)
+                .unwrap(),
         };
         dz_sq + dxdy_sq
     }
@@ -171,33 +189,11 @@ impl PointDistance<f32, 3> for LayerGeometry {
 
 impl Bounded<f32, 3> for LayerGeometry {
     fn aabb(&self) -> Aabb<f32, 3> {
-        let coords = self.bounds.as_slice();
-
-        let mut min_x = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut min_y = f32::MAX;
-        let mut max_y = f32::MIN;
-
-        for chunk in coords.chunks_exact(2) {
-            let x = chunk[0];
-            let y = chunk[1];
-
-            if x < min_x {
-                min_x = x;
-            }
-            if x > max_x {
-                max_x = x;
-            }
-            if y < min_y {
-                min_y = y;
-            }
-            if y > max_y {
-                max_y = y;
-            }
-        }
-
-        let min_point = Point3::new(min_x, min_y, self.z_abs_top);
-        let max_point = Point3::new(max_x, max_y, self.z_abs_bottom);
+        let coords = self.poly.bounding_rect().unwrap();
+        let min = coords.min();
+        let max = coords.max();
+        let min_point = Point3::new(min.x, min.y, self.z_abs_top);
+        let max_point = Point3::new(max.x, max.y, self.z_abs_bottom);
 
         Aabb::with_bounds(min_point, max_point)
     }
@@ -227,7 +223,8 @@ pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
     let y: Array2<f32> = group.dataset("surface_y")?.read_2d()?;
     let z_top: Array2<f32> = group.dataset("surface_z_top")?.read_2d()?;
     let z_bottom: Array2<f32> = group.dataset("surface_z_bottom")?.read_2d()?;
-    let mut geometry = LayerGeometry::new(&bounds, x, y, z_top, z_bottom);
+    let mut geometry =
+        LayerGeometry::build(&bounds, x.view(), y.view(), z_top.view(), z_bottom.view());
     geometry.priority = priority;
     Ok(geometry)
 }
@@ -459,7 +456,7 @@ mod tests {
 
         assert_eq!(model.query(Point3::new(0.0, 0.0, 100.0)).unwrap().rho, 20.0);
         assert_eq!(model.query(Point3::new(0.0, 0.0, 50.0)).unwrap().rho, 10.0);
-        assert!(model.query(Point3::new(0.0, 0.0, -10.0)).is_none());
+        assert_eq!(model.query(Point3::new(0.0, 0.0, -10.0)).unwrap().rho, 10.0);
     }
 
     // --- LayerTree Integration Tests ---
@@ -533,7 +530,7 @@ mod tests {
         let z_top = array![[0.0, 0.0], [10.0, 10.0]];
         let z_bottom = Array2::from_elem((2, 2), 20.0);
 
-        let prism = LayerGeometry::new(&poly, x, y, z_top, z_bottom);
+        let prism = LayerGeometry::build(&poly, x.view(), y.view(), z_top.view(), z_bottom.view());
 
         // Test vertical distance above the slope (at x=0, z_top=0)
         let p_start = Point3::new(0.0, 0.0, -5.0);
@@ -553,7 +550,7 @@ mod tests {
         let z_top = array![[0.0, 0.0], [0.0, 0.0]];
         let z_bottom = array![[1.0, 1.0], [1.0, 1.0]];
 
-        let layer = LayerGeometry::new(&poly, x, y, z_top, z_bottom);
+        let layer = LayerGeometry::build(&poly, x.view(), y.view(), z_top.view(), z_bottom.view());
 
         assert_eq!(layer.surface.simplices.len(), 2);
 

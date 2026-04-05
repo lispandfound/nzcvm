@@ -127,6 +127,14 @@ mod nzcvm {
                         dict.set_item("right", aux(py, right)?)?;
                         Ok(dict)
                     },
+                    ModelTree::Blend{left, right, distance} => {
+                        dict.set_item("type", "blended")?;
+                        dict.set_item("left", aux(py, left)?)?;
+                        dict.set_item("right", aux(py, right)?)?;
+                        dict.set_item("distance", distance)?;
+                        Ok(dict)
+                    },
+
                     ModelTree::Layers {layer_tree} => {
                         dict.set_item("type", "layered_models")?;
                         let aabb_tuples: Vec<(f32, f32, f32, f32, f32, f32)> = layer_tree.bounds().iter().map(|aabb| (aabb.min.x, aabb.min.y, aabb.min.z, aabb.max.x, aabb.max.y, aabb.max.z)).collect();
@@ -235,12 +243,12 @@ mod nzcvm {
 
         let poly = Polygon::new(LineString::new(coords), vec![]);
 
-        let mut geometry = LayerGeometry::new(
+        let mut geometry = LayerGeometry::build(
             &poly,
-            surface_x_py.as_array().to_owned(),
-            surface_y_py.as_array().to_owned(),
-            z_top_py.as_array().to_owned(),
-            z_bottom_py.as_array().to_owned(),
+            surface_x_py.as_array(),
+            surface_y_py.as_array(),
+            z_top_py.as_array(),
+            z_bottom_py.as_array(),
         );
         geometry.priority = priority;
 

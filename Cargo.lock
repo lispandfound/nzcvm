@@ -952,6 +952,7 @@ dependencies = [
  "ouroboros",
  "pyo3",
  "rayon",
+ "rstar",
  "tempfile",
 ]
 

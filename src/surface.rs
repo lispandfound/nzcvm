@@ -249,20 +249,20 @@ mod tests {
         // Let's say top is always 100.0 and bottom is 0.0, except at (1,1) where top is 200.0
         let elevations = vec![
             SurfacePoint {
-                top: 100.0,
-                bottom: 0.0,
+                top: 0.0,
+                bottom: 100.0,
             }, // (0,0) - Index 0
             SurfacePoint {
-                top: 100.0,
-                bottom: 0.0,
+                top: 0.0,
+                bottom: 100.0,
             }, // (1,0) - Index 1
             SurfacePoint {
-                top: 200.0,
-                bottom: 50.0,
+                top: 50.0,
+                bottom: 200.0,
             }, // (1,1) - Index 2
             SurfacePoint {
-                top: 100.0,
-                bottom: 0.0,
+                top: 0.0,
+                bottom: 100.0,
             }, // (0,1) - Index 3
         ];
 
@@ -281,8 +281,9 @@ mod tests {
         // Query the middle of T0 (0.5, 0.25)
         // This point is 25% of the way toward the (1,1) vertex from the (0,0)-(1,0) base
         if let Some((top, bottom, mask)) = surface.query(Point2::new(0.75, 0.5)) {
-            assert!(top > 100.0 && top < 200.0);
-            assert!(bottom > 0.0 && bottom < 50.0);
+            println!("top = {}, bottom = {}", top, bottom);
+            assert!(bottom > 100.0 && bottom < 200.0);
+            assert!(top > 0.0 && top < 50.0);
             match mask {
                 Inclusion::Inside => {}
                 _ => panic!("Expected Inside mask for T0"),

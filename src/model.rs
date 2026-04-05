@@ -6,8 +6,17 @@ use std::sync::Arc;
 
 pub enum ModelTree {
     Stack(Arc<ModelTree>, Arc<ModelTree>),
-    Mesh { mesh_model: MeshModel },
-    Layers { layer_tree: LayerTree },
+    Blend {
+        left: Arc<ModelTree>,
+        right: Arc<ModelTree>,
+        distance: f32,
+    },
+    Mesh {
+        mesh_model: MeshModel,
+    },
+    Layers {
+        layer_tree: LayerTree,
+    },
 }
 
 impl ModelTree {
@@ -27,12 +36,38 @@ impl ModelTree {
             },
             Self::Layers { layer_tree } => layer_tree.query(point),
             Self::Mesh { mesh_model } => mesh_model.query(point),
+            Self::Blend {
+                left,
+                right,
+                distance,
+            } => match (left.query(point), right.query(point)) {
+                (Some((quality_left, dist_left)), Some((quality_right, _)))
+                    if dist_left < *distance =>
+                {
+                    let alpha = (dist_left / distance);
+                    Some((
+                        alpha * quality_right + (1.0 - alpha) * quality_left,
+                        dist_left,
+                    ))
+                }
+                (_, right) => right,
+            },
         }
     }
     pub fn pretty_print(&self) {
         match self {
             Self::Stack(left, right) => {
                 println!("Stacked models, left:");
+                left.pretty_print();
+                println!("right:");
+                right.pretty_print();
+            }
+            Self::Blend {
+                left,
+                right,
+                distance: _,
+            } => {
+                println!("Blended models, left:");
                 left.pretty_print();
                 println!("right:");
                 right.pretty_print();

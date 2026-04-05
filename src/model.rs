@@ -44,7 +44,7 @@ impl ModelTree {
                 (Some((quality_left, dist_left)), Some((quality_right, _)))
                     if dist_left < *distance =>
                 {
-                    let alpha = (dist_left / distance);
+                    let alpha = dist_left / distance;
                     Some((
                         alpha * quality_right + (1.0 - alpha) * quality_left,
                         dist_left,

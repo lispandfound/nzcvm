@@ -1,3 +1,4 @@
+use crate::geometry;
 use crate::quality::Quality;
 use crate::surface::{Inclusion, Simplex, Surface, SurfacePoint};
 use crate::tree_query::nearest_to_point_iterator;
@@ -5,7 +6,7 @@ use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
-use geo::{coord, point, BoundingRect, PreparedGeometry, Relate, Triangle};
+use geo::{coord, point, BoundingRect, Contains, PreparedGeometry, Relate, Triangle};
 use geo::{Coord, Geometry, MapCoords, Polygon};
 use geozero::wkb::Wkb;
 use geozero::ToGeo;
@@ -14,10 +15,62 @@ use hdf5_metno::{File, Group, Result};
 use nalgebra::{Point2, Point3};
 use ndarray::{array, Array2, ArrayView2};
 use ordered_float::OrderedFloat;
-use rstar::RTree;
 use std::collections::BTreeMap;
 use std::iter::once;
 use std::path::Path;
+
+#[derive(Debug, Clone)]
+pub struct LineShape {
+    pub start: Point2<f32>,
+    pub end: Point2<f32>,
+
+    pub node_index: usize,
+}
+
+impl From<geo::Line<f32>> for LineShape {
+    fn from(line: geo::Line<f32>) -> Self {
+        let a = Point2::new(line.start.x, line.start.y);
+        let b = Point2::new(line.end.x, line.end.y);
+        Self {
+            start: a,
+            end: b,
+            node_index: 0,
+        }
+    }
+}
+
+impl Bounded<f32, 2> for LineShape {
+    fn aabb(&self) -> Aabb<f32, 2> {
+        let min_x = self.start.x.min(self.end.x);
+        let min_y = self.start.y.min(self.end.y);
+        let max_x = self.start.x.max(self.end.x);
+        let max_y = self.start.y.max(self.end.y);
+        Aabb::with_bounds(Point2::new(min_x, min_y), Point2::new(max_x, max_y))
+    }
+}
+
+impl BHShape<f32, 2> for LineShape {
+    fn set_bh_node_index(&mut self, index: usize) {
+        self.node_index = index;
+    }
+
+    fn bh_node_index(&self) -> usize {
+        self.node_index
+    }
+}
+
+impl PointDistance<f32, 2> for LineShape {
+    fn distance_squared(&self, point: Point2<f32>) -> f32 {
+        geometry::line_to_point_dist_sq(
+            point.x,
+            point.y,
+            self.start.x,
+            self.start.y,
+            self.end.x,
+            self.end.y,
+        )
+    }
+}
 
 #[derive(Debug)]
 pub struct LayerGeometry {
@@ -27,7 +80,8 @@ pub struct LayerGeometry {
     pub surface: Surface,
 
     poly: Polygon<f32>,
-    spatial_tree: RTree<geo::Line<f32>>,
+    spatial_tree: Bvh<f32, 2>,
+    spatial_shapes: Vec<LineShape>,
 
     z_abs_top: f32,
     z_abs_bottom: f32,
@@ -37,8 +91,7 @@ pub struct LayerGeometry {
 impl LayerGeometry {
     pub fn new_with_flat_surface(bounds: &Polygon<f32>, z_top: f32, z_bottom: f32) -> Self {
         // Due to extrapolation, we can treat the "interpolation" onto a flat
-        // surface at the top and bottom using nearest-neighbour interpolation
-        // with just four points.
+        // surface at the top and bottom using interpolation with just four points.
         let x = array!([0.0, 1.0], [0.0, 1.0]);
         let y = array!([0.0, 0.0], [1.0, 1.0]);
         let z_top_array = Array2::from_elem((2, 2), z_top);
@@ -62,9 +115,7 @@ impl LayerGeometry {
     ) -> Self {
         let (nx, ny) = surface_x.dim();
 
-        // 1. Create SurfacePoints (Elevations)
         let mut elevations = Vec::with_capacity(surface_x.len());
-
         for i in 0..nx {
             for j in 0..ny {
                 elevations.push(SurfacePoint {
@@ -74,7 +125,7 @@ impl LayerGeometry {
             }
         }
 
-        // 2. Generate Triangles from the rectilinear grid
+        // Generate Triangles from the rectilinear grid
         let mut simplices = Vec::new();
         let mut vertex_map = Vec::new();
 
@@ -140,17 +191,17 @@ impl LayerGeometry {
             .max_by(|a, b| a.total_cmp(b))
             .unwrap();
 
-        // Build the R-Tree from the polygon's line segments for O(log N) distance queries
+        // Build the BVH from the polygon's line segments for fast distance queries
         let mut edges = Vec::new();
         for line in bounds.exterior().lines() {
-            edges.push(line);
+            edges.push(line.into());
         }
         for interior in bounds.interiors() {
             for line in interior.lines() {
-                edges.push(line);
+                edges.push(line.into());
             }
         }
-        let spatial_tree = RTree::bulk_load(edges);
+        let spatial_tree = Bvh::build(&mut edges);
 
         LayerGeometry {
             id: 0,
@@ -158,12 +209,14 @@ impl LayerGeometry {
             surface,
             poly: bounds.clone(),
             spatial_tree,
+            spatial_shapes: edges,
             z_abs_top,
             z_abs_bottom,
             node_index: 0,
         }
     }
 }
+
 impl PointDistance<f32, 3> for LayerGeometry {
     fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
         let (z_top, z_bottom, inclusion) = match self.surface.query(query_point.xy()) {
@@ -176,12 +229,24 @@ impl PointDistance<f32, 3> for LayerGeometry {
 
         let dxdy_sq = match inclusion {
             Inclusion::Inside => 0.0, // Guaranteed inside, skip full check
-            Inclusion::Boundary | Inclusion::Outside => self
+            Inclusion::Outside => self // Guaranteed outside, just compute distance
                 .spatial_tree
-                .nearest_neighbor_iter_with_distance_2(&point!(x: query_point.x, y: query_point.y))
-                .next()
+                .nearest_to(query_point.xy(), &self.spatial_shapes)
                 .map(|(_, d)| d)
-                .unwrap(),
+                .unwrap()
+                .powi(2),
+            Inclusion::Boundary => {
+                let projected = point!(x: query_point.x, y: query_point.y);
+                if self.poly.contains(&projected) {
+                    0.0
+                } else {
+                    self.spatial_tree
+                        .nearest_to(query_point.xy(), &self.spatial_shapes)
+                        .map(|(_, d)| d)
+                        .unwrap()
+                        .powi(2)
+                }
+            }
         };
         dz_sq + dxdy_sq
     }
@@ -336,7 +401,6 @@ impl LayerTree {
             if dist < f32::EPSILON {
                 // Shape contains point, check for other shapes containing this point to resolve overlaps.
                 let other_shapes = iter
-                    // short-cut: no more than two extra models considered
                     .take_while(|(_, dist)| *dist < f32::EPSILON)
                     .map(|(shape, _)| shape);
                 // The preferred shape is the highest priority shape.
@@ -380,6 +444,8 @@ impl LayerTree {
     }
 }
 
+// TODO: More unit-tests here including:
+// 1. Check that the correct distance in boundary type cells (0 on inside, positive on outside).
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,8 +453,6 @@ mod tests {
     use geo::polygon;
     use nalgebra::Point3;
     use ordered_float::OrderedFloat;
-
-    // --- Helpers ---
 
     fn create_unit_prism(z_top: f32, z_bottom: f32) -> LayerGeometry {
         let poly = polygon![
@@ -444,8 +508,6 @@ mod tests {
         assert!(aabb.min.y <= 0.0 && aabb.max.y >= 1.0);
     }
 
-    // --- Model Query Tests ---
-
     #[test]
     fn test_layered_model_stepping() {
         let mut layers = BTreeMap::new();
@@ -458,8 +520,6 @@ mod tests {
         assert_eq!(model.query(Point3::new(0.0, 0.0, 50.0)).unwrap().rho, 10.0);
         assert_eq!(model.query(Point3::new(0.0, 0.0, -10.0)).unwrap().rho, 10.0);
     }
-
-    // --- LayerTree Integration Tests ---
 
     #[test]
     fn test_model_tree_nearest_neighbor_behavior() {

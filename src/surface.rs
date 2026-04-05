@@ -140,13 +140,14 @@ impl Surface {
                 let bottom =
                     (p0.bottom * bary.x + p1.bottom * bary.y + p2.bottom * bary.z).max(top);
                 // If barycentric coordinates indicate that we are
-                // inside the simplex, we can use the simplex mask,
-                // otherwise we don't know anything (so we default to
-                // being on the boundary).
+                // inside the simplex, we can use the simplex mask.
+                // Otherwise assuming that the surface covers the
+                // entire polygon we can simply say it is outside.
+                // TODO: Handle this edge case more gracefully.
                 let mask = if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 {
                     simplex.mask
                 } else {
-                    Inclusion::Boundary
+                    Inclusion::Outside
                 };
                 (top, bottom, mask)
             })

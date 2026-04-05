@@ -1,5 +1,25 @@
 use nalgebra::Point3;
 
+#[inline(always)]
+pub fn line_to_point_dist_sq(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let line_len_sq = dx * dx + dy * dy;
+
+    if line_len_sq == 0.0 {
+        return (px - x1).powi(2) + (py - y1).powi(2);
+    }
+
+    // Projection scalar t = [(P-A) . (B-A)] / |B-A|^2
+    let t = ((px - x1) * dx + (py - y1) * dy) / line_len_sq;
+    let t = t.clamp(0.0, 1.0);
+
+    let closest_x = x1 + t * dx;
+    let closest_y = y1 + t * dy;
+
+    (px - closest_x).powi(2) + (py - closest_y).powi(2)
+}
+
 pub fn point_triangle_distance_sq(
     q: Point3<f32>,
     p1: Point3<f32>,

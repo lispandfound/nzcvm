@@ -5,7 +5,7 @@ use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
 use nalgebra::{Point2, Point3};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Inclusion {
     Inside,
     Boundary,

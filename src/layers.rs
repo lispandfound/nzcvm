@@ -1,4 +1,4 @@
-use crate::geometry;
+use crate::geometry::{self, closest_point_to_line, line_to_point_dist_sq};
 use crate::quality::Quality;
 use crate::surface::{Inclusion, Simplex, Surface, SurfacePoint};
 use crate::tree_query::nearest_to_point_iterator;
@@ -61,14 +61,7 @@ impl BHShape<f32, 2> for LineShape {
 
 impl PointDistance<f32, 2> for LineShape {
     fn distance_squared(&self, point: Point2<f32>) -> f32 {
-        geometry::line_to_point_dist_sq(
-            point.x,
-            point.y,
-            self.start.x,
-            self.start.y,
-            self.end.x,
-            self.end.y,
-        )
+        geometry::line_to_point_dist_sq(point, self.start, self.end)
     }
 }
 
@@ -218,32 +211,34 @@ impl LayerGeometry {
 
 impl PointDistance<f32, 3> for LayerGeometry {
     fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
-        let (z_top, z_bottom, inclusion) = match self.surface.query(query_point.xy()) {
+        let projected_point = query_point.xy();
+        let (z_top, z_bottom, inclusion) = match self.surface.query(projected_point) {
             Some(res) => res,
             None => return f32::INFINITY,
         };
 
-        let z_clamped = query_point.z.clamp(z_top, z_bottom);
-        let dz_sq = (query_point.z - z_clamped).powi(2);
-
-        let dxdy_sq = match inclusion {
-            Inclusion::Inside => 0.0, // Guaranteed inside, skip full check
-            Inclusion::Outside => self // Guaranteed outside, just compute distance
-                .spatial_tree
-                .nearest_to(query_point.xy(), &self.spatial_shapes)
-                .map(|(_, d)| d)
-                .unwrap()
-                .powi(2),
-            Inclusion::Boundary => {
-                let projected = point!(x: query_point.x, y: query_point.y);
-                if self.poly.contains(&projected) {
-                    0.0
+        let (dxdy_sq, dz_sq) = match inclusion {
+            Inclusion::Inside => {
+                let z_clamped = query_point.z.clamp(z_top, z_bottom);
+                (0.0, (query_point.z - z_clamped).powi(2))
+            } // Guaranteed inside, skip full check
+            Inclusion::Outside | Inclusion::Boundary => {
+                if inclusion == Inclusion::Boundary
+                    && self
+                        .poly
+                        .contains(&point!(x: query_point.x, y: query_point.y))
+                {
+                    let z_clamped = query_point.z.clamp(z_top, z_bottom);
+                    (0.0, (query_point.z - z_clamped).powi(2))
                 } else {
-                    self.spatial_tree
+                    let (l, dxdy) = self
+                        .spatial_tree
                         .nearest_to(query_point.xy(), &self.spatial_shapes)
-                        .map(|(_, d)| d)
-                        .unwrap()
-                        .powi(2)
+                        .unwrap();
+                    let closest_point = closest_point_to_line(projected_point, l.start, l.end);
+                    let (z_top, z_bottom, _) = self.surface.query(closest_point).unwrap();
+                    let z_clamped = query_point.z.clamp(z_top, z_bottom);
+                    (dxdy.powi(2), (query_point.z - z_clamped).powi(2))
                 }
             }
         };

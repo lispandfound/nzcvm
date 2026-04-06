@@ -388,26 +388,16 @@ impl LayerTree {
         }
     }
 
-    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
-        let mut iter = nearest_to_point_iterator(&self.bvh_tree, &self.shapes, &point);
+    pub fn query_within(&self, point: Point3<f32>, epsilon: f32) -> Option<(Quality, f32)> {
+        nearest_to_point_iterator(&self.bvh_tree, &self.shapes, &point, epsilon)
+            .max_by_key(|(shape, _)| shape.priority)
+            .and_then(|(best_shape, dist)| {
+                self.model_query_for(best_shape, point).map(|q| (q, dist))
+            })
+    }
 
-        iter.next().and_then(|(shape, dist)| {
-            if dist < f32::EPSILON {
-                // Shape contains point, check for other shapes containing this point to resolve overlaps.
-                let other_shapes = iter
-                    .take_while(|(_, dist)| *dist < f32::EPSILON)
-                    .map(|(shape, _)| shape);
-                // The preferred shape is the highest priority shape.
-                once(shape)
-                    .chain(other_shapes)
-                    .max_by_key(|shape| shape.priority)
-                    .and_then(|best_shape| {
-                        self.model_query_for(best_shape, point).map(|q| (q, dist))
-                    })
-            } else {
-                self.model_query_for(shape, point).map(|q| (q, dist))
-            }
-        })
+    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
+        self.query_within(point, f32::EPSILON)
     }
 
     pub fn priorities(&self) -> Vec<usize> {
@@ -522,15 +512,9 @@ mod tests {
 
         // API Change: LayerTree::new now consumes the vectors
         let tree = LayerTree::new(prisms, models);
-
-        // Point is 9 units away from the X=1.0 face.
+        // Point is too far away from the X=1.0 face.
         let far_point = Point3::new(10.0, 0.5, 5.0);
-        let (q, dist) = tree
-            .query(far_point)
-            .expect("Should return nearest neighbour");
-
-        assert_eq!(q.rho, 1.0);
-        assert_abs_diff_eq!(dist, 9.0, epsilon = 1e-5);
+        assert!(tree.query(far_point).is_none());
     }
 
     #[test]

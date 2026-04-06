@@ -1,5 +1,6 @@
 use crate::geometry::point_triangle_distance_sq;
 use crate::quality::Quality;
+use crate::tree_query::nearest_to_point_within;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
@@ -228,10 +229,10 @@ impl MeshModel {
         self.qualities.len()
     }
 
-    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
-        self.bvh_tree
-            .nearest_to(point, &self.simplices)
-            .map(|(simplex, dist)| {
+    pub fn query_within(&self, point: Point3<f32>, epsilon: f32) -> Option<(Quality, f32)> {
+        // TODO: Accelerate this with the epsilon logic we use to prune the layer tree queries.
+        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, epsilon).map(
+            |(simplex, dist)| {
                 let bary = simplex.barycentric_coordinates(point);
                 let vertex_indices = self.vertex_map[simplex.id];
                 let q0 = self.qualities[vertex_indices.w];
@@ -240,7 +241,12 @@ impl MeshModel {
                 let q3 = self.qualities[vertex_indices.z];
                 let q = q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z;
                 (q, dist)
-            })
+            },
+        )
+    }
+
+    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
+        self.query_within(point, f32::EPSILON)
     }
 
     pub fn pretty_print(&self) {
@@ -458,7 +464,9 @@ mod tests {
 
         // Exterior: Query (6,4,4) while Max is (4,4,4). Dist = 2.0
         let p_out = Point3::new(6.0, 4.0, 4.0);
-        let (q_out, dist_sq_out) = mesh.query(p_out).expect("Should extrapolate");
+        let (q_out, dist_sq_out) = mesh
+            .query_within(p_out, f32::MAX)
+            .expect("Should extrapolate");
 
         assert_relative_eq!(dist_sq_out, 2.0, epsilon = 1e-5);
         assert_relative_eq!(q_out.rho, 14.0, epsilon = 1e-5);

@@ -29,32 +29,37 @@ impl ModelTree {
         Self::Mesh { mesh_model }
     }
 
-    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
+    pub fn query_within(&self, point: Point3<f32>, epsilon: f32) -> Option<(Quality, f32)> {
         match self {
-            Self::Stack(left, right) => match left.query(point) {
-                Some((quality, dist)) if dist < 1e-6 => Some((quality, dist)),
-                _ => right.query(point),
-            },
-            Self::Layers { layer_tree } => layer_tree.query(point),
-            Self::Mesh { mesh_model } => mesh_model.query(point),
+            Self::Stack(left, right) => left
+                .query_within(point, epsilon)
+                .or_else(|| right.query_within(point, epsilon)),
+            Self::Layers { layer_tree } => layer_tree.query_within(point, epsilon),
+            Self::Mesh { mesh_model } => mesh_model.query_within(point, epsilon),
             Self::Blend {
                 left,
                 right,
                 distance,
-            } => match (left.query(point), right.query(point)) {
-                (Some((quality_left, dist_left)), Some((quality_right, _)))
-                    if dist_left < *distance =>
-                {
-                    let alpha = dist_left / distance;
-                    Some((
-                        alpha * quality_right + (1.0 - alpha) * quality_left,
-                        dist_left,
-                    ))
-                }
-                (_, right) => right,
-            },
+            } => right
+                .query_within(point, epsilon)
+                .map(|(quality_right, dist_right)| {
+                    left.query_within(point, *distance)
+                        .map(|(quality_left, dist_left)| {
+                            let alpha = dist_left / distance;
+                            (
+                                alpha * quality_right + (1.0 - alpha) * quality_left,
+                                dist_left,
+                            )
+                        })
+                        .unwrap_or((quality_right, dist_right))
+                }),
         }
     }
+
+    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
+        self.query_within(point, f32::EPSILON)
+    }
+
     pub fn pretty_print(&self) {
         match self {
             Self::Stack(left, right) => {

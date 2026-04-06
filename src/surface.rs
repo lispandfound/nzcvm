@@ -5,6 +5,8 @@ use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
 use nalgebra::{Point2, Point3};
 
+use crate::tree_query::nearest_to_point_within;
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Inclusion {
     Inside,
@@ -128,9 +130,8 @@ impl Surface {
     /// Queries the surface at a specific (x, y) coordinate.
     /// Returns (Top Elevation, Bottom Elevation, Inclusion Status)
     pub fn query(&self, point: Point2<f32>) -> Option<(f32, f32, Inclusion)> {
-        self.bvh_tree
-            .nearest_to(point, &self.simplices)
-            .map(|(simplex, _dist)| {
+        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, f32::EPSILON).map(
+            |(simplex, _dist)| {
                 let bary = simplex.barycentric_coordinates(point);
 
                 let indices = self.vertex_map[simplex.id];
@@ -152,7 +153,8 @@ impl Surface {
                     Inclusion::Outside
                 };
                 (top, bottom, mask)
-            })
+            },
+        )
     }
 }
 

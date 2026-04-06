@@ -1,25 +1,39 @@
-use nalgebra::Point3;
+use nalgebra::{Point2, Point3, Vector2};
 
+/// Calculates the squared distance from a point to a line segment.
 #[inline(always)]
-pub fn line_to_point_dist_sq(px: f32, py: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let line_len_sq = dx * dx + dy * dy;
+pub fn line_to_point_dist_sq(p: Point2<f32>, a: Point2<f32>, b: Point2<f32>) -> f32 {
+    let ab = b - a;
+    let ap = p - a;
+    let line_len_sq = ab.norm_squared();
 
     if line_len_sq == 0.0 {
-        return (px - x1).powi(2) + (py - y1).powi(2);
+        return ap.norm_squared();
     }
 
-    // Projection scalar t = [(P-A) . (B-A)] / |B-A|^2
-    let t = ((px - x1) * dx + (py - y1) * dy) / line_len_sq;
-    let t = t.clamp(0.0, 1.0);
+    // Projection scalar t clamped to [0, 1] to stay on the segment
+    let t = (ap.dot(&ab) / line_len_sq).clamp(0.0, 1.0);
+    let closest = a + ab * t;
 
-    let closest_x = x1 + t * dx;
-    let closest_y = y1 + t * dy;
-
-    (px - closest_x).powi(2) + (py - closest_y).powi(2)
+    (p - closest).norm_squared()
 }
 
+/// Returns the closest point on a line segment to a given point.
+#[inline(always)]
+pub fn closest_point_to_line(p: Point2<f32>, a: Point2<f32>, b: Point2<f32>) -> Point2<f32> {
+    let ab = b - a;
+    let ap = p - a;
+    let line_len_sq = ab.norm_squared();
+
+    if line_len_sq == 0.0 {
+        return a;
+    }
+
+    let t = (ap.dot(&ab) / line_len_sq).clamp(0.0, 1.0);
+    a + ab * t
+}
+
+/// Calculates the squared distance from a 3D point to a triangle.
 pub fn point_triangle_distance_sq(
     q: Point3<f32>,
     p1: Point3<f32>,
@@ -45,7 +59,7 @@ pub fn point_triangle_distance_sq(
         return (q - p2).norm_squared();
     }
 
-    // Check if q is in edge region of ab, if so return distance to edge ab
+    // Check if q is in edge region of ab
     let vc = d1 * d4 - d3 * d2;
     if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
         let v = d1 / (d1 - d3);
@@ -60,14 +74,14 @@ pub fn point_triangle_distance_sq(
         return (q - p3).norm_squared();
     }
 
-    // Check if q is in edge region of ac, if so return distance to edge ac
+    // Check if q is in edge region of ac
     let vb = d5 * d2 - d1 * d6;
     if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
         let w = d2 / (d2 - d6);
         return (q - (p1 + ac * w)).norm_squared();
     }
 
-    // Check if q is in edge region of bc, if so return distance to edge bc
+    // Check if q is in edge region of bc
     let va = d3 * d6 - d5 * d4;
     if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
         let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
@@ -79,5 +93,6 @@ pub fn point_triangle_distance_sq(
     let v = vb * denom;
     let w = vc * denom;
     let projection = p1 + ab * v + ac * w;
+
     (q - projection).norm_squared()
 }

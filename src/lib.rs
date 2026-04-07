@@ -29,8 +29,10 @@ mod nzcvm {
     use ordered_float::OrderedFloat;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
+    use pyo3::wrap_pymodule;
     use pyo3::types::PyDict;
     use std::collections::BTreeMap;
+
 
     use std::sync::Arc;
 
@@ -120,7 +122,6 @@ mod nzcvm {
                 inner: Arc::new(ModelTree::Stack(self.inner.clone(), other.inner.clone())),
             }
         }
-        // TODO: Blend endpoint
 
         fn to_dict<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyDict>> {
             fn aux<'py>(py: Python<'py>, model_tree: &ModelTree) -> PyResult<Bound<'py, PyDict>> {
@@ -279,5 +280,20 @@ mod nzcvm {
         Ok(PyModel {
             inner: Arc::new(ModelTree::layered_model(layer_tree)),
         })
+    }
+
+    #[pymodule_init]
+    fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
+        m.add_class::<PyQuality>()?;
+        m.add_class::<PyModel>()?;
+
+        m.add_function(wrap_pyfunction!(mesh, m)?)?;
+        m.add_function(wrap_pyfunction!(load_mesh, m)?)?;
+        m.add_function(wrap_pyfunction!(load_layers_from_dir, m)?)?;
+        m.add_function(wrap_pyfunction!(create_layer_model, m)?)?;
+
+        m.add_wrapped(wrap_pymodule!(crate::geomodelgrid::geomodelgrid))?;
+
+        Ok(())
     }
 }

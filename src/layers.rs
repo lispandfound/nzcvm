@@ -1,7 +1,7 @@
-use crate::geometry::{self, closest_point_to_line, line_to_point_dist_sq};
+use crate::geometry::{self, closest_point_to_line};
 use crate::quality::Quality;
 use crate::surface::{Inclusion, Simplex, Surface, SurfacePoint};
-use crate::tree_query::nearest_to_point_iterator;
+use crate::tree_query::{nearest_to_point_iterator, nearest_to_point_within};
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
@@ -16,7 +16,6 @@ use nalgebra::{Point2, Point3};
 use ndarray::{array, Array2, ArrayView2};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
-use std::iter::once;
 use std::path::Path;
 
 #[derive(Debug, Clone)]

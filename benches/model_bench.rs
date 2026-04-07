@@ -9,6 +9,7 @@ use nzcvm::mesh::MeshModel;
 use nzcvm::model::ModelTree;
 use nzcvm::quality::Quality;
 use ordered_float::OrderedFloat;
+use pprof::criterion::{Output, PProfProfiler};
 use std::collections::BTreeMap;
 use std::hint::black_box;
 use std::sync::Arc;
@@ -366,12 +367,16 @@ fn bench_realistic_blended_model(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_realistic_blended_model,
-    bench_complex_stacked_model,
-    bench_mesh_queries,
-    bench_layer_poly_complexity,
-    bench_layer_surface_complexity,
-);
+criterion_group! {
+    name = benches;
+    config = Criterion::default()
+        .with_profiler(PProfProfiler::new(500, Output::Flamegraph(None)));
+    targets =
+        bench_realistic_blended_model,
+        bench_complex_stacked_model,
+        bench_mesh_queries,
+        bench_layer_poly_complexity,
+        bench_layer_surface_complexity,
+}
+
 criterion_main!(benches);

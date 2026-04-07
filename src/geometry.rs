@@ -1,8 +1,8 @@
-use nalgebra::{Point2, Point3, Vector2};
+use crate::real::Real;
+use nalgebra::{Point2, Point3};
 
 /// Calculates the squared distance from a point to a line segment.
-#[inline(always)]
-pub fn line_to_point_dist_sq(p: Point2<f32>, a: Point2<f32>, b: Point2<f32>) -> f32 {
+pub fn line_to_point_dist_sq(p: Point2<Real>, a: Point2<Real>, b: Point2<Real>) -> Real {
     let ab = b - a;
     let ap = p - a;
     let line_len_sq = ab.norm_squared();
@@ -19,8 +19,7 @@ pub fn line_to_point_dist_sq(p: Point2<f32>, a: Point2<f32>, b: Point2<f32>) -> 
 }
 
 /// Returns the closest point on a line segment to a given point.
-#[inline(always)]
-pub fn closest_point_to_line(p: Point2<f32>, a: Point2<f32>, b: Point2<f32>) -> Point2<f32> {
+pub fn closest_point_to_line(p: Point2<Real>, a: Point2<Real>, b: Point2<Real>) -> Point2<Real> {
     let ab = b - a;
     let ap = p - a;
     let line_len_sq = ab.norm_squared();
@@ -35,11 +34,11 @@ pub fn closest_point_to_line(p: Point2<f32>, a: Point2<f32>, b: Point2<f32>) -> 
 
 /// Calculates the squared distance from a 3D point to a triangle.
 pub fn point_triangle_distance_sq(
-    q: Point3<f32>,
-    p1: Point3<f32>,
-    p2: Point3<f32>,
-    p3: Point3<f32>,
-) -> f32 {
+    q: Point3<Real>,
+    p1: Point3<Real>,
+    p2: Point3<Real>,
+    p3: Point3<Real>,
+) -> Real {
     let ab = p2 - p1;
     let ac = p3 - p1;
     let aq = q - p1;

@@ -1,13 +1,12 @@
-use core::cmp::Ordering;
-use std::collections::BinaryHeap;
-
 use bvh::{
     aabb::Bounded,
     bounding_hierarchy::BHValue,
     bvh::{Bvh, BvhNode},
     point_query::PointDistance,
 };
+use core::cmp::Ordering;
 use nalgebra::Point;
+use std::collections::BinaryHeap;
 
 #[derive(Debug, Clone, Copy)]
 enum Distance<T: PartialOrd> {
@@ -276,26 +275,27 @@ fn nearest_to_recursive<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::real::Real;
     use bvh::aabb::Aabb;
     use bvh::bounding_hierarchy::BHShape;
     use nalgebra::{Point3, Vector3};
 
     #[derive(Debug, Clone, PartialEq)]
     struct Sphere {
-        center: Point3<f32>,
-        radius: f32,
+        center: Point3<Real>,
+        radius: Real,
         node_index: usize,
         id: usize, // To easily identify shapes in asserts
     }
 
-    impl Bounded<f32, 3> for Sphere {
-        fn aabb(&self) -> Aabb<f32, 3> {
+    impl Bounded<Real, 3> for Sphere {
+        fn aabb(&self) -> Aabb<Real, 3> {
             let half_size = Vector3::new(self.radius, self.radius, self.radius);
             Aabb::with_bounds(self.center - half_size, self.center + half_size)
         }
     }
 
-    impl BHShape<f32, 3> for Sphere {
+    impl BHShape<Real, 3> for Sphere {
         fn set_bh_node_index(&mut self, index: usize) {
             self.node_index = index;
         }
@@ -304,8 +304,8 @@ mod tests {
         }
     }
 
-    impl PointDistance<f32, 3> for Sphere {
-        fn distance_squared(&self, point: Point3<f32>) -> f32 {
+    impl PointDistance<Real, 3> for Sphere {
+        fn distance_squared(&self, point: Point3<Real>) -> Real {
             let dist = nalgebra::distance(&self.center, &point);
             // Distance to the surface of the sphere
             let surface_dist = (dist - self.radius).max(0.0);
@@ -313,7 +313,7 @@ mod tests {
         }
     }
 
-    fn setup_test_bvh() -> (Bvh<f32, 3>, Vec<Sphere>) {
+    fn setup_test_bvh() -> (Bvh<Real, 3>, Vec<Sphere>) {
         let mut shapes = vec![
             Sphere {
                 center: Point3::new(10.0, 0.0, 0.0),
@@ -352,7 +352,7 @@ mod tests {
         // ID 3 (dist: ~4), ID 1 (dist: ~9), ID 2 (dist: ~19), ID 4 (dist: ~99)
         let query_point = Point3::new(0.0, 0.0, 0.0);
 
-        let iterator = NearestIterator::new(&bvh, &query_point, &shapes, f32::MAX);
+        let iterator = NearestIterator::new(&bvh, &query_point, &shapes, Real::MAX);
         let results: Vec<_> = iterator.collect();
 
         assert_eq!(
@@ -391,7 +391,7 @@ mod tests {
         let query_point = Point3::new(12.0, 0.0, 0.0);
 
         // Closest to 12.0 is ID 1 (10.0), then ID 3 (5.0), then ID 2 (20.0)
-        let mut iterator = NearestIterator::new(&bvh, &query_point, &shapes, f32::MAX);
+        let mut iterator = NearestIterator::new(&bvh, &query_point, &shapes, Real::MAX);
 
         // Retrieve k=2 items
         let first = iterator.next().unwrap().0;
@@ -410,7 +410,7 @@ mod tests {
         let bvh = Bvh::build(&mut shapes);
         let query_point = Point3::new(0.0, 0.0, 0.0);
 
-        let mut iterator = NearestIterator::new(&bvh, &query_point, &shapes, f32::MAX);
+        let mut iterator = NearestIterator::new(&bvh, &query_point, &shapes, Real::MAX);
         assert!(
             iterator.next().is_none(),
             "Empty BVH should yield None immediately"

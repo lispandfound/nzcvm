@@ -1,7 +1,8 @@
 use crate::geometry::{self, closest_point_to_line};
 use crate::quality::Quality;
+use crate::real::Real;
 use crate::surface::{Inclusion, Simplex, Surface, SurfacePoint};
-use crate::tree_query::{nearest_to_point_iterator, nearest_to_point_within};
+use crate::tree_query::nearest_to_point_iterator;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
@@ -20,14 +21,14 @@ use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct LineShape {
-    pub start: Point2<f32>,
-    pub end: Point2<f32>,
+    pub start: Point2<Real>,
+    pub end: Point2<Real>,
 
     pub node_index: usize,
 }
 
-impl From<geo::Line<f32>> for LineShape {
-    fn from(line: geo::Line<f32>) -> Self {
+impl From<geo::Line<Real>> for LineShape {
+    fn from(line: geo::Line<Real>) -> Self {
         let a = Point2::new(line.start.x, line.start.y);
         let b = Point2::new(line.end.x, line.end.y);
         Self {
@@ -38,8 +39,8 @@ impl From<geo::Line<f32>> for LineShape {
     }
 }
 
-impl Bounded<f32, 2> for LineShape {
-    fn aabb(&self) -> Aabb<f32, 2> {
+impl Bounded<Real, 2> for LineShape {
+    fn aabb(&self) -> Aabb<Real, 2> {
         let min_x = self.start.x.min(self.end.x);
         let min_y = self.start.y.min(self.end.y);
         let max_x = self.start.x.max(self.end.x);
@@ -48,7 +49,7 @@ impl Bounded<f32, 2> for LineShape {
     }
 }
 
-impl BHShape<f32, 2> for LineShape {
+impl BHShape<Real, 2> for LineShape {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -58,8 +59,8 @@ impl BHShape<f32, 2> for LineShape {
     }
 }
 
-impl PointDistance<f32, 2> for LineShape {
-    fn distance_squared(&self, point: Point2<f32>) -> f32 {
+impl PointDistance<Real, 2> for LineShape {
+    fn distance_squared(&self, point: Point2<Real>) -> Real {
         geometry::line_to_point_dist_sq(point, self.start, self.end)
     }
 }
@@ -70,17 +71,17 @@ pub struct LayerGeometry {
     pub priority: usize,
     pub surface: Surface,
 
-    poly: Polygon<f32>,
-    spatial_tree: Bvh<f32, 2>,
+    poly: Polygon<Real>,
+    spatial_tree: Bvh<Real, 2>,
     spatial_shapes: Vec<LineShape>,
 
-    z_abs_top: f32,
-    z_abs_bottom: f32,
+    z_abs_top: Real,
+    z_abs_bottom: Real,
     node_index: usize,
 }
 
 impl LayerGeometry {
-    pub fn new_with_flat_surface(bounds: &Polygon<f32>, z_top: f32, z_bottom: f32) -> Self {
+    pub fn new_with_flat_surface(bounds: &Polygon<Real>, z_top: Real, z_bottom: Real) -> Self {
         // Due to extrapolation, we can treat the "interpolation" onto a flat
         // surface at the top and bottom using interpolation with just four points.
         let x = array!([0.0, 1.0], [0.0, 1.0]);
@@ -98,11 +99,11 @@ impl LayerGeometry {
     }
 
     pub fn build(
-        bounds: &Polygon<f32>,
-        surface_x: ArrayView2<f32>,
-        surface_y: ArrayView2<f32>,
-        surface_z_top: ArrayView2<f32>,
-        surface_z_bottom: ArrayView2<f32>,
+        bounds: &Polygon<Real>,
+        surface_x: ArrayView2<Real>,
+        surface_y: ArrayView2<Real>,
+        surface_z_top: ArrayView2<Real>,
+        surface_z_bottom: ArrayView2<Real>,
     ) -> Self {
         let (nx, ny) = surface_x.dim();
 
@@ -152,7 +153,7 @@ impl LayerGeometry {
                         Inclusion::Boundary
                     };
                     let coords = tri.to_array();
-                    let points: [Point2<f32>; 3] = [
+                    let points: [Point2<Real>; 3] = [
                         Point2::new(coords[0].x, coords[0].y),
                         Point2::new(coords[1].x, coords[1].y),
                         Point2::new(coords[2].x, coords[2].y),
@@ -208,12 +209,12 @@ impl LayerGeometry {
     }
 }
 
-impl PointDistance<f32, 3> for LayerGeometry {
-    fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
+impl PointDistance<Real, 3> for LayerGeometry {
+    fn distance_squared(&self, query_point: Point3<Real>) -> Real {
         let projected_point = query_point.xy();
         let (z_top, z_bottom, inclusion) = match self.surface.query(projected_point) {
             Some(res) => res,
-            None => return f32::INFINITY,
+            None => return Real::INFINITY,
         };
 
         let (dxdy_sq, dz_sq) = match inclusion {
@@ -245,8 +246,8 @@ impl PointDistance<f32, 3> for LayerGeometry {
     }
 }
 
-impl Bounded<f32, 3> for LayerGeometry {
-    fn aabb(&self) -> Aabb<f32, 3> {
+impl Bounded<Real, 3> for LayerGeometry {
+    fn aabb(&self) -> Aabb<Real, 3> {
         let coords = self.poly.bounding_rect().unwrap();
         let min = coords.min();
         let max = coords.max();
@@ -271,16 +272,16 @@ pub fn deserialise_layer_geometry(group: &Group) -> Result<LayerGeometry> {
 
     let bounds = match geo_obj {
         Geometry::Polygon(p) => p.map_coords(|c| Coord {
-            x: c.x as f32,
-            y: c.y as f32,
+            x: c.x as Real,
+            y: c.y as Real,
         }),
         _ => return Err("Bounds dataset is not a polygon".into()),
     };
 
-    let x: Array2<f32> = group.dataset("surface_x")?.read_2d()?;
-    let y: Array2<f32> = group.dataset("surface_y")?.read_2d()?;
-    let z_top: Array2<f32> = group.dataset("surface_z_top")?.read_2d()?;
-    let z_bottom: Array2<f32> = group.dataset("surface_z_bottom")?.read_2d()?;
+    let x: Array2<Real> = group.dataset("surface_x")?.read_2d()?;
+    let y: Array2<Real> = group.dataset("surface_y")?.read_2d()?;
+    let z_top: Array2<Real> = group.dataset("surface_z_top")?.read_2d()?;
+    let z_bottom: Array2<Real> = group.dataset("surface_z_bottom")?.read_2d()?;
     let mut geometry =
         LayerGeometry::build(&bounds, x.view(), y.view(), z_top.view(), z_bottom.view());
     geometry.priority = priority;
@@ -302,7 +303,7 @@ pub fn deserialise_model(group: &Group) -> Result<Model> {
             Ok(Model::Uniform(q))
         }
         "layered" => {
-            let data: Array2<f32> = group.dataset("layers")?.read_2d()?;
+            let data: Array2<Real> = group.dataset("layers")?.read_2d()?;
             let mut layers = BTreeMap::new();
 
             for row in data.axis_iter(ndarray::Axis(0)) {
@@ -334,7 +335,7 @@ pub fn read_model_data<P: AsRef<Path>>(path: P) -> Result<(LayerGeometry, Model)
     Ok((geometry, model))
 }
 
-impl BHShape<f32, 3> for LayerGeometry {
+impl BHShape<Real, 3> for LayerGeometry {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -349,12 +350,12 @@ pub enum Model {
     Uniform(Quality),
     /// 1D velocity model layering (common in basins).
     Layered {
-        layers: BTreeMap<OrderedFloat<f32>, Quality>,
+        layers: BTreeMap<OrderedFloat<Real>, Quality>,
     },
 }
 
 impl Model {
-    pub fn query(&self, point: Point3<f32>) -> Option<Quality> {
+    pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
         match self {
             Self::Uniform(quality) => Some(*quality),
             Self::Layered { layers } => layers
@@ -367,7 +368,7 @@ impl Model {
 }
 
 pub struct LayerTree {
-    bvh_tree: Bvh<f32, 3>,
+    bvh_tree: Bvh<Real, 3>,
     models: Vec<Model>,
     shapes: Vec<LayerGeometry>,
 }
@@ -387,7 +388,7 @@ impl LayerTree {
         }
     }
 
-    pub fn query_within(&self, point: Point3<f32>, epsilon: f32) -> Option<(Quality, f32)> {
+    pub fn query_within(&self, point: Point3<Real>, epsilon: Real) -> Option<(Quality, Real)> {
         nearest_to_point_iterator(&self.bvh_tree, &self.shapes, &point, epsilon)
             .max_by_key(|(shape, _)| shape.priority)
             .and_then(|(best_shape, dist)| {
@@ -395,19 +396,19 @@ impl LayerTree {
             })
     }
 
-    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
-        self.query_within(point, f32::EPSILON)
+    pub fn query(&self, point: Point3<Real>) -> Option<(Quality, Real)> {
+        self.query_within(point, Real::EPSILON)
     }
 
     pub fn priorities(&self) -> Vec<usize> {
         self.shapes.iter().map(|shape| shape.priority).collect()
     }
 
-    pub fn bounds(&self) -> Vec<Aabb<f32, 3>> {
+    pub fn bounds(&self) -> Vec<Aabb<Real, 3>> {
         self.shapes.iter().map(|shape| shape.aabb()).collect()
     }
 
-    fn model_query_for(&self, shape: &LayerGeometry, point: Point3<f32>) -> Option<Quality> {
+    fn model_query_for(&self, shape: &LayerGeometry, point: Point3<Real>) -> Option<Quality> {
         let z_top = shape
             .surface
             .query(point.xy())
@@ -437,7 +438,7 @@ mod tests {
     use nalgebra::Point3;
     use ordered_float::OrderedFloat;
 
-    fn create_unit_prism(z_top: f32, z_bottom: f32) -> LayerGeometry {
+    fn create_unit_prism(z_top: Real, z_bottom: Real) -> LayerGeometry {
         let poly = polygon![
             (x: 0.0, y: 0.0),
             (x: 1.0, y: 0.0),
@@ -447,7 +448,7 @@ mod tests {
         LayerGeometry::new_with_flat_surface(&poly, z_top, z_bottom)
     }
 
-    fn mock_quality(val: f32) -> Quality {
+    fn mock_quality(val: Real) -> Quality {
         Quality {
             rho: val,
             vp: val,
@@ -475,7 +476,7 @@ mod tests {
         assert_abs_diff_eq!(
             prism.distance_squared(above),
             prism.distance_squared(below),
-            epsilon = f32::EPSILON
+            epsilon = Real::EPSILON
         );
     }
 
@@ -529,7 +530,7 @@ mod tests {
         let p1 = Point3::new(0.5, 0.5, 0.5);
         let p2 = Point3::new(0.5, 0.5, 10.5);
 
-        // API Change: query returns (Quality, f32)
+        // API Change: query returns (Quality, Real)
         assert_eq!(tree.query(p1).unwrap().0.rho, 1.0);
         assert_eq!(tree.query(p2).unwrap().0.rho, 2.0);
     }

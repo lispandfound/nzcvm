@@ -1,3 +1,4 @@
+
 pub mod geometry;
 pub mod geomodelgrid;
 pub mod layers;
@@ -9,10 +10,12 @@ pub mod tree_query;
 pub mod writer;
 pub mod coordinates;
 pub mod generate;
+pub mod real;
 use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
+    use crate::real::Real;
     use crate::layers::{read_model_data, LayerGeometry, LayerTree, Model};
     use crate::mesh::{load_mesh_from_hdf5, MeshModel};
     use crate::model::ModelTree;
@@ -36,15 +39,15 @@ mod nzcvm {
     #[pyclass]
     pub struct PyQuality {
         #[pyo3(get)]
-        pub rho: f32,
+        pub rho: Real,
         #[pyo3(get)]
-        pub vp: f32,
+        pub vp: Real,
         #[pyo3(get)]
-        pub vs: f32,
+        pub vs: Real,
         #[pyo3(get)]
-        pub qp: f32,
+        pub qp: Real,
         #[pyo3(get)]
-        pub qs: f32,
+        pub qs: Real,
     }
 
     impl From<Quality> for PyQuality {
@@ -66,17 +69,17 @@ mod nzcvm {
 
     #[pymethods]
     impl PyModel {
-        pub fn query(&self, x: f32, y: f32, z: f32) -> PyResult<Option<(PyQuality, f32)>> {
+        pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<(PyQuality, Real)>> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query(pt).map(|(q, d)| (q.into(), d)))
         }
         pub fn query_many<'py>(
             &self,
             py: Python<'py>,
-            x_py: PyReadonlyArray1<f32>,
-            y_py: PyReadonlyArray1<f32>,
-            z_py: PyReadonlyArray1<f32>,
-        ) -> Bound<'py, PyArray2<f32>> {
+            x_py: PyReadonlyArray1<Real>,
+            y_py: PyReadonlyArray1<Real>,
+            z_py: PyReadonlyArray1<Real>,
+        ) -> Bound<'py, PyArray2<Real>> {
             let x = x_py.as_array();
             let y = y_py.as_array();
             let z = z_py.as_array();
@@ -140,7 +143,7 @@ mod nzcvm {
 
                     ModelTree::Layers {layer_tree} => {
                         dict.set_item("type", "layered_models")?;
-                        let aabb_tuples: Vec<(f32, f32, f32, f32, f32, f32)> = layer_tree.bounds().iter().map(|aabb| (aabb.min.x, aabb.min.y, aabb.min.z, aabb.max.x, aabb.max.y, aabb.max.z)).collect();
+                        let aabb_tuples: Vec<(Real, Real, Real, Real, Real, Real)> = layer_tree.bounds().iter().map(|aabb| (aabb.min.x, aabb.min.y, aabb.min.z, aabb.max.x, aabb.max.y, aabb.max.z)).collect();
                         let priorities = layer_tree.priorities();
                         dict.set_item("bounds", aabb_tuples)?;
                         dict.set_item("priorities", priorities)?;
@@ -163,13 +166,13 @@ mod nzcvm {
 
     #[pyfunction]
     pub fn mesh(
-        vertices_py: PyReadonlyArray2<f32>,
-        qualities_py: PyReadonlyArray2<f32>,
+        vertices_py: PyReadonlyArray2<Real>,
+        qualities_py: PyReadonlyArray2<Real>,
         dimensions: (usize, usize, usize),
     ) -> PyResult<PyModel> {
         let (_, nj, nk) = dimensions;
         let chart = |i, j, k| k + j * nk + i * nj * nk;
-        let vertices: Vec<Point3<f32>> = vertices_py
+        let vertices: Vec<Point3<Real>> = vertices_py
             .as_array()
             .rows()
             .into_iter()
@@ -179,7 +182,7 @@ mod nzcvm {
             .as_array()
             .rows()
             .into_iter()
-            .map(|row| Quality { // TODO: quality should have a from ArrayView<f32>
+            .map(|row| Quality { // TODO: quality should have a from ArrayView<Real>
                 rho: row[0],
                 vp: row[1],
                 vs: row[2],
@@ -229,16 +232,16 @@ mod nzcvm {
 
     #[pyfunction]
     pub fn create_layer_model(
-        bounds_py: PyReadonlyArray2<f32>,
-        surface_x_py: PyReadonlyArray2<f32>,
-        surface_y_py: PyReadonlyArray2<f32>,
-        z_top_py: PyReadonlyArray2<f32>,
-        z_bottom_py: PyReadonlyArray2<f32>,
-        layer_params_py: PyReadonlyArray2<f32>,
+        bounds_py: PyReadonlyArray2<Real>,
+        surface_x_py: PyReadonlyArray2<Real>,
+        surface_y_py: PyReadonlyArray2<Real>,
+        z_top_py: PyReadonlyArray2<Real>,
+        z_bottom_py: PyReadonlyArray2<Real>,
+        layer_params_py: PyReadonlyArray2<Real>,
         priority: usize,
     ) -> PyResult<PyModel> {
         let bounds_arr = bounds_py.as_array();
-        let coords: Vec<Coord<f32>> = bounds_arr
+        let coords: Vec<Coord<Real>> = bounds_arr
             .rows()
             .into_iter()
             .map(|r| Coord { x: r[0], y: r[1] })

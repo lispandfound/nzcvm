@@ -1,17 +1,18 @@
+use crate::real::Real;
 use ndarray::Array1;
 use std::ops::{Add, Mul};
 
 #[derive(Clone, Debug, Copy)]
 pub struct Quality {
-    pub rho: f32,
-    pub vp: f32,
-    pub vs: f32,
-    pub qp: f32,
-    pub qs: f32,
+    pub rho: Real,
+    pub vp: Real,
+    pub vs: Real,
+    pub qp: Real,
+    pub qs: Real,
 }
 
-impl Into<Array1<f32>> for Quality {
-    fn into(self) -> Array1<f32> {
+impl Into<Array1<Real>> for Quality {
+    fn into(self) -> Array1<Real> {
         Array1::from_iter([self.rho, self.vp, self.vs, self.qp, self.qs].into_iter())
     }
 }
@@ -30,10 +31,10 @@ impl Add for Quality {
     }
 }
 
-impl Mul<f32> for Quality {
+impl Mul<Real> for Quality {
     type Output = Self;
 
-    fn mul(self, rhs: f32) -> Self::Output {
+    fn mul(self, rhs: Real) -> Self::Output {
         Self {
             rho: self.rho * rhs,
             vp: self.vp * rhs,
@@ -44,7 +45,7 @@ impl Mul<f32> for Quality {
     }
 }
 
-impl Mul<Quality> for f32 {
+impl Mul<Quality> for Real {
     type Output = Quality;
 
     fn mul(self, rhs: Quality) -> Self::Output {

@@ -1,10 +1,4 @@
-use hdf5_metno::types::{FixedAscii, FixedUnicode};
-use hdf5_metno::{
-    types::TypeDescriptor, types::VarLenAscii, types::VarLenUnicode, Attribute, Error, File, Group,
-    Result,
-};
-use ndarray::{Array2, Array4};
-use std::{path::PathBuf, str::FromStr};
+use crate::real::Real;
 
 /// Grouped Metadata Sub-structs
 #[derive(Default, Clone, Debug)]
@@ -70,8 +64,8 @@ pub type Dimensions = (usize, usize, usize, usize);
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub resolution_horiz: f32,
-    pub resolution_vert: f32,
-    pub z_top: f32,
+    pub resolution_vert: Real,
+    pub z_top: Real,
     pub shape: Dimensions,
     pub name: String,
 }
@@ -84,20 +78,20 @@ impl Block {
 
     pub fn size(&self) -> usize {
         let (nx, ny, nz, nc) = self.shape;
-        nx * ny * nz * nc * size_of::<f32>()
+        nx * ny * nz * nc * size_of::<Real>()
     }
 }
 
 pub struct Surface {
     pub shape: (usize, usize),
-    pub resolution_horiz: f32,
+    pub resolution_horiz: Real,
     pub name: String,
 }
 
 impl Surface {
     pub fn size(&self) -> usize {
         let (nx, ny) = self.shape;
-        nx * ny * size_of::<f32>()
+        nx * ny * size_of::<Real>()
     }
 }
 
@@ -261,233 +255,4 @@ impl GeoModelGridBuilder {
             blocks: self.blocks,
         }
     }
-}
-
-// --- End Builder Pattern ---
-
-const N: usize = 2048;
-
-fn read_h5_string(attr: &Attribute) -> Result<String> {
-    let dtype = attr.dtype()?;
-    match dtype.to_descriptor()? {
-        TypeDescriptor::VarLenUnicode => {
-            let v = attr.read_scalar::<VarLenUnicode>()?;
-            Ok(v.as_str().to_string())
-        }
-        TypeDescriptor::VarLenAscii => {
-            let v = attr.read_scalar::<VarLenAscii>()?;
-            Ok(v.as_str().to_string())
-        }
-        TypeDescriptor::FixedAscii(_len) => {
-            let str: hdf5_metno::types::FixedAscii<N> = attr.read_scalar::<FixedAscii<_>>()?;
-            Ok(str.to_string())
-        }
-        TypeDescriptor::FixedUnicode(_len) => {
-            let str: hdf5_metno::types::FixedUnicode<N> = attr.read_scalar::<FixedUnicode<_>>()?;
-            Ok(str.to_string())
-        }
-        _ => Err(Error::from("Expected a string datatype".to_string())),
-    }
-}
-
-fn read_h5_string_array(attr: &Attribute) -> Result<Vec<String>> {
-    let dtype = attr.dtype()?;
-    match dtype.to_descriptor()? {
-        TypeDescriptor::VarLenUnicode => {
-            let v = attr.read_1d::<VarLenUnicode>()?;
-            Ok(v.iter().map(|s| s.as_str().to_string()).collect())
-        }
-        TypeDescriptor::VarLenAscii => {
-            let v = attr.read_1d::<VarLenAscii>()?;
-            Ok(v.iter().map(|s| s.as_str().to_string()).collect())
-        }
-        TypeDescriptor::FixedAscii(_len) => {
-            let raw_vec = attr.read_1d::<FixedAscii<N>>()?;
-            Ok(raw_vec.iter().map(|s| s.to_string()).collect())
-        }
-        TypeDescriptor::FixedUnicode(_len) => {
-            let raw_vec = attr.read_1d::<FixedUnicode<N>>()?;
-            Ok(raw_vec.iter().map(|s| s.to_string()).collect())
-        }
-        _ => Err(Error::from("Expected a string array datatype".to_string())),
-    }
-}
-
-impl GeoModelGrid {
-    pub fn builder() -> GeoModelGridBuilder {
-        GeoModelGridBuilder::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use approx::assert_abs_diff_eq;
-    use ndarray::{Array2, Array4};
-    use std::path::PathBuf;
-    use tempfile::NamedTempFile;
-
-    fn get_fixture_path(filename: &str) -> PathBuf {
-        let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        path.push("tests/fixtures");
-        path.push(filename);
-        path
-    }
-
-    // Notice how much cleaner constructing mock data is now!
-    fn create_mock_grid(with_topography: bool) -> GeoModelGrid {
-        let mut builder = GeoModelGrid::builder()
-            .title("Test Model")
-            .id("UUID-1234")
-            .description("A unit test model")
-            .version("1.0.0")
-            .history("First version")
-            .comment("Test comment")
-            .license("CC0")
-            .auxiliary(r#"{"0": "zero"}"#)
-            .creator_name("Alice Scientist")
-            .creator_email("alice@example.com")
-            .creator_institution("Geo Lab")
-            .acknowledgement("Thanks to everyone")
-            .repository_doi("this.is.a.doi")
-            .repository_name("Some Repo")
-            .repository_url("http://example.com")
-            .data_layout("vertex")
-            .crs("EPSG:4326")
-            .authors(vec!["Alice".to_string(), "Bob".to_string()])
-            .references(vec!["Ref 1".to_string()])
-            .keywords(vec!["key1".to_string()])
-            .data_units(vec!["m".to_string(), "m/s".to_string()])
-            .data_values(vec!["one".to_string(), "two".to_string()])
-            .origin_x(0.0)
-            .origin_y(0.0)
-            .y_azimuth(90.0)
-            .dim_x(100.0)
-            .dim_y(100.0)
-            .dim_z(50.0)
-            .add_block(Block {
-                name: "test1".to_string(),
-                resolution_horiz: 1.0,
-                resolution_vert: 0.5,
-                z_top: 10.0,
-                shape: (10, 10, 5, 1),
-            })
-            .add_block(Block {
-                name: "test2".to_string(),
-                resolution_horiz: 1.0,
-                resolution_vert: 0.5,
-                z_top: 5.0,
-                shape: (10, 10, 5, 1),
-            });
-
-        if with_topography {
-            builder = builder.add_surface(Surface {
-                shape: (10, 10),
-                resolution_horiz: 1.0,
-                name: "surface".to_string(),
-            });
-        }
-
-        builder.build()
-    }
-
-    // #[test]
-    // fn test_san_francisco() -> Result<()> {
-    //     let path = get_fixture_path("USGS_SFCVM_v21-0_detailed.berkeley.h5");
-    //     let loaded = GeoModelGrid::load(path)?;
-
-    //     // Assertions mapped to the newly grouped sub-structs
-    //     assert_eq!(loaded.metadata.attribution.acknowledgement, "");
-    //     assert_eq!(loaded.metadata.attribution.authors.len(), 2);
-    //     assert_eq!(loaded.metadata.attribution.authors[0], "Aagaard, Brad T.");
-    //     assert_eq!(loaded.metadata.attribution.authors[1], "Hirakawa, Evan T.");
-    //     assert_eq!(
-    //         loaded.metadata.basic.description,
-    //         "USGS 3D seismic velocity model for the San Francisco Bay region (detailed domain)"
-    //     );
-    //     assert_eq!(loaded.metadata.basic.version, "21.0");
-    //     assert_eq!(loaded.metadata.basic.id, "usgs-sfcvm-detailed");
-
-    //     assert_eq!(
-    //         loaded.metadata.coords.crs,
-    //         "PROJCS[\"unnamed\",GEOGCS[\"NAD83\",DATUM[\"North_American_Datum_1983\",SPHEROID[\"GRS 1980\",6378137,298.257222101,AUTHORITY[\"EPSG\",\"7019\"]],TOWGS84[0,0,0,0,0,0,0],AUTHORITY[\"EPSG\",\"6269\"]],PRIMEM[\"Greenwich\",0,AUTHORITY[\"EPSG\",\"8901\"]],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AUTHORITY[\"EPSG\",\"4269\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",35],PARAMETER[\"central_meridian\",-123],PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"Meter\",1]]"
-    //     );
-
-    //     assert_eq!(loaded.blocks.len(), 4);
-
-    //     let first_block = &loaded.blocks[0];
-    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 0]], 2659.72, epsilon = 0.1);
-    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 1]], 5459.42, epsilon = 0.1);
-    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 5]], 22.0, epsilon = 0.1);
-    //     assert_abs_diff_eq!(first_block.block[[0, 0, 0, 6]], 12.0, epsilon = 0.1);
-
-    //     assert_abs_diff_eq!(first_block.block[[0, 0, 1, 0]], 2660.61, epsilon = 0.1);
-
-    //     Ok(())
-    // }
-
-    // #[test]
-    // fn test_full_round_trip() -> Result<()> {
-    //     let tmp_file = NamedTempFile::new().unwrap();
-    //     let path = tmp_file.path().to_str().unwrap();
-
-    //     let original = create_mock_grid(true);
-
-    //     original.save(path)?;
-    //     let loaded = GeoModelGrid::load(PathBuf::from(path))?;
-
-    //     // Assertions mapped to grouped structs
-    //     assert_eq!(loaded.metadata.basic.title, original.metadata.basic.title);
-    //     assert_eq!(
-    //         loaded.metadata.coords.origin_x,
-    //         original.metadata.coords.origin_x
-    //     );
-    //     assert_eq!(loaded.metadata.coords.crs, original.metadata.coords.crs);
-    //     assert_eq!(loaded.metadata.attribution.authors.len(), 2);
-
-    //     assert!(loaded.surfaces.len() == 1);
-    //     let loaded_topo = &loaded.surfaces[0];
-    //     let orig_topo = &original.surfaces[0];
-    //     assert_eq!(loaded_topo.surface, orig_topo.surface);
-    //     assert_eq!(loaded_topo.name, orig_topo.name);
-    //     assert_eq!(loaded_topo.resolution_horiz, orig_topo.resolution_horiz);
-
-    //     assert_eq!(loaded.blocks.len(), 2);
-    //     assert_eq!(loaded.blocks[0].z_top, 10.0);
-    //     assert_eq!(loaded.blocks[1].block[[0, 0, 0, 0]], 2.2);
-
-    //     Ok(())
-    // }
-
-    // #[test]
-    // fn test_no_topography_round_trip() -> Result<()> {
-    //     let tmp_file = NamedTempFile::new().unwrap();
-    //     let path = tmp_file.path().to_str().unwrap();
-
-    //     let original = create_mock_grid(false);
-
-    //     original.save(path)?;
-    //     let loaded = GeoModelGrid::load(PathBuf::from(path))?;
-
-    //     assert!(loaded.surfaces.is_empty());
-    //     assert_eq!(loaded.blocks.len(), 2);
-
-    //     Ok(())
-    // }
-
-    // #[test]
-    // fn test_empty_blocks_round_trip() -> Result<()> {
-    //     let tmp_file = NamedTempFile::new().unwrap();
-    //     let path = tmp_file.path().to_str().unwrap();
-
-    //     // Easily override the builder to have no blocks
-    //     let mut original = create_mock_grid(false);
-    //     original.blocks = vec![];
-
-    //     original.save(path)?;
-    //     let loaded = GeoModelGrid::load(PathBuf::from(path))?;
-
-    //     assert!(loaded.blocks.is_empty());
-    //     Ok(())
-    // }
 }

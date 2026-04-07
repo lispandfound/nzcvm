@@ -1,9 +1,9 @@
-use std::io::Result;
-
 use crate::coordinates::CoordinateSystem;
 use crate::model::ModelTree;
+use crate::real::Real;
 use crate::writer::{ModelFormat, VelocityModelWriter};
 use ndarray::{par_azip, Array1, Array4, Axis};
+use std::io::Result;
 
 pub fn write_model_parallel<'a, C, F>(
     coordinate_system: &C,
@@ -16,7 +16,7 @@ where
 {
     writer.write_metadata()?;
 
-    let mut buffer: Array4<f32> = Array4::zeros((0, 0, 0, 0));
+    let mut buffer: Array4<Real> = Array4::zeros((0, 0, 0, 0));
 
     for chunk in writer.chunks() {
         let (nx, ny, nz, nc) = chunk.shape;
@@ -34,7 +34,7 @@ where
             let point = coordinate_system.coordinates(global_indices, dx, dy, dz);
 
             if let Some((quality, _)) = model_tree.query(point) {
-                let quality_arr: Array1<f32> = quality.into();
+                let quality_arr: Array1<Real> = quality.into();
                 lane.assign(&quality_arr);
             }
         });

@@ -1,4 +1,5 @@
 // TODO: rethink this a little. Feels a little heavy handed. Benchmark to check it doesn't create a bottleneck.
+use crate::real::Real;
 use byteorder::{LittleEndian, WriteBytesExt};
 use ndarray::{ArrayView4, Axis};
 use std::io::{Result, Write};
@@ -11,7 +12,7 @@ const PRECISION: i32 = 4;
 /// The central trait defining a specific output format.
 pub trait ModelFormat {
     fn write_metadata(&mut self, model: &GeoModelGrid) -> Result<()>;
-    fn write_chunk(&mut self, chunk: &Chunk, buffer: ArrayView4<f32>) -> Result<()>;
+    fn write_chunk(&mut self, chunk: &Chunk, buffer: ArrayView4<Real>) -> Result<()>;
     fn order(&self) -> [usize; 3];
     fn chunksizes(&self, model: &GeoModelGrid, buffer_size: usize) -> (usize, usize, usize);
 }
@@ -84,7 +85,7 @@ impl<W: Write> ModelFormat for RFileFormat<W> {
         Ok(())
     }
 
-    fn write_chunk(&mut self, _chunk: &Chunk, buffer: ArrayView4<f32>) -> Result<()> {
+    fn write_chunk(&mut self, _chunk: &Chunk, buffer: ArrayView4<Real>) -> Result<()> {
         for el in buffer.iter() {
             self.handle.write_f32::<LittleEndian>(*el)?;
         }
@@ -132,7 +133,7 @@ impl<W: Write> ModelFormat for Emod3dFormat<W> {
         Ok(())
     }
 
-    fn write_chunk(&mut self, _chunk: &Chunk, buffer: ArrayView4<f32>) -> Result<()> {
+    fn write_chunk(&mut self, _chunk: &Chunk, buffer: ArrayView4<Real>) -> Result<()> {
         for quality in buffer.lanes(Axis(3)) {
             self.rho.write_f32::<LittleEndian>(quality[0])?;
             self.vp.write_f32::<LittleEndian>(quality[1])?;
@@ -167,7 +168,7 @@ impl<'a, F: ModelFormat> VelocityModelWriter<'a, F> {
         self.format.write_metadata(&self.model)
     }
 
-    pub fn write_chunk(&mut self, chunk: &Chunk, buffer: ArrayView4<f32>) -> Result<()> {
+    pub fn write_chunk(&mut self, chunk: &Chunk, buffer: ArrayView4<Real>) -> Result<()> {
         self.format.write_chunk(chunk, buffer)
     }
 
@@ -398,7 +399,7 @@ mod tests {
     fn test_rfile_writing_blocks() {
         // Test chunk output
         let mut out_buffer = Vec::new();
-        let data = Array4::<f32>::ones((1, 1, 1, 3)); // 3 elements
+        let data = Array4::<Real>::ones((1, 1, 1, 3)); // 3 elements
         let model = dummy_model();
         let chunk = Chunk {
             block: model.blocks[0].clone(),
@@ -419,7 +420,7 @@ mod tests {
                 .expect("Should succeed");
         }
 
-        // Should have added 3 f32s (12 bytes)
+        // Should have added 3 Reals (12 bytes)
         assert_eq!(out_buffer.len(), 12);
     }
 
@@ -439,7 +440,7 @@ mod tests {
         };
 
         // Create an array where the 3 components are distinct: [1.0, 2.0, 3.0]
-        let mut data = Array4::<f32>::zeros((1, 1, 2, 3));
+        let mut data = Array4::<Real>::zeros((1, 1, 2, 3));
         // 2 elements in the Z axis, 3 lanes.
         data[[0, 0, 0, 0]] = 1.0; // rho
         data[[0, 0, 0, 1]] = 2.0; // vp
@@ -457,7 +458,7 @@ mod tests {
 
         writer.write_chunk(&chunk, data.view()).unwrap();
 
-        // Each buffer should have exactly 2 f32s written (8 bytes)
+        // Each buffer should have exactly 2 Reals written (8 bytes)
         assert_eq!(rho_buf.len(), 8);
         assert_eq!(vp_buf.len(), 8);
         assert_eq!(vs_buf.len(), 8);

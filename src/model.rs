@@ -1,6 +1,7 @@
 use crate::layers::LayerTree;
 use crate::mesh::MeshModel;
 use crate::quality::Quality;
+use crate::real::Real;
 use nalgebra::Point3;
 use std::sync::Arc;
 
@@ -9,7 +10,7 @@ pub enum ModelTree {
     Blend {
         left: Arc<ModelTree>,
         right: Arc<ModelTree>,
-        distance: f32,
+        distance: Real,
     },
     Mesh {
         mesh_model: MeshModel,
@@ -29,7 +30,7 @@ impl ModelTree {
         Self::Mesh { mesh_model }
     }
 
-    pub fn query_within(&self, point: Point3<f32>, epsilon: f32) -> Option<(Quality, f32)> {
+    pub fn query_within(&self, point: Point3<Real>, epsilon: Real) -> Option<(Quality, Real)> {
         match self {
             Self::Stack(left, right) => left
                 .query_within(point, epsilon)
@@ -56,8 +57,8 @@ impl ModelTree {
         }
     }
 
-    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
-        self.query_within(point, f32::EPSILON)
+    pub fn query(&self, point: Point3<Real>) -> Option<(Quality, Real)> {
+        self.query_within(point, Real::EPSILON)
     }
 
     pub fn pretty_print(&self) {

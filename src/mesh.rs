@@ -1,23 +1,23 @@
 use crate::geometry::point_triangle_distance_sq;
 use crate::quality::Quality;
+use crate::real::Real;
 use crate::tree_query::nearest_to_point_within;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::bvh::BvhNode;
 use bvh::point_query::PointDistance;
-use core::f32;
 use hdf5_metno::File;
 use nalgebra::{Matrix3, Point3, Point4};
 
 #[derive(Debug)]
 struct Simplex {
-    c0: Point3<f32>,
-    c1: Point3<f32>,
-    c2: Point3<f32>,
-    c3: Point3<f32>,
+    c0: Point3<Real>,
+    c1: Point3<Real>,
+    c2: Point3<Real>,
+    c3: Point3<Real>,
 
-    inv_matrix: Matrix3<f32>,
+    inv_matrix: Matrix3<Real>,
 
     id: usize,
     node_index: usize,
@@ -25,10 +25,10 @@ struct Simplex {
 
 impl Simplex {
     pub fn new(
-        c0: Point3<f32>,
-        c1: Point3<f32>,
-        c2: Point3<f32>,
-        c3: Point3<f32>,
+        c0: Point3<Real>,
+        c1: Point3<Real>,
+        c2: Point3<Real>,
+        c3: Point3<Real>,
         id: usize,
     ) -> Self {
         let m = Matrix3::from_columns(&[c0 - c3, c1 - c3, c2 - c3]);
@@ -45,7 +45,7 @@ impl Simplex {
         }
     }
 
-    pub fn barycentric_coordinates(&self, p: Point3<f32>) -> Point4<f32> {
+    pub fn barycentric_coordinates(&self, p: Point3<Real>) -> Point4<Real> {
         let diff = p - self.c3;
         let l = self.inv_matrix * diff;
 
@@ -58,15 +58,15 @@ impl Simplex {
     }
 }
 
-impl PointDistance<f32, 3> for Simplex {
-    fn distance_squared(&self, query_point: Point3<f32>) -> f32 {
+impl PointDistance<Real, 3> for Simplex {
+    fn distance_squared(&self, query_point: Point3<Real>) -> Real {
         let bary = self.barycentric_coordinates(query_point);
 
         if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 && bary.w >= 0.0 {
             return 0.0;
         }
 
-        let mut min_dist_sq = f32::INFINITY;
+        let mut min_dist_sq = Real::INFINITY;
 
         if bary.x < 0.0 {
             min_dist_sq = min_dist_sq.min(point_triangle_distance_sq(
@@ -105,8 +105,8 @@ impl PointDistance<f32, 3> for Simplex {
     }
 }
 
-impl Bounded<f32, 3> for Simplex {
-    fn aabb(&self) -> Aabb<f32, 3> {
+impl Bounded<Real, 3> for Simplex {
+    fn aabb(&self) -> Aabb<Real, 3> {
         let pts = [self.c0, self.c1, self.c2, self.c3];
         let min_point = pts
             .iter()
@@ -122,7 +122,7 @@ impl Bounded<f32, 3> for Simplex {
     }
 }
 
-impl BHShape<f32, 3> for Simplex {
+impl BHShape<Real, 3> for Simplex {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -133,16 +133,16 @@ impl BHShape<f32, 3> for Simplex {
 }
 
 pub struct MeshModel {
-    bvh_tree: Bvh<f32, 3>,
+    bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
     vertex_map: Vec<Point4<usize>>,
     qualities: Vec<Quality>,
-    aabb: Aabb<f32, 3>,
+    aabb: Aabb<Real, 3>,
 }
 
 impl MeshModel {
     pub fn curvilinear_mesh<F>(
-        vertices: Vec<Point3<f32>>,
+        vertices: Vec<Point3<Real>>,
         qualities: Vec<Quality>,
         dimensions: (usize, usize, usize),
         chart: F,
@@ -187,16 +187,20 @@ impl MeshModel {
         Self::new(vertices, faces, qualities)
     }
 
-    fn new(vertices: Vec<Point3<f32>>, faces: Vec<Point4<usize>>, qualities: Vec<Quality>) -> Self {
+    fn new(
+        vertices: Vec<Point3<Real>>,
+        faces: Vec<Point4<usize>>,
+        qualities: Vec<Quality>,
+    ) -> Self {
         let min_point = vertices
             .iter()
-            .fold(Point3::new(f32::MAX, f32::MAX, f32::MAX), |acc, p| {
+            .fold(Point3::new(Real::MAX, Real::MAX, Real::MAX), |acc, p| {
                 Point3::new(acc.x.min(p.x), acc.y.min(p.y), acc.z.min(p.z))
             });
 
         let max_point = vertices
             .iter()
-            .fold(Point3::new(f32::MIN, f32::MIN, f32::MIN), |acc, p| {
+            .fold(Point3::new(Real::MIN, Real::MIN, Real::MIN), |acc, p| {
                 Point3::new(acc.x.max(p.x), acc.y.max(p.y), acc.z.max(p.z))
             });
         let aabb = Aabb::with_bounds(min_point, max_point);
@@ -229,7 +233,7 @@ impl MeshModel {
         self.qualities.len()
     }
 
-    pub fn query_within(&self, point: Point3<f32>, epsilon: f32) -> Option<(Quality, f32)> {
+    pub fn query_within(&self, point: Point3<Real>, epsilon: Real) -> Option<(Quality, Real)> {
         // TODO: Accelerate this with the epsilon logic we use to prune the layer tree queries.
         nearest_to_point_within(&self.bvh_tree, &self.simplices, point, epsilon).map(
             |(simplex, dist)| {
@@ -245,12 +249,12 @@ impl MeshModel {
         )
     }
 
-    pub fn query(&self, point: Point3<f32>) -> Option<(Quality, f32)> {
-        self.query_within(point, f32::EPSILON)
+    pub fn query(&self, point: Point3<Real>) -> Option<(Quality, Real)> {
+        self.query_within(point, Real::EPSILON)
     }
 
     pub fn pretty_print(&self) {
-        fn max_depth(nodes: &[BvhNode<f32, 3>], node_index: usize) -> usize {
+        fn max_depth(nodes: &[BvhNode<Real, 3>], node_index: usize) -> usize {
             match nodes[node_index] {
                 BvhNode::Node {
                     child_l_index,
@@ -271,8 +275,8 @@ impl MeshModel {
     }
 }
 
-impl Bounded<f32, 3> for MeshModel {
-    fn aabb(&self) -> Aabb<f32, 3> {
+impl Bounded<Real, 3> for MeshModel {
+    fn aabb(&self) -> Aabb<Real, 3> {
         self.aabb
     }
 }
@@ -302,15 +306,15 @@ pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Err
                 let idx = [z, y, x];
 
                 vertices_buf.push(Point3::new(
-                    ds_x[&idx[..]] as f32,
-                    ds_y[&idx[..]] as f32,
-                    ds_z[&idx[..]] as f32,
+                    ds_x[&idx[..]] as Real,
+                    ds_y[&idx[..]] as Real,
+                    ds_z[&idx[..]] as Real,
                 ));
 
                 qualities_buf.push(Quality {
-                    vp: ds_vp[&idx[..]] as f32,
-                    vs: ds_vs[&idx[..]] as f32,
-                    rho: ds_rho[&idx[..]] as f32,
+                    vp: ds_vp[&idx[..]] as Real,
+                    vs: ds_vs[&idx[..]] as Real,
+                    rho: ds_rho[&idx[..]] as Real,
                     qp: 100.0,
                     qs: 50.0,
                 });
@@ -334,7 +338,7 @@ mod tests {
     use approx::assert_relative_eq;
     use nalgebra::{Point3, Point4};
 
-    fn unit_tetrahedron_universe() -> Vec<Point3<f32>> {
+    fn unit_tetrahedron_universe() -> Vec<Point3<Real>> {
         vec![
             Point3::new(0.0, 0.0, 0.0),
             Point3::new(1.0, 0.0, 0.0),
@@ -343,7 +347,7 @@ mod tests {
         ]
     }
 
-    fn mock_quality(val: f32) -> Quality {
+    fn mock_quality(val: Real) -> Quality {
         Quality {
             rho: val,
             vp: val,
@@ -353,12 +357,12 @@ mod tests {
         }
     }
 
-    fn generate_grid(ni: usize, nj: usize, nk: usize) -> Vec<Point3<f32>> {
+    fn generate_grid(ni: usize, nj: usize, nk: usize) -> Vec<Point3<Real>> {
         let mut vertices = Vec::with_capacity(ni * nj * nk);
         for k in 0..nk {
             for j in 0..nj {
                 for i in 0..ni {
-                    vertices.push(Point3::new(i as f32, j as f32, k as f32));
+                    vertices.push(Point3::new(i as Real, j as Real, k as Real));
                 }
             }
         }
@@ -427,7 +431,7 @@ mod tests {
         let nk = 2;
         let vertices = generate_grid(ni, nj, nk);
         let qualities: Vec<Quality> = (0..vertices.len())
-            .map(|idx| mock_quality(idx as f32))
+            .map(|idx| mock_quality(idx as Real))
             .collect();
 
         let chart = |i, j, k| i + j * ni + k * ni * nj;
@@ -465,7 +469,7 @@ mod tests {
         // Exterior: Query (6,4,4) while Max is (4,4,4). Dist = 2.0
         let p_out = Point3::new(6.0, 4.0, 4.0);
         let (q_out, dist_sq_out) = mesh
-            .query_within(p_out, f32::MAX)
+            .query_within(p_out, Real::MAX)
             .expect("Should extrapolate");
 
         assert_relative_eq!(dist_sq_out, 2.0, epsilon = 1e-5);

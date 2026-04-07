@@ -1,4 +1,5 @@
 // TODO: Scream about invalid simplices instead of creating degenerate matices
+use crate::real::Real;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
@@ -16,20 +17,20 @@ pub enum Inclusion {
 
 #[derive(Copy, Clone, Debug)]
 pub struct SurfacePoint {
-    pub top: f32,
-    pub bottom: f32,
+    pub top: Real,
+    pub bottom: Real,
 }
 
 #[derive(Debug)]
 pub struct Simplex {
-    c0: Point2<f32>,
-    c1: Point2<f32>,
-    c2: Point2<f32>,
+    c0: Point2<Real>,
+    c1: Point2<Real>,
+    c2: Point2<Real>,
     // TODO: make this an actual matrix
     // Components of the inverse matrix
     // [ m00 m01 ]
     // [ m10 m11 ]
-    inv_m: [f32; 4],
+    inv_m: [Real; 4],
     pub mask: Inclusion,
     pub id: usize,
     node_index: usize,
@@ -37,9 +38,9 @@ pub struct Simplex {
 
 impl Simplex {
     pub fn new(
-        c0: Point2<f32>,
-        c1: Point2<f32>,
-        c2: Point2<f32>,
+        c0: Point2<Real>,
+        c1: Point2<Real>,
+        c2: Point2<Real>,
         mask: Inclusion,
         id: usize,
     ) -> Self {
@@ -48,7 +49,7 @@ impl Simplex {
 
         let det = v0.x * v1.y - v1.x * v0.y;
 
-        let inv_det = if det.abs() > f32::EPSILON {
+        let inv_det = if det.abs() > Real::EPSILON {
             1.0 / det
         } else {
             0.0
@@ -73,7 +74,7 @@ impl Simplex {
     }
 
     #[inline(always)]
-    pub fn barycentric_coordinates(&self, p: Point2<f32>) -> Point3<f32> {
+    pub fn barycentric_coordinates(&self, p: Point2<Real>) -> Point3<Real> {
         let dx = p.x - self.c2.x;
         let dy = p.y - self.c2.y;
 
@@ -86,8 +87,8 @@ impl Simplex {
     }
 }
 
-impl Bounded<f32, 2> for Simplex {
-    fn aabb(&self) -> Aabb<f32, 2> {
+impl Bounded<Real, 2> for Simplex {
+    fn aabb(&self) -> Aabb<Real, 2> {
         let min_x = self.c0.x.min(self.c1.x).min(self.c2.x);
         let min_y = self.c0.y.min(self.c1.y).min(self.c2.y);
         let max_x = self.c0.x.max(self.c1.x).max(self.c2.x);
@@ -96,7 +97,7 @@ impl Bounded<f32, 2> for Simplex {
     }
 }
 
-impl BHShape<f32, 2> for Simplex {
+impl BHShape<Real, 2> for Simplex {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -105,8 +106,8 @@ impl BHShape<f32, 2> for Simplex {
     }
 }
 
-impl PointDistance<f32, 2> for Simplex {
-    fn distance_squared(&self, query_point: Point2<f32>) -> f32 {
+impl PointDistance<Real, 2> for Simplex {
+    fn distance_squared(&self, query_point: Point2<Real>) -> Real {
         let bary = self.barycentric_coordinates(query_point);
         if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 {
             0.0
@@ -118,7 +119,7 @@ impl PointDistance<f32, 2> for Simplex {
 
 #[derive(Debug)]
 pub struct Surface {
-    pub bvh_tree: Bvh<f32, 2>,
+    pub bvh_tree: Bvh<Real, 2>,
     pub simplices: Vec<Simplex>,
     /// Maps simplex to vertex indices (x, y, z) in the elevation buffers
     pub vertex_map: Vec<Point3<usize>>,
@@ -129,8 +130,8 @@ pub struct Surface {
 impl Surface {
     /// Queries the surface at a specific (x, y) coordinate.
     /// Returns (Top Elevation, Bottom Elevation, Inclusion Status)
-    pub fn query(&self, point: Point2<f32>) -> Option<(f32, f32, Inclusion)> {
-        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, f32::EPSILON).map(
+    pub fn query(&self, point: Point2<Real>) -> Option<(Real, Real, Inclusion)> {
+        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, Real::EPSILON).map(
             |(simplex, _dist)| {
                 let bary = simplex.barycentric_coordinates(point);
 

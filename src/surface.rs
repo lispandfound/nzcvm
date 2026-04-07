@@ -1,10 +1,9 @@
 // TODO: Scream about invalid simplices instead of creating degenerate matices
 use bvh::aabb::{Aabb, Bounded};
-use bvh::bounding_hierarchy::{BHShape, BHValue};
+use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::point_query::PointDistance;
-use nalgebra::{Point2, Point3, RealField};
-use num_traits::float::FloatCore;
+use nalgebra::{Point2, Point3};
 
 use crate::tree_query::nearest_to_point_within;
 
@@ -16,37 +15,43 @@ pub enum Inclusion {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct SurfacePoint<F> {
-    pub top: F,
-    pub bottom: F,
+pub struct SurfacePoint {
+    pub top: f32,
+    pub bottom: f32,
 }
 
 #[derive(Debug)]
-pub struct Simplex<F: BHValue + Copy> {
-    c0: Point2<F>,
-    c1: Point2<F>,
-    c2: Point2<F>,
+pub struct Simplex {
+    c0: Point2<f32>,
+    c1: Point2<f32>,
+    c2: Point2<f32>,
     // TODO: make this an actual matrix
     // Components of the inverse matrix
     // [ m00 m01 ]
     // [ m10 m11 ]
-    inv_m: [F; 4],
+    inv_m: [f32; 4],
     pub mask: Inclusion,
     pub id: usize,
     node_index: usize,
 }
 
-impl<F: BHValue + Copy> Simplex<F> {
-    pub fn new(c0: Point2<F>, c1: Point2<F>, c2: Point2<F>, mask: Inclusion, id: usize) -> Self {
+impl Simplex {
+    pub fn new(
+        c0: Point2<f32>,
+        c1: Point2<f32>,
+        c2: Point2<f32>,
+        mask: Inclusion,
+        id: usize,
+    ) -> Self {
         let v0 = c0 - c2;
         let v1 = c1 - c2;
 
         let det = v0.x * v1.y - v1.x * v0.y;
 
-        let inv_det = if det.abs() > F::epsilon() {
-            F::one() / det
+        let inv_det = if det.abs() > f32::EPSILON {
+            1.0 / det
         } else {
-            F::zero()
+            0.0
         };
 
         let inv_m = [
@@ -67,31 +72,31 @@ impl<F: BHValue + Copy> Simplex<F> {
         }
     }
 
-    pub fn barycentric_coordinates(&self, p: Point2<F>) -> Point3<F> {
+    #[inline(always)]
+    pub fn barycentric_coordinates(&self, p: Point2<f32>) -> Point3<f32> {
         let dx = p.x - self.c2.x;
         let dy = p.y - self.c2.y;
 
         // Multiply by the stored inverse matrix
         let w0 = self.inv_m[0] * dx + self.inv_m[1] * dy;
         let w1 = self.inv_m[2] * dx + self.inv_m[3] * dy;
-        let w2 = F::one() - w0 - w1;
+        let w2 = 1.0 - w0 - w1;
 
         Point3::new(w0, w1, w2)
     }
 }
 
-impl<F: BHValue + Copy> Bounded<F, 2> for Simplex<F> {
-    fn aabb(&self) -> Aabb<F, 2> {
+impl Bounded<f32, 2> for Simplex {
+    fn aabb(&self) -> Aabb<f32, 2> {
         let min_x = self.c0.x.min(self.c1.x).min(self.c2.x);
         let min_y = self.c0.y.min(self.c1.y).min(self.c2.y);
         let max_x = self.c0.x.max(self.c1.x).max(self.c2.x);
         let max_y = self.c0.y.max(self.c1.y).max(self.c2.y);
-
         Aabb::with_bounds(Point2::new(min_x, min_y), Point2::new(max_x, max_y))
     }
 }
 
-impl<F: RealField + BHValue + Copy> BHShape<F, 2> for Simplex<F> {
+impl BHShape<f32, 2> for Simplex {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }
@@ -100,34 +105,32 @@ impl<F: RealField + BHValue + Copy> BHShape<F, 2> for Simplex<F> {
     }
 }
 
-impl<F: BHValue + Copy> PointDistance<F, 2> for Simplex<F> {
-    fn distance_squared(&self, query_point: Point2<F>) -> F {
+impl PointDistance<f32, 2> for Simplex {
+    fn distance_squared(&self, query_point: Point2<f32>) -> f32 {
         let bary = self.barycentric_coordinates(query_point);
-        if bary.x >= F::zero() && bary.y >= F::zero() && bary.z >= F::zero() {
-            F::zero()
+        if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 {
+            0.0
         } else {
-            bary.x.min(F::zero()).powi(2)
-                + bary.y.min(F::zero()).powi(2)
-                + bary.z.min(F::zero()).powi(2)
+            bary.x.min(0.0).powi(2) + bary.y.min(0.0).powi(2) + bary.z.min(0.0).powi(2)
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Surface<F: BHValue> {
-    pub bvh_tree: Bvh<F, 2>,
-    pub simplices: Vec<Simplex<F>>,
+pub struct Surface {
+    pub bvh_tree: Bvh<f32, 2>,
+    pub simplices: Vec<Simplex>,
     /// Maps simplex to vertex indices (x, y, z) in the elevation buffers
     pub vertex_map: Vec<Point3<usize>>,
     /// Elevation data stored at vertices
-    pub elevations: Vec<SurfacePoint<F>>,
+    pub elevations: Vec<SurfacePoint>,
 }
 
-impl<F: BHValue> Surface<F> {
+impl Surface {
     /// Queries the surface at a specific (x, y) coordinate.
     /// Returns (Top Elevation, Bottom Elevation, Inclusion Status)
-    pub fn query(&self, point: Point2<F>) -> Option<(F, F, Inclusion)> {
-        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, F::epsilon()).map(
+    pub fn query(&self, point: Point2<f32>) -> Option<(f32, f32, Inclusion)> {
+        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, f32::EPSILON).map(
             |(simplex, _dist)| {
                 let bary = simplex.barycentric_coordinates(point);
 
@@ -144,7 +147,7 @@ impl<F: BHValue> Surface<F> {
                 // Otherwise assuming that the surface covers the
                 // entire polygon we can simply say it is outside.
                 // TODO: Handle this edge case more gracefully.
-                let mask = if bary.x >= F::zero() && bary.y >= F::zero() && bary.z >= F::zero() {
+                let mask = if bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 {
                     simplex.mask
                 } else {
                     Inclusion::Outside
@@ -160,12 +163,12 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
-    fn mock_unit_simplex<F: BHValue>(id: usize, mask: Inclusion) -> Simplex<F> {
-        // A right triangle: (0, 0), (1,0), (0,1)
+    fn mock_unit_simplex(id: usize, mask: Inclusion) -> Simplex {
+        // A right triangle: (0,0), (1,0), (0,1)
         Simplex::new(
-            Point2::new(F::zero(), F::zero()),
-            Point2::new(F::zero(), F::zero()),
-            Point2::new(F::zero(), F::zero()),
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(0.0, 1.0),
             mask,
             id,
         )

@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TypedDict
 
 import numpy as np
 import printree
@@ -145,15 +144,16 @@ class Model:
         return quality, dist
 
     def query_many(self, x, y, z) -> xr.Dataset:
+        x, y, z = np.broadcast_arrays(x, y, z)
+
         original_shape = x.shape
         ndim = x.ndim
-
         dims = tuple(f"d{i}" for i in range(ndim))
 
         quality_array = self._raw.query_many(
-            x.ravel().astype(np.float32),
-            y.ravel().astype(np.float32),
-            z.ravel().astype(np.float32),
+            x.astype(np.float32, copy=False).ravel(),
+            y.astype(np.float32, copy=False).ravel(),
+            z.astype(np.float32, copy=False).ravel(),
         )
 
         var_names = ["rho", "vp", "vs", "qp", "qs", "dist"]

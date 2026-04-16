@@ -9,6 +9,7 @@ pub struct Quality {
     pub vs: Real,
     pub qp: Real,
     pub qs: Real,
+    pub alpha: Real,
 }
 
 impl Into<Array1<Real>> for Quality {
@@ -16,17 +17,23 @@ impl Into<Array1<Real>> for Quality {
         Array1::from_iter([self.rho, self.vp, self.vs, self.qp, self.qs].into_iter())
     }
 }
+
 // TODO: How should qp/qs arithmetic be handled?
 impl Add for Quality {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
+        let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
+        let a0 = self.alpha / alpha;
+        let a1 = rhs.alpha * (1.0 - self.alpha) / alpha;
+
         Self {
-            rho: self.rho + rhs.rho,
-            vp: self.vp + rhs.vp,
-            vs: self.vs + rhs.vs,
-            qp: self.qp + rhs.qp,
-            qs: self.qs + rhs.qs,
+            rho: a0 * self.rho + a1 * rhs.rho,
+            vp: a0 * self.vp + a1 * rhs.vp,
+            vs: a0 * self.vs + a1 * rhs.vs,
+            qp: a0 * self.qp + a1 * rhs.qp,
+            qs: a0 * self.qs + a1 * rhs.qs,
+            alpha: alpha,
         }
     }
 }
@@ -41,6 +48,7 @@ impl Mul<Real> for Quality {
             vs: self.vs * rhs,
             qp: self.qp * rhs,
             qs: self.qs * rhs,
+            alpha: self.alpha,
         }
     }
 }

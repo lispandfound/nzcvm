@@ -1,7 +1,7 @@
 use crate::geometry::point_triangle_distance_sq;
 use crate::quality::Quality;
 use crate::real::Real;
-use crate::tree_query::nearest_to_point_within;
+use crate::tree_query::{contains_point_iterator, nearest_to_point_within, Contains};
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
@@ -55,6 +55,13 @@ impl Simplex {
         let l3 = 1.0 - l0 - l1 - l2;
 
         Point4::new(l0, l1, l2, l3)
+    }
+}
+
+impl Contains<Real, 3> for Simplex {
+    fn contains(&self, query_point: &Point3<Real>) -> bool {
+        let bary = self.barycentric_coordinates(*query_point);
+        bary.x >= 0.0 && bary.y >= 0.0 && bary.z >= 0.0 && bary.w >= 0.0
     }
 }
 
@@ -187,6 +194,29 @@ impl MeshModel {
         Self::new(vertices, faces, qualities)
     }
 
+    fn union(self, other: Self) -> Self {
+        let mut simplices = self.simplices;
+        simplices.extend(other.simplices);
+
+        let aabb = self.aabb.join(&other.aabb);
+
+        let mut qualities = self.qualities;
+        qualities.extend(other.qualities);
+
+        let mut vertex_map = self.vertex_map;
+        let n = vertex_map.len();
+        vertex_map.extend(other.vertex_map.into_iter().map(|x| x.map(|e| e + n)));
+
+        let bvh_tree = Bvh::build(&mut simplices);
+        Self {
+            bvh_tree,
+            simplices,
+            vertex_map,
+            qualities,
+            aabb,
+        }
+    }
+
     fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
@@ -249,8 +279,18 @@ impl MeshModel {
         )
     }
 
-    pub fn query(&self, point: Point3<Real>) -> Option<(Quality, Real)> {
-        self.query_within(point, Real::EPSILON)
+    pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
+        contains_point_iterator(&self.bvh_tree, &self.simplices, &point)
+            .map(|simplex| {
+                let bary = simplex.barycentric_coordinates(point);
+                let vertex_indices = self.vertex_map[simplex.id];
+                let q0 = self.qualities[vertex_indices.w];
+                let q1 = self.qualities[vertex_indices.x];
+                let q2 = self.qualities[vertex_indices.y];
+                let q3 = self.qualities[vertex_indices.z];
+                q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z
+            })
+            .reduce(|acc, q| acc + q)
     }
 
     pub fn pretty_print(&self) {
@@ -317,6 +357,7 @@ pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Err
                     rho: ds_rho[&idx[..]] as Real,
                     qp: 100.0,
                     qs: 50.0,
+                    alpha: 1.0,
                 });
             }
         }
@@ -354,6 +395,7 @@ mod tests {
             vs: val,
             qp: val,
             qs: val,
+            alpha: 1.0,
         }
     }
 
@@ -439,9 +481,8 @@ mod tests {
 
         // Vertex (1,1,1) is index 7 in a 2x2x2 grid
         let p_v7 = Point3::new(1.0, 1.0, 1.0);
-        let (q_v7, dist_sq) = mesh.query(p_v7).expect("Should find a simplex");
+        let q_v7 = mesh.query(p_v7).expect("Should find a simplex");
 
-        assert_relative_eq!(dist_sq, 0.0, epsilon = 1e-5);
         assert_relative_eq!(q_v7.rho, 7.0, epsilon = 1e-5);
     }
 
@@ -461,9 +502,8 @@ mod tests {
 
         // Interior: x=2.5, y=1.2, z=3.7 -> rho = 7.4
         let p_in = Point3::new(2.5, 1.2, 3.7);
-        let (q_in, dist_sq) = mesh.query(p_in).expect("Should find interior");
+        let q_in = mesh.query(p_in).expect("Should find interior");
 
-        assert_relative_eq!(dist_sq, 0.0, epsilon = 1e-5);
         assert_relative_eq!(q_in.rho, 7.4, epsilon = 1e-5);
 
         // Exterior: Query (6,4,4) while Max is (4,4,4). Dist = 2.0

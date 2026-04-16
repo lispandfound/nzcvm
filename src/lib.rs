@@ -50,6 +50,9 @@ mod nzcvm {
         pub qp: Real,
         #[pyo3(get)]
         pub qs: Real,
+        #[pyo3(get)]
+        pub alpha: Real,
+
     }
 
     impl From<Quality> for PyQuality {
@@ -60,6 +63,7 @@ mod nzcvm {
                 vs: item.vs,
                 qp: item.qp,
                 qs: item.qs,
+                alpha: item.alpha
             }
         }
     }
@@ -189,6 +193,7 @@ mod nzcvm {
                 vs: row[2],
                 qp: row[3],
                 qs: row[4],
+                alpha: row[5]
             })
             .collect();
         let mesh = MeshModel::curvilinear_mesh(vertices, qualities, dimensions, chart);
@@ -270,6 +275,7 @@ mod nzcvm {
                     vs: row[3],
                     qp: row[4],
                     qs: row[5],
+                    alpha: row[6]
                 },
             );
         }

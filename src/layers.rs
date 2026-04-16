@@ -299,6 +299,7 @@ pub fn deserialise_model(group: &Group) -> Result<Model> {
                 vs: group.attr("vs")?.read_scalar()?,
                 qp: group.attr("qp")?.read_scalar()?,
                 qs: group.attr("qs")?.read_scalar()?,
+                alpha: 1.0,
             };
             Ok(Model::Uniform(q))
         }
@@ -314,6 +315,7 @@ pub fn deserialise_model(group: &Group) -> Result<Model> {
                     vs: row[3],
                     qp: row[4],
                     qs: row[5],
+                    alpha: 1.0,
                 };
                 layers.insert(OrderedFloat(z), quality);
             }
@@ -455,6 +457,7 @@ mod tests {
             vs: val,
             qp: val,
             qs: val,
+            alpha: 1.0,
         }
     }
 

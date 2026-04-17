@@ -12,12 +12,12 @@ from pathlib import Path
 from typing import TextIO
 
 import h5py
-import meshio
 import numpy as np
 import pyproj
 import scipy as sp
 import shapely
 import shapely.ops
+from nzcvm import mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -31,7 +31,7 @@ def parser() -> argparse.ArgumentParser:
     args.add_argument(
         "output",
         type=Path,
-        help="Output file, file type determined by extension see https://pypi.org/project/meshio/",
+        help="Output file.",
     )
     args.add_argument(
         "-s",
@@ -68,6 +68,7 @@ def parser() -> argparse.ArgumentParser:
     args.add_argument("--rho", type=float, help="Constant rho value to set")
     args.add_argument("--vp", type=float, help="Constant vp value to set")
     args.add_argument("--vs", type=float, help="Constant vs value to set")
+    args.add_argument("--priority", type=int, help="Basin priority", default=0)
     return args
 
 
@@ -200,25 +201,43 @@ class Layer:
     rho: float
     vp: float
     vs: float
+    qp: float = 100.0
+    qs: float = 50.0
+    alpha: float = 1.0
 
 
-def construct_volumetric_mesh(layers: list[Layer]) -> meshio.Mesh:
+def construct_volumetric_mesh(layers: list[Layer], priority: int) -> mesh.Mesh:
 
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
-    rho = np.concatenate([np.full(len(layer.tetra), layer.rho) for layer in layers])
-    vp = np.concatenate([np.full(len(layer.tetra), layer.vp) for layer in layers])
-    vs = np.concatenate([np.full(len(layer.tetra), layer.vs) for layer in layers])
+    rho = np.array([layer.rho for layer in layers])
+    vp = np.array([layer.vp for layer in layers])
+    vs = np.array([layer.vs for layer in layers])
+    qp = np.array([layer.qp for layer in layers])
+    qs = np.array([layer.qs for layer in layers])
+    alpha = np.array([layer.alpha for layer in layers])
     tetra_offset = 0
     vertex_offset = 0
+    model_type = np.concatenate(
+        [np.full((len(layer.tetra),), 0, dtype=np.uint8) for layer in layers]
+    )
+    models = np.concatenate(
+        [
+            np.full((len(layer.tetra),), i, dtype=np.uint64)
+            for i, layer in enumerate(layers)
+        ]
+    )
     for layer in layers:
         tetra[tetra_offset : tetra_offset + len(layer.tetra)] += vertex_offset
         vertex_offset += len(layer.vertices)
         tetra_offset += len(layer.tetra)
-    print(mesh_vertices)
-    print(tetra)
-    return meshio.Mesh(
-        mesh_vertices, dict(tetra=tetra), cell_data=dict(rho=[rho], vp=[vp], vs=[vs])
+    priority_data = np.full((len(tetra),), np.uint8(priority))
+    return mesh.Mesh(
+        points=mesh_vertices,
+        connectivity=tetra,
+        cell_type=mesh.CellType.TETRA,
+        cell_data=dict(model_type=model_type, models=models, priority=priority_data),
+        field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
     )
 
 
@@ -388,7 +407,7 @@ def slice_with_model(
 ) -> list[Layer]:
     layers = []
     tetra = construct_mesh_tetra(triangulation.triangles)
-    print(f"{tetra.dtype=}")
+
     for _, row in model.iterrows():
         z = row["z"]
         print(f"Layer starting at z={z:3f}m")
@@ -467,7 +486,6 @@ def main():
     mesh_top = interpolate_surface(top_surface, triangulation.vertices, args.n)
     mesh_bottom = interpolate_surface(bottom_surface, triangulation.vertices, args.n)
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
-
     mesh_topography = interpolate_surface(topography, triangulation.vertices, args.n)
 
     if args.vm_1d is None and (args.rho and args.vp and args.vs):
@@ -478,9 +496,11 @@ def main():
     layers = slice_with_model(
         triangulation, mesh_topography, mesh_top, mesh_bottom, model, args.v
     )
-    mesh = construct_volumetric_mesh(layers)
+    mesh = construct_volumetric_mesh(layers, args.priority)
+
     print_mesh_stats(mesh)
-    mesh.write(args.output)
+
+    mesh.write_vtkhdf(args.output)
 
 
 if __name__ == "__main__":

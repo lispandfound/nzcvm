@@ -1,5 +1,5 @@
 use crate::real::Real;
-use ndarray::Array1;
+use ndarray::{Array1, ArrayView1};
 use std::ops::{Add, Mul};
 
 #[derive(Clone, Debug, Copy)]
@@ -12,9 +12,38 @@ pub struct Quality {
     pub alpha: Real,
 }
 
+impl Quality {
+    pub fn blend(&self, rhs: &Quality) -> Quality {
+        let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
+        let a0 = self.alpha / alpha;
+        let a1 = rhs.alpha * (1.0 - self.alpha) / alpha;
+        Self {
+            rho: a0 * self.rho + a1 * rhs.rho,
+            vp: a0 * self.vp + a1 * rhs.vp,
+            vs: a0 * self.vs + a1 * rhs.vs,
+            qp: a0 * self.qp + a1 * rhs.qp,
+            qs: a0 * self.qs + a1 * rhs.qs,
+            alpha: alpha,
+        }
+    }
+}
+
 impl Into<Array1<Real>> for Quality {
     fn into(self) -> Array1<Real> {
         Array1::from_iter([self.rho, self.vp, self.vs, self.qp, self.qs].into_iter())
+    }
+}
+
+impl From<ArrayView1<'_, Real>> for Quality {
+    fn from(arr: ArrayView1<'_, Real>) -> Self {
+        Quality {
+            rho: arr[0],
+            vp: arr[1],
+            vs: arr[2],
+            qp: arr[3],
+            qs: arr[4],
+            alpha: arr[5],
+        }
     }
 }
 
@@ -23,17 +52,13 @@ impl Add for Quality {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
-        let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
-        let a0 = self.alpha / alpha;
-        let a1 = rhs.alpha * (1.0 - self.alpha) / alpha;
-
         Self {
-            rho: a0 * self.rho + a1 * rhs.rho,
-            vp: a0 * self.vp + a1 * rhs.vp,
-            vs: a0 * self.vs + a1 * rhs.vs,
-            qp: a0 * self.qp + a1 * rhs.qp,
-            qs: a0 * self.qs + a1 * rhs.qs,
-            alpha: alpha,
+            rho: self.rho + rhs.rho,
+            vp: self.vp + rhs.vp,
+            vs: self.vs + rhs.vs,
+            qp: self.qp + rhs.qp,
+            qs: self.qs + rhs.qs,
+            alpha: self.alpha + rhs.alpha,
         }
     }
 }
@@ -48,7 +73,7 @@ impl Mul<Real> for Quality {
             vs: self.vs * rhs,
             qp: self.qp * rhs,
             qs: self.qs * rhs,
-            alpha: self.alpha,
+            alpha: self.alpha * rhs,
         }
     }
 }

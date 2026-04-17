@@ -1,36 +1,5 @@
 use crate::real::Real;
-use nalgebra::{Point2, Point3};
-
-/// Calculates the squared distance from a point to a line segment.
-pub fn line_to_point_dist_sq(p: Point2<Real>, a: Point2<Real>, b: Point2<Real>) -> Real {
-    let ab = b - a;
-    let ap = p - a;
-    let line_len_sq = ab.norm_squared();
-
-    if line_len_sq == 0.0 {
-        return ap.norm_squared();
-    }
-
-    // Projection scalar t clamped to [0, 1] to stay on the segment
-    let t = (ap.dot(&ab) / line_len_sq).clamp(0.0, 1.0);
-    let closest = a + ab * t;
-
-    (p - closest).norm_squared()
-}
-
-/// Returns the closest point on a line segment to a given point.
-pub fn closest_point_to_line(p: Point2<Real>, a: Point2<Real>, b: Point2<Real>) -> Point2<Real> {
-    let ab = b - a;
-    let ap = p - a;
-    let line_len_sq = ab.norm_squared();
-
-    if line_len_sq == 0.0 {
-        return a;
-    }
-
-    let t = (ap.dot(&ab) / line_len_sq).clamp(0.0, 1.0);
-    a + ab * t
-}
+use nalgebra::Point3;
 
 /// Calculates the squared distance from a 3D point to a triangle.
 pub fn point_triangle_distance_sq(

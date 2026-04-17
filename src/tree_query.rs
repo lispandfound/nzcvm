@@ -109,7 +109,10 @@ where
         while let Some(heap_leader) = self.heap.pop() {
             match self.bvh.nodes[heap_leader] {
                 BvhNode::Leaf { shape_index, .. } => {
-                    return Some(&self.shapes[shape_index]);
+                    let shape = &self.shapes[shape_index];
+                    if shape.contains(&self.point) {
+                        return Some(shape);
+                    }
                 }
                 BvhNode::Node {
                     child_l_index,

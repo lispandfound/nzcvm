@@ -2,10 +2,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
 
-from nzcvm import model
+from nzcvm import model, mesh
+from pathlib import Path
+
+
+def load_models(*models: Path) -> model.Model:
+    meshes = [mesh.Mesh.read_vtkhdf(mesh_path) for mesh_path in models]
+    all = mesh.Mesh.union(*meshes)
+    return model.Model.from_mesh(all)
 
 
 def main():
+
     # 1. Setup Coordinates and Projection
     # Lat/Lon for the specific New Zealand location
     lat, lon = -42.56200762245356, 172.79052713856998
@@ -17,7 +25,9 @@ def main():
 
     # 2. Initialize the NZCVM Model
     # Loading the 'basins' layer specifically
-    basins = model.Model.from_layers("basins")
+    complete_model = load_models(
+        "./ep2020.vtkhdf", "./canterbury.vtkhdf", "./hanmer.vtkhdf"
+    )
 
     # 3. Create Vertical Profile (Borehole) Data
     # Elevation range from -500 to 300
@@ -29,7 +39,7 @@ def main():
 
     # 4. Query the Model
     print("Querying model for borehole data...")
-    borehole = basins.query_many(x_a, y_a, elevation)
+    borehole = complete_model.query_many(x_a, y_a, elevation)
     print(borehole)
 
     # 5. Visualization

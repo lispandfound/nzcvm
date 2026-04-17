@@ -2,12 +2,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import printree
-import shapely
 import xarray as xr
 import xoak
 
-from nzcvm import nzcvm
+
+from nzcvm import nzcvm, mesh
 
 from .nzcvm import PyModel
 
@@ -19,6 +18,7 @@ class Quality:
     vs: float
     qp: float
     qs: float
+    alpha: float
 
 
 class Model:
@@ -28,112 +28,34 @@ class Model:
         self._raw = internal_py_model
 
     @classmethod
-    def from_dataset(cls, ds: xr.Dataset):
-        """
-        Creates a Model from an xarray Dataset.
-        Expects coords 'x', 'y', 'z' and vars 'rho', 'vp', 'vs', 'qp', 'qs'.
-        """
-        # 1. Extract dimensions (ni, nj, nk)
-        # We assume the data is structured such that the first 3 dims are the spatial ones
-        shape = ds.rho.shape
-        if len(shape) != 3:
-            # Handle 1D/2D by padding the shape to 3D for the Rust 'chart' logic
-            padded_shape = shape + (1,) * (3 - len(shape))
-        else:
-            padded_shape = shape
+    def from_mesh(cls, mesh_model: mesh.Mesh):
+        # Determine the model type from the available data
+        # Point data => tomography model
+        # Cell data => Basin model
+        # TODO: Map this explicitly to field data in the vtkhdf
 
-        # 2. Stack vertices into (N, 3) float32
-        # Order: x, y, z
-        vertices = np.stack(
-            [ds.x.values.ravel(), ds.y.values.ravel(), ds.z.values.ravel()], axis=-1
-        ).astype(np.float32)
+        types = mesh_model.cell_data["model_type"]
+        model_idx = mesh_model.cell_data["models"]
+        rho = mesh_model.field_data["rho"]
+        vp = mesh_model.field_data["vp"]
+        vs = mesh_model.field_data["vs"]
+        qp = mesh_model.field_data["qp"]
+        qs = mesh_model.field_data["qs"]
+        alpha = mesh_model.field_data["alpha"]
 
-        # 3. Stack qualities into (N, 5) float32
-        # Order must match your Rust Quality struct: rho, vp, vs, qp, qs
-        qualities = np.stack(
-            [
-                ds.rho.values.ravel(),
-                ds.vp.values.ravel(),
-                ds.vs.values.ravel(),
-                ds.qp.values.ravel(),
-                ds.qs.values.ravel(),
-            ],
-            axis=-1,
-        ).astype(np.float32)
-
-        internal_model = nzcvm.mesh(vertices, qualities, padded_shape)
-
-        return cls(internal_model)
-
-    @classmethod
-    def from_mesh(cls, path: Path | str):
-        raw = nzcvm.load_mesh(str(path))
+        qualities = np.c_[rho, vp, vs, qp, qs, alpha]
+        raw = nzcvm.mesh_model(
+            mesh_model.points.astype(np.float32),
+            mesh_model.connectivity.astype(np.uint64),
+            types,
+            model_idx,
+            qualities.astype(np.float32),
+            mesh_model.cell_data["priority"],
+        )
         return cls(raw)
 
-    @classmethod
-    def from_layers(cls, directory: Path | str):
-        raw = nzcvm.load_layers_from_dir(str(directory))
-        return Model(raw)
-
-    @classmethod
-    def from_layer(
-        cls,
-        quality_ds: xr.Dataset,
-        top_surface: xr.DataArray,
-        bottom_surface: xr.DataArray,
-        polygon: np.ndarray,
-        priority: int = 0,
-    ) -> "Model":
-        """
-        Creates a Layer Model (prism with sloped surfaces).
-
-        Args:
-            quality_ds: Dataset with 'z' coord and vars 'rho', 'vp', 'vs', 'qp', 'qs'.
-            top_surface: 2D DataArray (x, y) for the top boundary.
-            bottom_surface: 2D DataArray (x, y) for the bottom boundary.
-            polygon: (N, 2) array of coordinates defining the horizontal extent.
-            priority: Integer priority for resolving overlaps.
-        """
-        surface_x = top_surface.x.values.astype(np.float32)
-        surface_y = top_surface.y.values.astype(np.float32)
-
-        z_top = top_surface.values.astype(np.float32)
-        z_bottom = bottom_surface.values.astype(np.float32)
-
-        q_sorted = quality_ds.sortby("z")
-        layer_params = np.stack(
-            [
-                q_sorted.z.values,
-                q_sorted.rho.values,
-                q_sorted.vp.values,
-                q_sorted.vs.values,
-                q_sorted.qp.values,
-                q_sorted.qs.values,
-            ],
-            axis=-1,
-        ).astype(np.float32)
-
-        internal_model = nzcvm.create_layer_model(
-            polygon.astype(np.float32),
-            surface_x,
-            surface_y,
-            z_top,
-            z_bottom,
-            layer_params,
-            priority,
-        )
-
-        return cls(internal_model)
-
-    def __add__(self, other):
-        """Allows stacking using the '+' operator: model = top + bottom"""
-        if not isinstance(other, Model):
-            raise TypeError("Can only stack with another Model")
-        stacked_raw = self._raw.stack(other._raw)
-        return Model(stacked_raw)
-
     def query(self, x, y, z):
-        quality_rs, dist = self._raw.query(x, y, z)
+        quality_rs = self._raw.query(x, y, z)
         quality = Quality(
             rho=quality_rs.rho,
             vp=quality_rs.vp,
@@ -141,7 +63,7 @@ class Model:
             qp=quality_rs.qp,
             qs=quality_rs.qs,
         )
-        return quality, dist
+        return quality
 
     def query_many(self, x, y, z) -> xr.Dataset:
         x, y, z = np.broadcast_arrays(x, y, z)
@@ -156,7 +78,7 @@ class Model:
             z.astype(np.float32, copy=False).ravel(),
         )
 
-        var_names = ["rho", "vp", "vs", "qp", "qs", "dist"]
+        var_names = ["rho", "vp", "vs", "qp", "qs"]
         data_vars = {}
         for i, name in enumerate(var_names):
             data_vars[name] = (dims, quality_array[:, i].reshape(original_shape))
@@ -177,50 +99,3 @@ class Model:
         )
 
         return dset
-
-    def inspect(self):
-        self._raw.print_structure()
-
-    def __repr__(self) -> str:
-        dict_repr: ModelTreeDict = self._raw.to_dict()
-
-        def aux(root):
-            match root["type"]:
-                case "stack":
-                    return {
-                        "Stacked models": {
-                            "left": aux(root["left"]),
-                            "right": aux(root["right"]),
-                        }
-                    }
-                case "layered_models":
-                    return {
-                        "Layered models": [
-                            {
-                                "bounds": shapely.box(min_x, min_y, max_x, max_y),
-                                "z_top": min_z,
-                                "z_bottom": max_z,
-                                "priority": priority,
-                            }
-                            for (
-                                min_x,
-                                min_y,
-                                min_z,
-                                max_x,
-                                max_y,
-                                max_z,
-                            ), priority in zip(root["bounds"], root["priorities"])
-                        ]
-                    }
-                case "mesh":
-                    (min_x, min_y, min_z, max_x, max_y, max_z) = root["bounds"]
-                    return {
-                        "Mesh Model": {
-                            "bounds": shapely.box(min_x, min_y, max_x, max_y),
-                            "z_top": min_z,
-                            "z_bottom": max_z,
-                            "points": root["points"],
-                        }
-                    }
-
-        return printree.ftree(aux(dict_repr))

@@ -7,7 +7,6 @@ use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::bvh::BvhNode;
 use bvh::point_query::PointDistance;
-use hdf5_metno::File;
 use nalgebra::{Matrix3, Point3, Point4};
 
 #[derive(Debug)]
@@ -21,6 +20,7 @@ struct Simplex {
 
     id: usize,
     node_index: usize,
+    priority: u8,
 }
 
 impl Simplex {
@@ -42,6 +42,7 @@ impl Simplex {
             id,
             inv_matrix,
             node_index: 0,
+            priority: 0,
         }
     }
 
@@ -139,10 +140,32 @@ impl BHShape<Real, 3> for Simplex {
     }
 }
 
+pub enum ModelType {
+    Constant,
+    Interpolate,
+}
+
+impl TryFrom<u8> for ModelType {
+    type Error = ();
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(ModelType::Constant),
+            1 => Ok(ModelType::Interpolate),
+            _ => Err(()),
+        }
+    }
+}
+
+pub enum Model {
+    Constant { quality: usize },
+    Interpolate { qualities: Point4<usize> },
+}
+
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
-    vertex_map: Vec<Point4<usize>>,
+    model_map: Vec<Model>,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
 }
@@ -191,36 +214,21 @@ impl MeshModel {
             }
         }
 
-        Self::new(vertices, faces, qualities)
+        let models = faces
+            .iter()
+            .map(|q| Model::Interpolate { qualities: *q })
+            .collect();
+        let mut priority = Vec::with_capacity(faces.len());
+        priority.fill(0);
+        Self::new(vertices, faces, models, qualities, priority)
     }
 
-    fn union(self, other: Self) -> Self {
-        let mut simplices = self.simplices;
-        simplices.extend(other.simplices);
-
-        let aabb = self.aabb.join(&other.aabb);
-
-        let mut qualities = self.qualities;
-        qualities.extend(other.qualities);
-
-        let mut vertex_map = self.vertex_map;
-        let n = vertex_map.len();
-        vertex_map.extend(other.vertex_map.into_iter().map(|x| x.map(|e| e + n)));
-
-        let bvh_tree = Bvh::build(&mut simplices);
-        Self {
-            bvh_tree,
-            simplices,
-            vertex_map,
-            qualities,
-            aabb,
-        }
-    }
-
-    fn new(
+    pub fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
+        models: Vec<Model>,
         qualities: Vec<Quality>,
+        priority: Vec<u8>,
     ) -> Self {
         let min_point = vertices
             .iter()
@@ -239,13 +247,16 @@ impl MeshModel {
             .iter()
             .enumerate()
             .map(|(i, f)| {
-                Simplex::new(
+                let mut simplex = Simplex::new(
                     vertices[f.x],
                     vertices[f.y],
                     vertices[f.z],
                     vertices[f.w],
                     i,
-                )
+                );
+
+                simplex.priority = priority[i];
+                simplex
             })
             .collect();
         let bvh_tree = Bvh::build(&mut simplices);
@@ -255,7 +266,7 @@ impl MeshModel {
             simplices,
             qualities,
             aabb,
-            vertex_map: faces,
+            model_map: models,
         }
     }
 
@@ -267,30 +278,42 @@ impl MeshModel {
         // TODO: Accelerate this with the epsilon logic we use to prune the layer tree queries.
         nearest_to_point_within(&self.bvh_tree, &self.simplices, point, epsilon).map(
             |(simplex, dist)| {
-                let bary = simplex.barycentric_coordinates(point);
-                let vertex_indices = self.vertex_map[simplex.id];
-                let q0 = self.qualities[vertex_indices.w];
-                let q1 = self.qualities[vertex_indices.x];
-                let q2 = self.qualities[vertex_indices.y];
-                let q3 = self.qualities[vertex_indices.z];
-                let q = q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z;
+                let q = self.quality_for(&simplex, &point);
                 (q, dist)
             },
         )
     }
 
-    pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        contains_point_iterator(&self.bvh_tree, &self.simplices, &point)
-            .map(|simplex| {
-                let bary = simplex.barycentric_coordinates(point);
-                let vertex_indices = self.vertex_map[simplex.id];
-                let q0 = self.qualities[vertex_indices.w];
-                let q1 = self.qualities[vertex_indices.x];
-                let q2 = self.qualities[vertex_indices.y];
-                let q3 = self.qualities[vertex_indices.z];
+    fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
+        match self.model_map[simplex.id] {
+            Model::Constant { quality } => self.qualities[quality],
+            Model::Interpolate { qualities } => {
+                let bary = simplex.barycentric_coordinates(*point);
+                let q0 = self.qualities[qualities.w];
+                let q1 = self.qualities[qualities.x];
+                let q2 = self.qualities[qualities.y];
+                let q3 = self.qualities[qualities.z];
                 q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z
-            })
-            .reduce(|acc, q| acc + q)
+            }
+        }
+    }
+
+    pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
+        let mut simplices: Vec<&Simplex> =
+            contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
+        if simplices.len() == 1 {
+            Some(self.quality_for(simplices[0], &point))
+        } else if simplices.len() > 0 {
+            simplices.sort_by_key(|simplex| simplex.priority);
+            let mut quality = self.quality_for(simplices[0], &point);
+
+            for i in 1..simplices.len() {
+                quality = quality.blend(&self.quality_for(simplices[i], &point));
+            }
+            Some(quality)
+        } else {
+            None
+        }
     }
 
     pub fn pretty_print(&self) {
@@ -319,58 +342,6 @@ impl Bounded<Real, 3> for MeshModel {
     fn aabb(&self) -> Aabb<Real, 3> {
         self.aabb
     }
-}
-
-pub fn load_mesh_from_hdf5(file_path: &str) -> Result<MeshModel, hdf5_metno::Error> {
-    let file = File::open(file_path)?;
-    // TODO: normalise the dataset names here they suck :P
-    let ds_x = file.dataset("X_NZTM")?.read_dyn::<f64>()?;
-    let ds_y = file.dataset("Y_NZTM")?.read_dyn::<f64>()?;
-    let ds_z = file.dataset("Z_meters")?.read_dyn::<f64>()?;
-    let ds_vp = file.dataset("vp")?.read_dyn::<f64>()?;
-    let ds_vs = file.dataset("vs")?.read_dyn::<f64>()?;
-    let ds_rho = file.dataset("rho")?.read_dyn::<f64>()?;
-
-    let shape = ds_x.shape();
-    if shape.len() != 3 {
-        return Err("Dataset must be 3D".into());
-    }
-
-    let (nz, ny, nx) = (shape[0], shape[1], shape[2]);
-    let mut vertices_buf = Vec::with_capacity(nx * ny * nz);
-    let mut qualities_buf = Vec::with_capacity(nx * ny * nz);
-
-    for z in 0..nz {
-        for y in 0..ny {
-            for x in 0..nx {
-                let idx = [z, y, x];
-
-                vertices_buf.push(Point3::new(
-                    ds_x[&idx[..]] as Real,
-                    ds_y[&idx[..]] as Real,
-                    ds_z[&idx[..]] as Real,
-                ));
-
-                qualities_buf.push(Quality {
-                    vp: ds_vp[&idx[..]] as Real,
-                    vs: ds_vs[&idx[..]] as Real,
-                    rho: ds_rho[&idx[..]] as Real,
-                    qp: 100.0,
-                    qs: 50.0,
-                    alpha: 1.0,
-                });
-            }
-        }
-    }
-
-    let chart = move |z: usize, y: usize, x: usize| -> usize { (z * ny * nx) + (y * nx) + x };
-
-    Ok(MeshModel::curvilinear_mesh(
-        vertices_buf,
-        qualities_buf,
-        (nz, ny, nx),
-        chart,
-    ))
 }
 
 #[cfg(test)]

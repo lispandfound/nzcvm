@@ -2,25 +2,27 @@ use crate::geometry::point_triangle_distance_sq;
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::tree_query::{contains_point_iterator, nearest_to_point_within, Contains};
+use approx::abs_diff_eq;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::bvh::BvhNode;
 use bvh::point_query::PointDistance;
+use nalgebra::Scalar;
 use nalgebra::{Matrix3, Point3, Point4};
 
-#[derive(Debug)]
-struct Simplex {
-    c0: Point3<Real>,
-    c1: Point3<Real>,
-    c2: Point3<Real>,
-    c3: Point3<Real>,
+#[derive(Debug, Clone, Copy)]
+pub struct Simplex {
+    pub c0: Point3<Real>,
+    pub c1: Point3<Real>,
+    pub c2: Point3<Real>,
+    pub c3: Point3<Real>,
 
     inv_matrix: Matrix3<Real>,
 
     id: usize,
     node_index: usize,
-    priority: u8,
+    pub priority: u8,
 }
 
 impl Simplex {
@@ -157,15 +159,22 @@ impl TryFrom<u8> for ModelType {
     }
 }
 
-pub enum Model {
-    Constant { quality: usize },
-    Interpolate { qualities: Point4<usize> },
+pub enum Model<T: Scalar> {
+    Constant { quality: T },
+    Interpolate { qualities: Point4<T> },
+}
+
+pub struct Explanation {
+    pub simplices: Vec<Simplex>,
+    pub qualities: Vec<Quality>,
+    pub models: Vec<Model<Quality>>,
+    pub output: Option<Quality>,
 }
 
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
-    model_map: Vec<Model>,
+    model_map: Vec<Model<usize>>,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
 }
@@ -226,7 +235,7 @@ impl MeshModel {
     pub fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
-        models: Vec<Model>,
+        models: Vec<Model<usize>>,
         qualities: Vec<Quality>,
         priority: Vec<u8>,
     ) -> Self {
@@ -284,6 +293,17 @@ impl MeshModel {
         )
     }
 
+    fn model_for(&self, simplex: &Simplex) -> Model<Quality> {
+        match self.model_map[simplex.id] {
+            Model::Constant { quality } => Model::Constant {
+                quality: self.qualities[quality],
+            },
+            Model::Interpolate { qualities } => Model::Interpolate {
+                qualities: qualities.map(|i| self.qualities[i]),
+            },
+        }
+    }
+
     fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
         match self.model_map[simplex.id] {
             Model::Constant { quality } => self.qualities[quality],
@@ -298,6 +318,42 @@ impl MeshModel {
         }
     }
 
+    pub fn explain(&self, point: Point3<Real>) -> Explanation {
+        let mut simplices: Vec<&Simplex> =
+            contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
+        let mut query_simplices = Vec::new();
+        let mut query_models = Vec::new();
+        let mut query_qualities = Vec::new();
+        let mut quality = None;
+
+        if simplices.len() > 0 {
+            simplices.sort_by_key(|simplex| simplex.priority);
+            let mut computed_quality = self.quality_for(simplices[0], &point);
+            query_simplices.push(*simplices[0]);
+            query_models.push(self.model_for(simplices[0]));
+            query_qualities.push(computed_quality);
+            for i in 1..simplices.len() {
+                if abs_diff_eq!(computed_quality.alpha, 1.0, epsilon = 1e-4) {
+                    break;
+                }
+                let new_quality = self.quality_for(simplices[i], &point);
+                query_simplices.push(*simplices[i]);
+                query_models.push(self.model_for(simplices[i]));
+                query_qualities.push(new_quality);
+                computed_quality = computed_quality.blend(&new_quality);
+            }
+
+            quality = Some(computed_quality);
+        }
+
+        Explanation {
+            simplices: query_simplices,
+            models: query_models,
+            qualities: query_qualities,
+            output: quality,
+        }
+    }
+
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
         let mut simplices: Vec<&Simplex> =
             contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
@@ -308,6 +364,9 @@ impl MeshModel {
             let mut quality = self.quality_for(simplices[0], &point);
 
             for i in 1..simplices.len() {
+                if abs_diff_eq!(quality.alpha, 1.0, epsilon = 1e-4) {
+                    break;
+                }
                 quality = quality.blend(&self.quality_for(simplices[i], &point));
             }
             Some(quality)

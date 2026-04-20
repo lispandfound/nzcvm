@@ -2,7 +2,7 @@ use crate::real::Real;
 use ndarray::{Array1, ArrayView1};
 use std::ops::{Add, Mul};
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 pub struct Quality {
     pub rho: Real,
     pub vp: Real,

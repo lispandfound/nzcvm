@@ -8,7 +8,7 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::mesh::{MeshModel, Model, ModelType};
+    use crate::mesh::{Explanation, MeshModel, Model, ModelType, Simplex};
     use crate::quality::Quality;
     use crate::real::Real;
     use nalgebra::{Point3, Point4};
@@ -19,19 +19,85 @@ mod nzcvm {
 
     use std::sync::Arc;
 
-    #[pyclass]
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub enum PySimplexModel {
+        Constant {
+            quality: PyQuality,
+        },
+
+        Interpolate {
+            x: PyQuality,
+            y: PyQuality,
+            z: PyQuality,
+            w: PyQuality,
+        },
+    }
+
+    impl From<Model<Quality>> for PySimplexModel {
+        fn from(item: Model<Quality>) -> Self {
+            match item {
+                Model::Constant { quality } => PySimplexModel::Constant {
+                    quality: quality.into(),
+                },
+                Model::Interpolate { qualities } => PySimplexModel::Interpolate {
+                    x: qualities.x.into(),
+                    y: qualities.y.into(),
+                    z: qualities.z.into(),
+                    w: qualities.w.into(),
+                },
+            }
+        }
+    }
+
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub struct PyPoint {
+        x: Real,
+        y: Real,
+        z: Real,
+    }
+
+    impl From<Point3<Real>> for PyPoint {
+        fn from(item: Point3<Real>) -> Self {
+            PyPoint {
+                x: item.x,
+                y: item.y,
+                z: item.z,
+            }
+        }
+    }
+
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub struct PySimplex {
+        c0: PyPoint,
+        c1: PyPoint,
+        c2: PyPoint,
+        c3: PyPoint,
+        priority: u8,
+    }
+
+    impl From<Simplex> for PySimplex {
+        fn from(item: Simplex) -> Self {
+            PySimplex {
+                c0: item.c0.into(),
+                c1: item.c1.into(),
+                c2: item.c2.into(),
+                c3: item.c3.into(),
+                priority: item.priority,
+            }
+        }
+    }
+
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
     pub struct PyQuality {
-        #[pyo3(get)]
         pub rho: Real,
-        #[pyo3(get)]
         pub vp: Real,
-        #[pyo3(get)]
         pub vs: Real,
-        #[pyo3(get)]
         pub qp: Real,
-        #[pyo3(get)]
         pub qs: Real,
-        #[pyo3(get)]
         pub alpha: Real,
     }
 
@@ -48,10 +114,31 @@ mod nzcvm {
         }
     }
 
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub struct PyExplanation {
+        pub simplices: Vec<PySimplex>,
+        pub qualities: Vec<PyQuality>,
+        pub models: Vec<PySimplexModel>,
+        pub output: Option<PyQuality>,
+    }
+
+    impl From<Explanation> for PyExplanation {
+        fn from(item: Explanation) -> Self {
+            PyExplanation {
+                simplices: item.simplices.into_iter().map(|x| x.into()).collect(),
+                qualities: item.qualities.into_iter().map(|x| x.into()).collect(),
+                models: item.models.into_iter().map(|x| x.into()).collect(),
+                output: item.output.map(|x| x.into()),
+            }
+        }
+    }
+
     #[pyclass]
     pub struct PyModel {
         pub inner: Arc<MeshModel>,
     }
+
     #[pyfunction]
     pub fn mesh_model(
         vertices_py: PyReadonlyArray2<Real>,
@@ -121,6 +208,11 @@ mod nzcvm {
         pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<PyQuality>> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query(pt).map(|q| q.into()))
+        }
+
+        pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
+            let pt = Point3::new(x, y, z);
+            Ok(self.inner.explain(pt).into())
         }
 
         pub fn query_many<'py>(

@@ -121,6 +121,7 @@ mod nzcvm {
         pub qualities: Vec<PyQuality>,
         pub models: Vec<PySimplexModel>,
         pub output: Option<PyQuality>,
+        pub termination: Option<usize>,
     }
 
     impl From<Explanation> for PyExplanation {
@@ -130,6 +131,7 @@ mod nzcvm {
                 qualities: item.qualities.into_iter().map(|x| x.into()).collect(),
                 models: item.models.into_iter().map(|x| x.into()).collect(),
                 output: item.output.map(|x| x.into()),
+                termination: item.termination,
             }
         }
     }
@@ -210,7 +212,7 @@ mod nzcvm {
             Ok(self.inner.query(pt).map(|q| q.into()))
         }
 
-        pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
+        pub fn explain(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.explain(pt).into())
         }

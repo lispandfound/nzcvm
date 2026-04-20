@@ -772,9 +772,9 @@ dependencies = [
     { name = "meshio" },
     { name = "numba" },
     { name = "numpy" },
-    { name = "printree" },
     { name = "pyproj" },
     { name = "pyvista" },
+    { name = "rich" },
     { name = "scikit-learn" },
     { name = "shapely" },
     { name = "xarray" },
@@ -796,9 +796,9 @@ requires-dist = [
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "numba", specifier = ">=0.65.0" },
     { name = "numpy", specifier = ">=2.4.4" },
-    { name = "printree", specifier = ">=0.2.1" },
     { name = "pyproj", specifier = ">=3.7.2" },
     { name = "pyvista", specifier = ">=0.47.2" },
+    { name = "rich", specifier = ">=14.3.3" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
     { name = "shapely", specifier = ">=2.1.2" },
     { name = "xarray", specifier = ">=2026.2.0" },
@@ -979,15 +979,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/83/43/85ef45e8b36c6a48546af7b266592dc32d7f67837a6514d111bced6d7d75/pooch-1.9.0.tar.gz", hash = "sha256:de46729579b9857ffd3e741987a2f6d5e0e03219892c167c6578c0091fb511ed", size = 61788, upload-time = "2026-01-30T19:15:09.649Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2a/2d/d4bf65e47cea8ff2c794a600c4fd1273a7902f268757c531e0ee9f18aa58/pooch-1.9.0-py3-none-any.whl", hash = "sha256:f265597baa9f760d25ceb29d0beb8186c243d6607b0f60b83ecf14078dbc703b", size = 67175, upload-time = "2026-01-30T19:15:08.36Z" },
-]
-
-[[package]]
-name = "printree"
-version = "0.2.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/4a/c9/40e508c5539ae7b0e846f20d2b9de88496ed4845b5e27f19c22dcb8c4cf3/printree-0.2.1.tar.gz", hash = "sha256:6c74980256211b9f94abeb77be050d4e5992b5b1e1b147e92d10882ea16947f1", size = 8389, upload-time = "2025-01-02T11:15:48.076Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bd/0e/ba9a2b70c199b7f0cf374fbe003c4bc36ab8f59f29d89c0559b0bac63f2f/printree-0.2.1-py3-none-any.whl", hash = "sha256:fa86f76a6df9cf43fb9b8e6b7ca588d808ab106f082dc8dc5afe7676eeb52811", size = 9298, upload-time = "2025-01-02T11:15:45.714Z" },
 ]
 
 [[package]]

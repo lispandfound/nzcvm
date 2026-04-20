@@ -3,16 +3,13 @@ use criterion::{
 };
 use geo::{Coord, LineString, Polygon};
 use nalgebra::Point3;
-use ndarray::{meshgrid, Array1, Array2, MeshIndex};
 use nzcvm::layers::{LayerGeometry, LayerTree, Model};
 use nzcvm::mesh::MeshModel;
 use nzcvm::model::ModelTree;
 use nzcvm::quality::Quality;
 use ordered_float::OrderedFloat;
 use pprof::criterion::{Output, PProfProfiler};
-use std::collections::BTreeMap;
 use std::hint::black_box;
-use std::sync::Arc;
 
 fn mock_quality() -> Quality {
     Quality {

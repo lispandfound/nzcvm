@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 from pathlib import Path
-from printree import ftree
+
 
 import numpy as np
 import xarray as xr
 import xoak
+from typing import Self, Any
+from rich.tree import Tree
+import rich
 
 
 from nzcvm import nzcvm, mesh
@@ -29,9 +32,14 @@ class Quality:
             vs=quality_rs.vs,
             qp=quality_rs.qp,
             qs=quality_rs.qs,
-            alpha=quality_rs.alpha
+            alpha=quality_rs.alpha,
         )
 
+    def __str__(self):
+        return (
+            f"(ρ={self.rho:.2f}, Vp={self.vp:.2f}, Vs={self.vs:.2f},"
+            f" Qp={self.qp:.2f}, Qs={self.qs:.2f}, ɑ={self.alpha:.2f})"
+        )
 
 
 @dataclass
@@ -45,7 +53,8 @@ class Point:
         return cls(point_rs.x, point_rs.y, point_rs.z)
 
     def __str__(self) -> str:
-        return f'({self.x:.3g}, {self.y:.3g}, {self.z:.3g})'
+        return f"({self.x:.6g}, {self.y:.6g}, {self.z:.6g})"
+
 
 @dataclass
 class Simplex:
@@ -56,13 +65,13 @@ class Simplex:
     priority: int
 
     @classmethod
-    def _from_simplex_method(cls, simplex_rs: Any) -> Self:
+    def _from_rs_simplex(cls, simplex_rs: Any) -> Self:
         return cls(
-            c0=Point.simplex_rs._from_rs_point(c0),
-            c1=Point.simplex_rs._from_rs_point(c1),
-            c2=Point.simplex_rs._from_rs_point(c2),
-            c3=Point.simplex_rs._from_rs_point(c3),
-            priority=simplex_rs.priority
+            c0=Point._from_rs_point(simplex_rs.c0),
+            c1=Point._from_rs_point(simplex_rs.c1),
+            c2=Point._from_rs_point(simplex_rs.c2),
+            c3=Point._from_rs_point(simplex_rs.c3),
+            priority=simplex_rs.priority,
         )
 
     def __str__(self) -> str:
@@ -70,16 +79,16 @@ class Simplex:
         c1 = str(self.c1)
         c2 = str(self.c2)
         c3 = str(self.c3)
-        return f'Tetrahedron with corners c0={c0}, c1={c1}, c2={c2}, c3={c3}'
+        return f"Tetrahedron with corners:\nc0={c0}\nc1={c1}\nc2={c2}\nc3={c3}"
 
-        
 
 @dataclass
 class ConstantModel:
     quality: Quality
 
     def __str__(self) -> str:
-        return f'Constant model with quality = {str(quality)}'
+        return f"Constant model with quality = {str(self.quality)}"
+
 
 @dataclass
 class InterpolatedModel:
@@ -88,22 +97,27 @@ class InterpolatedModel:
     z: Quality
     w: Quality
 
-    def __str__(self) -> str: 
-        return (f'Barycentric interpolation between:\n'
-               f'x={str(self.x)} y={str(self.y)} z={str(self.z)} w={str(self.w)}') 
+    def __str__(self) -> str:
+        return (
+            f"Barycentric interpolation between:\n"
+            f"x={str(self.x)}\ny={str(self.y)}\nz={str(self.z)}\nw={str(self.w)}"
+        )
+
 
 SimplexModel = ConstantModel | InterpolatedModel
 
+
 def _from_rs_simplex_model(model: Any) -> SimplexModel:
-    if hasinstance(model, 'quality'):
-        return ConstantModel(quality=model.quality)
+    if hasattr(model, "quality"):
+        return ConstantModel(quality=Quality._from_rs_quality(model.quality))
     else:
         return InterpolatedModel(
-            x=model.x,
-            y=model.y,
-            z=model.z,
-            w=model.w
+            x=Quality._from_rs_quality(model.x),
+            y=Quality._from_rs_quality(model.y),
+            z=Quality._from_rs_quality(model.z),
+            w=Quality._from_rs_quality(model.w),
         )
+
 
 @dataclass
 class Explanation:
@@ -111,39 +125,62 @@ class Explanation:
     qualities: list[Quality]
     models: list[SimplexModel]
     output: Quality | None
+    termination: int | None
 
     @classmethod
     def _from_rs_explanation(cls, explanation: Any) -> Self:
         return cls(
-            simplices=[Simplex._from_rs_simplex(simplex) for simplex in explanation.simplices],
-            qualities=[Quality._from_rs_quality(quality) for quality in explanation.qualities],
+            simplices=[
+                Simplex._from_rs_simplex(simplex) for simplex in explanation.simplices
+            ],
+            qualities=[
+                Quality._from_rs_quality(quality) for quality in explanation.qualities
+            ],
             models=[_from_rs_simplex_model(model) for model in explanation.models],
-            output=Quality._from_rs_quality(model.output)
+            output=Quality._from_rs_quality(explanation.output),
+            termination=explanation.termination,
         )
 
-    def __str__(self) -> str:
-        if not output:
-            return 'No model coverage for query point.'
-        tree = {
-            str(output): {
-                f'Simplex {i} (priority = {p})': {
-                    'Model': str(model),
-                    'Simplex quality': str(quality),
-                    'Geometry': str(simplex) 
-                }
-            }
-        }
-        output = ftree(tree)
-        if len(model.qualities) > 1:
-            output += '\nQualities alpha-blended together until exhaustion or combined quality ~ 1.0'
-        return output
-                
-    
+    def __rich__(self) -> Tree:
+        if not self.output:
+            return Tree("[red]No model coverage for query point.[/red]")
+
+        root = Tree(f"[bold white]{self.output}[/bold white]")
+
+        for i, (simplex, model, quality) in enumerate(
+            zip(self.simplices, self.models, self.qualities)
+        ):
+            is_active = self.termination is None or i < self.termination
+            colour = "green" if is_active else "red"
+
+            simplex_node = root.add(
+                f"[{colour}]Simplex {i} (priority = {simplex.priority})[/{colour}]"
+            )
+
+            simplex_node.add(f"Model: {model}")
+            simplex_node.add(f"Simplex quality: {quality}")
+            simplex_node.add(f"Geometry: {simplex}")
+
+        return root
+
+
 class Model:
     """A high-level wrapper for the Rust ModelTree."""
 
     def __init__(self, internal_py_model: PyModel):
         self._raw = internal_py_model
+
+    @classmethod
+    def load_models(cls, *models: Path | str) -> Self:
+        if len(models) == 1 and Path(models[0]).is_dir():
+            meshes = [
+                mesh.Mesh.read_vtkhdf(mesh_path)
+                for mesh_path in Path(models[0]).glob("*.vtkhdf")
+            ]
+        else:
+            meshes = [mesh.Mesh.read_vtkhdf(mesh_path) for mesh_path in models]
+        all = mesh.Mesh.union(*meshes)
+        return cls.from_mesh(all)
 
     @classmethod
     def from_mesh(cls, mesh_model: mesh.Mesh):
@@ -182,7 +219,12 @@ class Model:
 
     def explain(self, x: float, y: float, z: float) -> None:
         explanation = self.get_explanation(x, y, z)
-        print(str(explanation))
+        rich.print(explanation)
+        if len(explanation.qualities) > 1:
+            rich.print(
+                "Qualities alpha-blended together until exhaustion "
+                "or combined quality alpha ~ 1.0"
+            )
 
     def query_many(self, x, y, z) -> xr.Dataset:
         x, y, z = np.broadcast_arrays(x, y, z)

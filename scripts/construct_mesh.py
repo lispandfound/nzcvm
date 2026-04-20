@@ -322,6 +322,7 @@ def uniform_model(rho: float, vp: float, vs: float) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "z": [-1e6],
+            "thickness": [1e7],
             "rho": rho,
             "vs": vs,
             "vp": vp,

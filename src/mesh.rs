@@ -169,6 +169,7 @@ pub struct Explanation {
     pub qualities: Vec<Quality>,
     pub models: Vec<Model<Quality>>,
     pub output: Option<Quality>,
+    pub termination: Option<usize>,
 }
 
 pub struct MeshModel {
@@ -325,6 +326,7 @@ impl MeshModel {
         let mut query_models = Vec::new();
         let mut query_qualities = Vec::new();
         let mut quality = None;
+        let mut termination = None;
 
         if simplices.len() > 0 {
             simplices.sort_by_key(|simplex| simplex.priority);
@@ -332,9 +334,12 @@ impl MeshModel {
             query_simplices.push(*simplices[0]);
             query_models.push(self.model_for(simplices[0]));
             query_qualities.push(computed_quality);
+
             for i in 1..simplices.len() {
-                if abs_diff_eq!(computed_quality.alpha, 1.0, epsilon = 1e-4) {
-                    break;
+                if abs_diff_eq!(computed_quality.alpha, 1.0, epsilon = 1e-4)
+                    && termination.is_none()
+                {
+                    termination = Some(i);
                 }
                 let new_quality = self.quality_for(simplices[i], &point);
                 query_simplices.push(*simplices[i]);
@@ -351,6 +356,7 @@ impl MeshModel {
             models: query_models,
             qualities: query_qualities,
             output: quality,
+            termination: termination,
         }
     }
 

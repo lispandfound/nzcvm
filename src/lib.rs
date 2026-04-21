@@ -8,7 +8,9 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::mesh::{Explanation, MeshModel, Model, ModelType, Simplex};
+    use crate::mesh::{
+        ConstantModel, Explanation, InterpolateModel, MeshModel, Model, ModelExplanation, Simplex,
+    };
     use crate::quality::Quality;
     use crate::real::Real;
     use nalgebra::{Point3, Point4};
@@ -34,18 +36,20 @@ mod nzcvm {
         },
     }
 
-    impl From<Model<Quality>> for PySimplexModel {
-        fn from(item: Model<Quality>) -> Self {
+    impl From<ModelExplanation> for PySimplexModel {
+        fn from(item: ModelExplanation) -> Self {
             match item {
-                Model::Constant { quality } => PySimplexModel::Constant {
+                ModelExplanation::Constant(ConstantModel { quality }) => PySimplexModel::Constant {
                     quality: quality.into(),
                 },
-                Model::Interpolate { qualities } => PySimplexModel::Interpolate {
-                    x: qualities.x.into(),
-                    y: qualities.y.into(),
-                    z: qualities.z.into(),
-                    w: qualities.w.into(),
-                },
+                ModelExplanation::Interpolate(InterpolateModel { qualities }) => {
+                    PySimplexModel::Interpolate {
+                        x: qualities.x.into(),
+                        y: qualities.y.into(),
+                        z: qualities.z.into(),
+                        w: qualities.w.into(),
+                    }
+                }
             }
         }
     }
@@ -171,25 +175,25 @@ mod nzcvm {
         let model_idx = models_py.as_array();
         let mut idx = 0;
         for model_type in types.iter() {
-            match (*model_type).try_into() {
-                Ok(ModelType::Constant) => {
-                    models_vec.push(Model::Constant {
+            match model_type {
+                0 => {
+                    models_vec.push(Model::from(ConstantModel {
                         quality: model_idx[idx],
-                    });
+                    }));
                     idx += 1;
                 }
-                Ok(ModelType::Interpolate) => {
-                    models_vec.push(Model::Interpolate {
+                1 => {
+                    models_vec.push(Model::from(InterpolateModel {
                         qualities: Point4::new(
                             model_idx[idx],
                             model_idx[idx + 1],
                             model_idx[idx + 2],
                             model_idx[idx + 3],
                         ),
-                    });
+                    }));
                     idx += 4;
                 }
-                Err(_) => {
+                _ => {
                     return Err(PyValueError::new_err(format!(
                         "Invalid model type {}",
                         model_type

@@ -8,6 +8,7 @@ use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
 use bvh::bvh::BvhNode;
 use bvh::point_query::PointDistance;
+use enum_dispatch::enum_dispatch;
 use nalgebra::Scalar;
 use nalgebra::{Matrix3, Point3, Point4};
 
@@ -142,32 +143,75 @@ impl BHShape<Real, 3> for Simplex {
     }
 }
 
-pub enum ModelType {
-    Constant,
-    Interpolate,
+#[enum_dispatch]
+pub trait Queryable {
+    fn quality_at(&self, qualities: &[Quality], simplex: &Simplex, point: &Point3<Real>)
+        -> Quality;
+    fn explanation(&self, qualities: &[Quality]) -> ModelExplanation;
 }
 
-impl TryFrom<u8> for ModelType {
-    type Error = ();
+#[enum_dispatch(Queryable)]
+pub enum Model {
+    Constant(ConstantModel<usize>),
+    Interpolate(InterpolateModel<usize>),
+}
 
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(ModelType::Constant),
-            1 => Ok(ModelType::Interpolate),
-            _ => Err(()),
-        }
+pub enum ModelExplanation {
+    Constant(ConstantModel<Quality>),
+    Interpolate(InterpolateModel<Quality>),
+}
+
+pub struct ConstantModel<T> {
+    pub quality: T,
+}
+
+impl Queryable for ConstantModel<usize> {
+    fn quality_at(
+        &self,
+        qualities: &[Quality],
+        _simplex: &Simplex,
+        _point: &Point3<Real>,
+    ) -> Quality {
+        qualities[self.quality]
+    }
+
+    fn explanation(&self, qualities: &[Quality]) -> ModelExplanation {
+        ModelExplanation::Constant(ConstantModel {
+            quality: qualities[self.quality],
+        })
     }
 }
 
-pub enum Model<T: Scalar> {
-    Constant { quality: T },
-    Interpolate { qualities: Point4<T> },
+pub struct InterpolateModel<T: Scalar> {
+    pub qualities: Point4<T>,
+}
+
+impl Queryable for InterpolateModel<usize> {
+    fn quality_at(
+        &self,
+        qualities: &[Quality],
+        simplex: &Simplex,
+        point: &Point3<Real>,
+    ) -> Quality {
+        let bary = simplex.barycentric_coordinates(*point);
+        let q0 = qualities[self.qualities.w];
+        let q1 = qualities[self.qualities.x];
+        let q2 = qualities[self.qualities.y];
+        let q3 = qualities[self.qualities.z];
+        q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z
+    }
+
+    fn explanation(&self, qualities: &[Quality]) -> ModelExplanation {
+        ModelExplanation::Interpolate(InterpolateModel {
+            qualities: self.qualities.map(|x| qualities[x]),
+        })
+    }
 }
 
 pub struct Explanation {
     pub simplices: Vec<Simplex>,
     pub qualities: Vec<Quality>,
-    pub models: Vec<Model<Quality>>,
+    pub models: Vec<ModelExplanation>,
     pub output: Option<Quality>,
     pub termination: Option<usize>,
 }
@@ -175,7 +219,7 @@ pub struct Explanation {
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
-    model_map: Vec<Model<usize>>,
+    model_map: Vec<Model>,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
 }
@@ -226,17 +270,17 @@ impl MeshModel {
 
         let models = faces
             .iter()
-            .map(|q| Model::Interpolate { qualities: *q })
+            .map(|q| Model::from(InterpolateModel { qualities: *q }))
             .collect();
-        let mut priority = Vec::with_capacity(faces.len());
-        priority.fill(0);
+        let priority = vec![0; faces.len()];
+
         Self::new(vertices, faces, models, qualities, priority)
     }
 
     pub fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
-        models: Vec<Model<usize>>,
+        models: Vec<Model>,
         qualities: Vec<Quality>,
         priority: Vec<u8>,
     ) -> Self {
@@ -284,6 +328,14 @@ impl MeshModel {
         self.qualities.len()
     }
 
+    fn model_for(&self, simplex: &Simplex) -> ModelExplanation {
+        self.model_map[simplex.id].explanation(&self.qualities)
+    }
+
+    fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
+        self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
+    }
+
     pub fn query_within(&self, point: Point3<Real>, epsilon: Real) -> Option<(Quality, Real)> {
         // TODO: Accelerate this with the epsilon logic we use to prune the layer tree queries.
         nearest_to_point_within(&self.bvh_tree, &self.simplices, point, epsilon).map(
@@ -292,31 +344,6 @@ impl MeshModel {
                 (q, dist)
             },
         )
-    }
-
-    fn model_for(&self, simplex: &Simplex) -> Model<Quality> {
-        match self.model_map[simplex.id] {
-            Model::Constant { quality } => Model::Constant {
-                quality: self.qualities[quality],
-            },
-            Model::Interpolate { qualities } => Model::Interpolate {
-                qualities: qualities.map(|i| self.qualities[i]),
-            },
-        }
-    }
-
-    fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
-        match self.model_map[simplex.id] {
-            Model::Constant { quality } => self.qualities[quality],
-            Model::Interpolate { qualities } => {
-                let bary = simplex.barycentric_coordinates(*point);
-                let q0 = self.qualities[qualities.w];
-                let q1 = self.qualities[qualities.x];
-                let q2 = self.qualities[qualities.y];
-                let q3 = self.qualities[qualities.z];
-                q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z
-            }
-        }
     }
 
     pub fn explain(&self, point: Point3<Real>) -> Explanation {

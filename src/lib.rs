@@ -1,18 +1,20 @@
-pub mod geometry;
-pub mod mesh;
-pub mod quality;
-pub mod real;
-pub mod surface;
-pub mod tree_query;
+mod geometry;
+mod mesh;
+mod model;
+mod quality;
+mod real;
+mod simplex;
+mod surface;
+mod tree_query;
 use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::mesh::{
-        ConstantModel, Explanation, InterpolateModel, MeshModel, Model, ModelExplanation, Simplex,
-    };
+    use crate::mesh::{Explanation, MeshModel};
+    use crate::model::{ConstantModel, InterpolateModel, Model, ModelExplanation};
     use crate::quality::Quality;
     use crate::real::Real;
+    use crate::simplex::Simplex;
     use nalgebra::{Point3, Point4};
     use ndarray::{Array2, Axis, Zip};
     use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};

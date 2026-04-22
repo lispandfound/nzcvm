@@ -1,13 +1,9 @@
 use criterion::{
     criterion_group, criterion_main, AxisScale, BenchmarkId, Criterion, PlotConfiguration,
 };
-use geo::{Coord, LineString, Polygon};
 use nalgebra::Point3;
-use nzcvm::layers::{LayerGeometry, LayerTree, Model};
 use nzcvm::mesh::MeshModel;
-use nzcvm::model::ModelTree;
 use nzcvm::quality::Quality;
-use ordered_float::OrderedFloat;
 use pprof::criterion::{Output, PProfProfiler};
 use std::hint::black_box;
 
@@ -27,7 +23,7 @@ fn bench_mesh_queries(c: &mut Criterion) {
     let mut group = c.benchmark_group("Mesh_Point_Query");
     group.plot_config(plot_config);
 
-    for size in [10, 20, 40, 80, 160].iter() {
+    for size in [160].iter() {
         let n = *size;
         let total_vertices = n * n * n;
         let vertices = (0..total_vertices)
@@ -45,7 +41,6 @@ fn bench_mesh_queries(c: &mut Criterion) {
             (n, n, n),
             |i, j, k| k + j * n + i * n * n,
         );
-        let model = ModelTree::mesh_model(mesh);
 
         // Multiple query points to isolate spatial bias
         let queries = [
@@ -56,8 +51,8 @@ fn bench_mesh_queries(c: &mut Criterion) {
 
         group.bench_with_input(
             BenchmarkId::from_parameter(total_vertices),
-            &model,
-            |b, m| {
+            &mesh,
+            |b, m: &MeshModel| {
                 b.iter(|| {
                     for q in queries.iter() {
                         m.query(black_box(*q));

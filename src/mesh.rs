@@ -8,6 +8,7 @@ use bvh::aabb::{Aabb, Bounded};
 use bvh::bvh::Bvh;
 use bvh::bvh::BvhNode;
 use nalgebra::{Point3, Point4};
+use smallvec::SmallVec;
 
 pub struct Explanation {
     pub simplices: Vec<Simplex>,
@@ -137,16 +138,6 @@ impl MeshModel {
         self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
-    pub fn query_within(&self, point: Point3<Real>, epsilon: Real) -> Option<(Quality, Real)> {
-        // TODO: Accelerate this with the epsilon logic we use to prune the layer tree queries.
-        nearest_to_point_within(&self.bvh_tree, &self.simplices, point, epsilon).map(
-            |(simplex, dist)| {
-                let q = self.quality_for(&simplex, &point);
-                (q, dist)
-            },
-        )
-    }
-
     pub fn explain(&self, point: Point3<Real>) -> Explanation {
         let mut simplices: Vec<&Simplex> =
             contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
@@ -189,7 +180,7 @@ impl MeshModel {
     }
 
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        let mut simplices: Vec<&Simplex> =
+        let mut simplices: SmallVec<[&Simplex; 8]> =
             contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
         if simplices.len() == 1 {
             Some(self.quality_for(simplices[0], &point))
@@ -301,21 +292,6 @@ mod tests {
     }
 
     #[test]
-    fn test_simplex_distance_properties() {
-        let v = unit_tetrahedron_universe();
-        let simplex = Simplex::new(v[0], v[1], v[2], v[3], 0);
-
-        assert_relative_eq!(
-            simplex.distance_squared(Point3::new(0.1, 0.1, 0.1)),
-            0.0,
-            epsilon = 1e-5
-        );
-
-        let below_face = Point3::new(0.5, 0.5, -2.0);
-        assert_relative_eq!(simplex.distance_squared(below_face), 4.0, epsilon = 1e-5);
-    }
-
-    #[test]
     fn test_simplex_aabb_properties() {
         let v0 = Point3::new(-1.0, 2.0, 0.0);
         let v1 = Point3::new(3.0, -4.0, 1.0);
@@ -370,14 +346,5 @@ mod tests {
         let q_in = mesh.query(p_in).expect("Should find interior");
 
         assert_relative_eq!(q_in.rho, 7.4, epsilon = 1e-5);
-
-        // Exterior: Query (6,4,4) while Max is (4,4,4). Dist = 2.0
-        let p_out = Point3::new(6.0, 4.0, 4.0);
-        let (q_out, dist_sq_out) = mesh
-            .query_within(p_out, Real::MAX)
-            .expect("Should extrapolate");
-
-        assert_relative_eq!(dist_sq_out, 2.0, epsilon = 1e-5);
-        assert_relative_eq!(q_out.rho, 14.0, epsilon = 1e-5);
     }
 }

@@ -1,186 +1,149 @@
+from nzcvm.coordinates import CoordinateSystem, Coordinate
+from nzcvm.components import Component
 from dataclasses import dataclass, field
-
-
-@dataclass
-class BasicMetadata:
-    """Grouped Metadata containing descriptive information about the model."""
-
-    title: str | None = None
-    """The primary title of the model grid."""
-
-    id: str | None = None
-    """A unique identifier for the model."""
-
-    description: str | None = None
-    """A long-form description of the model purpose and content."""
-
-    version: str | None = None
-    """Semantic versioning string (e.g., '1.0.0')."""
-
-    history: str | None = None
-    """Historical record of changes made to this model."""
-
-    comment: str | None = None
-    """General developer or user comments."""
-
-    license: str | None = None
-    """Usage license (e.g., 'MIT', 'CC-BY-4.0')."""
-
-    keywords: list[str] = field(default_factory=list)
-    """List of tags or keywords for searching."""
-
-    auxiliary: str | None = None
-    """Additional auxiliary information in string format."""
-
-
-@dataclass
-class AttributionMetadata:
-    """Metadata regarding the creators and scholarly references of the model."""
-
-    creator_name: str | None = None
-    """Name of the primary creator."""
-
-    creator_email: str | None = None
-    """Contact email for the creator."""
-
-    creator_institution: str | None = None
-    """Institution associated with the creation."""
-
-    acknowledgement: str | None = None
-    """General acknowledgements for funding or support."""
-
-    authors: list[str] = field(default_factory=list)
-    """List of contributing authors."""
-
-    references: list[str] = field(default_factory=list)
-    """List of academic or technical references (DOIs, URLs)."""
-
-
-@dataclass
-class RepositoryMetadata:
-    """Information about where the model data is hosted or archived."""
-
-    repository_doi: str | None = None
-    """DOI for the repository entry."""
-
-    repository_name: str | None = None
-    """Name of the hosting repository (e.g., 'Zenodo')."""
-
-    repository_url: str | None = None
-    """Direct URL to the repository."""
-
-
-@dataclass
-class DataMetadata:
-    """Metadata describing the internal data formatting and units."""
-
-    data_layout: str | None = None
-    """Description of how data is laid out (e.g., 'vertex-centered')."""
-
-    data_units: list[str] = field(default_factory=list)
-    """List of units for each data component (e.g., ['m/s', 'kg/m3'])."""
-
-    data_values: list[str] = field(default_factory=list)
-    """Names or labels for the data values stored in blocks."""
-
-
-@dataclass
-class CoordinateMetadata:
-    """Spatial reference and coordinate system metadata."""
-
-    crs: str | None = None
-    """Coordinate Reference System string (e.g., 'EPSG:2193')."""
-
-    origin_x: float | None = None
-    """X-coordinate of the grid origin."""
-
-    origin_y: float | None = None
-    """Y-coordinate of the grid origin."""
-
-    y_azimuth: float | None = None
-    """Azimuth angle of the Y-axis in degrees."""
-
-    dim_x: float | None = None
-    """Total dimension of the grid in the X direction."""
-
-    dim_y: float | None = None
-    """Total dimension of the grid in the Y direction."""
-
-    dim_z: float | None = None
-    """Total dimension of the grid in the Z direction."""
+import dataclasses
+import dask.array as da
+import xarray as xr
+import numpy as np
 
 
 @dataclass
 class ModelMetadata:
-    """Root metadata object that aggregates all sub-metadata categories."""
+    """Flattened metadata object containing all descriptive, attribution,
+    repository, data, and coordinate information for the model."""
 
-    basic: BasicMetadata | None = None
-    """Core descriptive metadata."""
+    # Basic Descriptive Metadata
+    title: str | None = None
+    id: str | None = None
+    description: str | None = None
+    version: str | None = None
+    history: str | None = None
+    comment: str | None = None
+    license: str | None = None
+    keywords: list[str] = field(default_factory=list)
+    auxiliary: str | None = None
 
-    attribution: AttributionMetadata | None = None
-    """Authorship and reference metadata."""
+    # Attribution Metadata
+    creator_name: str | None = None
+    creator_email: str | None = None
+    creator_institution: str | None = None
+    acknowledgement: str | None = None
+    authors: list[str] = field(default_factory=list)
+    references: list[str] = field(default_factory=list)
 
-    repository: RepositoryMetadata | None = None
-    """Data hosting metadata."""
+    # Repository Metadata
+    repository_doi: str | None = None
+    repository_name: str | None = None
+    repository_url: str | None = None
 
-    data: DataMetadata | None = None
-    """Internal formatting metadata."""
-
-    coords: CoordinateMetadata | None = None
-    """Spatial reference metadata."""
+    def to_dict(self) -> dict:
+        """Converts the metadata to a dictionary, removing None values."""
+        return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
 
 
 @dataclass
 class Block:
-    """Represents a 3D block of model data with specific resolution."""
-
     resolution_horiz: float
-    """Horizontal resolution of the grid cells."""
-
     resolution_vert: float
-    """Vertical resolution of the grid cells."""
-
     z_top: float
-    """Depth or elevation at the top of the block."""
-
-    shape: tuple[int, int, int, int]
-    """Grid shape defined as (nx, ny, nz, n_components)."""
-
+    shape: dict[Coordinate, int]
     name: str
-    """Human-readable name for the block."""
+    chunks: dict[Coordinate, int] = field(default_factory=dict)
+    target_chunksize: float = 100.0
 
-    @property
-    def size(self):
-        return self.shape[0] * self.shape[1] * self.shape[2] * self.shape[3]
+    def __post_init__(self):
+        if not self.chunks:
+            num_components = len(list(Component))
+            bytes_per_element = 4 * num_components
+
+            target_bytes = self.target_chunksize * 1024 * 1024
+            total_elements_per_chunk = target_bytes / bytes_per_element
+
+            side_length = int(np.floor(np.cbrt(total_elements_per_chunk)))
+
+            self.chunks = {
+                coord: min(side_length, dim_size)
+                for coord, dim_size in self.shape.items()
+            }
 
 
 @dataclass
 class Surface:
-    """Represents a 2D surface within the model grid."""
-
     shape: tuple[int, int]
-    """Grid shape defined as (nx, ny)."""
-
     resolution_horiz: float
-    """Horizontal resolution of the surface grid."""
-
     name: str
-    """Human-readable name for the surface."""
-
-    @property
-    def size(self):
-        return self.shape[0] * self.shape[1]
 
 
 @dataclass
 class GeoModelGrid:
-    """The top-level GeoModelGrid container."""
-
-    metadata: ModelMetadata | None = None
-    """All metadata associated with the model."""
-
+    coordinate_system: CoordinateSystem
+    metadata: ModelMetadata = field(default_factory=ModelMetadata)
     surfaces: list[Surface] = field(default_factory=list)
-    """List of surfaces included in the model."""
-
     blocks: list[Block] = field(default_factory=list)
-    """List of 3D data blocks included in the model."""
+
+    def to_datatree(self) -> xr.DataTree:
+        name = self.metadata.title or "model"
+
+        blocks = {b.name: empty_block(b) for b in self.blocks}
+        surfaces = {s.name: empty_surface(s) for s in self.surfaces}
+
+        root = xr.DataTree.from_dict(
+            {"block": blocks, "surface": surfaces}, name=name, nested=True
+        )
+
+        # Update root attributes with the flattened metadata dictionary
+        root.attrs.update(self.metadata.to_dict())
+
+        return root
+
+
+def empty_block(block: Block) -> xr.Dataset:
+    # 1. Extract dimensions
+    ni = block.shape[Coordinate.I]
+    nj = block.shape[Coordinate.J]
+    nk = block.shape[Coordinate.K]
+
+    chunks_i = block.chunks[Coordinate.I]
+    chunks_j = block.chunks[Coordinate.J]
+    chunks_k = block.chunks[Coordinate.K]
+
+    x_arr = da.arange(ni, chunks=chunks_i, dtype=np.float32) * np.float32(
+        block.resolution_horiz
+    )
+    y_arr = da.arange(nj, chunks=chunks_j, dtype=np.float32) * np.float32(
+        block.resolution_horiz
+    )
+    z_arr = (
+        da.arange(nk, chunks=chunks_k, dtype=np.float32) * block.resolution_vert
+    ) + np.float32(block.z_top)
+
+    grid_x, grid_y, grid_z = da.meshgrid(x_arr, y_arr, z_arr, indexing="ij")
+
+    # 5. Build the Dataset
+    return xr.Dataset(
+        data_vars={
+            Coordinate.X: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_x),
+            Coordinate.Y: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_y),
+            Coordinate.Z: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_z),
+        },
+        coords={
+            Coordinate.I: np.arange(ni),
+            Coordinate.J: np.arange(nj),
+            Coordinate.K: np.arange(nk),
+        },
+        attrs=dict(
+            resolution_horiz=block.resolution_horiz,
+            resolution_vert=block.resolution_vert,
+            z_top=block.z_top,
+        ),
+    )
+
+
+def empty_surface(surface: Surface) -> xr.Dataset:
+    (ni, nj) = surface.shape
+    i = np.arange(ni) * surface.resolution_horiz
+    j = np.arange(nj) * surface.resolution_horiz
+    return xr.Dataset(
+        coords={Coordinate.I: i, Coordinate.J: j},
+        attrs=dict(resolution_horiz=surface.resolution_horiz),
+    )

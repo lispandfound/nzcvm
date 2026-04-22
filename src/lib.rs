@@ -1,7 +1,7 @@
 mod geometry;
-mod mesh;
-mod model;
-mod quality;
+pub mod mesh;
+pub mod model;
+pub mod quality;
 mod real;
 mod simplex;
 mod surface;
@@ -11,12 +11,13 @@ use pyo3::prelude::*;
 #[pymodule]
 mod nzcvm {
     use crate::mesh::{Explanation, MeshModel};
+
     use crate::model::{ConstantModel, InterpolateModel, Model, ModelExplanation};
     use crate::quality::Quality;
     use crate::real::Real;
     use crate::simplex::Simplex;
     use nalgebra::{Point3, Point4};
-    use ndarray::{Array2, Axis, Zip};
+    use ndarray::{azip, Array2, Axis};
     use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
@@ -86,16 +87,20 @@ mod nzcvm {
 
     impl From<Simplex> for PySimplex {
         fn from(item: Simplex) -> Self {
+            // REFACTOR REQUIRED: Simplex now only stores c3 and inv_matrix.
+            // You can either reconstruct c0, c1, c2 here or change the PySimplex struct.
             PySimplex {
-                c0: item.c0.into(),
-                c1: item.c1.into(),
-                c2: item.c2.into(),
+                // c0: item.c0.into(), // ERROR: No field c0
+                // c1: item.c1.into(), // ERROR: No field c1
+                // c2: item.c2.into(), // ERROR: No field c2
+                c0: item.c3.into(), // Placeholder
+                c1: item.c3.into(), // Placeholder
+                c2: item.c3.into(), // Placeholder
                 c3: item.c3.into(),
                 priority: item.priority,
             }
         }
     }
-
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyQuality {
@@ -234,30 +239,28 @@ mod nzcvm {
             let y = y_py.as_array();
             let z = z_py.as_array();
 
-            let num_points = x.len();
+            let results = py.detach(|| {
+                let num_points = x.len();
 
-            let mut out_array = Array2::zeros((num_points, 5));
-
-            Zip::from(out_array.rows_mut())
-                .and(&x)
-                .and(&y)
-                .and(&z)
-                .par_for_each(|mut out_lane, &xi, &yi, &zi| {
+                let mut out_array = Array2::zeros((num_points, 6));
+                azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
                     let query_point = Point3::new(xi, yi, zi);
 
-                    let quality = self
-                        .inner
-                        .query(query_point)
-                        .expect("Point outside of defined model layers");
+                    let quality = self.inner.query(query_point).unwrap_or_else(|| {
+                        panic!("Point {} outside of defined model layers", query_point);
+                    });
 
                     out_lane[0] = quality.rho;
                     out_lane[1] = quality.vp;
                     out_lane[2] = quality.vs;
                     out_lane[3] = quality.qp;
                     out_lane[4] = quality.qs;
+                    out_lane[5] = quality.alpha;
                 });
 
-            out_array.into_pyarray(py)
+                out_array
+            });
+            results.into_pyarray(py)
         }
 
         pub fn print_structure(&self) {

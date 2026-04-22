@@ -6,6 +6,7 @@ use bvh::{
 };
 use core::cmp::Ordering;
 use nalgebra::Point;
+use smallvec::SmallVec;
 use std::collections::BinaryHeap;
 
 #[derive(Debug, Clone, Copy)]
@@ -73,7 +74,7 @@ pub struct ContainsIterator<
     bvh: &'bvh Bvh<T, D>,
     point: &'bvh Point<T, D>,
     shapes: &'shape [Shape],
-    heap: Vec<usize>,
+    heap: SmallVec<[usize; 16]>,
 }
 
 impl<'bvh, 'shape, T, const D: usize, Shape> ContainsIterator<'bvh, 'shape, T, D, Shape>
@@ -84,7 +85,7 @@ where
     fn new(bvh: &'bvh Bvh<T, D>, point: &'bvh Point<T, D>, shapes: &'shape [Shape]) -> Self {
         // To avoid panic! on an empty tree, we only populate with the root node
         // if the shapes array is non-empty.
-        let mut heap = Vec::new();
+        let mut heap = SmallVec::new();
         if !shapes.is_empty() {
             heap.push(0);
         }

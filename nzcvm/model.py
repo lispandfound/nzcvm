@@ -1,3 +1,5 @@
+from nzcvm.components import Component
+from nzcvm.coordinates import Coordinate
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -260,3 +262,44 @@ class Model:
         )
 
         return dset
+
+    def _query_chunk_wrapper(self, x, y, z):
+        """
+        Internal helper to bridge Dask chunks to the Rust backend.
+        This function receives NumPy arrays (chunks) from Dask.
+        """
+        quality_array = self._raw.query_many(
+            x.ravel(),
+            y.ravel(),
+            z.ravel(),
+        )
+
+        return quality_array.reshape((*x.shape, 6))
+
+    def assign_qualities(self, model: xr.DataTree) -> xr.DataTree:
+        var_names = list(Component)
+        coords = [Coordinate.X.value, Coordinate.Y.value, Coordinate.Z.value]
+
+        def process_node(ds: xr.Dataset) -> xr.Dataset:
+            ds = ds.copy()
+            if not all(c in ds for c in coords):
+                return ds
+            qualities = xr.apply_ufunc(
+                self._query_chunk_wrapper,  # The function to apply to each chunk
+                ds[Coordinate.X],
+                ds[Coordinate.Y],
+                ds[Coordinate.Z],
+                input_core_dims=[[], [], []],  # Treat inputs as scalars per-element
+                output_core_dims=[["quality_dim"]],  # We are adding a new dimension
+                dask="parallelized",
+                output_dtypes=[np.float32],
+                dask_gufunc_kwargs={"output_sizes": {"quality_dim": len(var_names)}},
+            )
+
+            for i, name in enumerate(var_names):
+                ds[name] = qualities.isel(quality_dim=i)
+
+            return ds
+
+        model["block"] = model["block"].map_over_datasets(process_node)
+        return model

@@ -19,6 +19,7 @@ ndarray = { version = "0.17.2", features = ["approx", "rayon"] }
 numpy = "0.28.0"
 pyo3 = "0.28.2"
 rayon = "1.11.0"
+smallvec = "1.15.1"
 
 
 [dev-dependencies]
@@ -31,3 +32,6 @@ pprof = { version = "0.15.0", features = ["flamegraph", "criterion"] }
 [[bench]]
 name = "model_bench"
 harness = false
+
+[profile.release]
+debug = true

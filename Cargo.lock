@@ -865,6 +865,7 @@ dependencies = [
  "pprof",
  "pyo3",
  "rayon",
+ "smallvec",
  "tempfile",
 ]
 

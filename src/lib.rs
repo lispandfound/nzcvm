@@ -4,18 +4,18 @@ pub mod model;
 pub mod quality;
 mod real;
 mod simplex;
-mod surface;
 mod tree_query;
 use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::mesh::{Explanation, MeshModel};
+    use crate::mesh::{Explanation, MeshModel, QueryStats};
 
     use crate::model::{ConstantModel, InterpolateModel, Model, ModelExplanation};
     use crate::quality::Quality;
     use crate::real::Real;
     use crate::simplex::Simplex;
+    use bvh::aabb::Aabb;
     use nalgebra::{Point3, Point4};
     use ndarray::{azip, Array2, Axis};
     use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
@@ -23,6 +23,7 @@ mod nzcvm {
     use pyo3::prelude::*;
 
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
@@ -147,6 +148,43 @@ mod nzcvm {
         }
     }
 
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub struct PyQueryStats {
+        pub aabb_tests: usize,
+        pub simplex_tests: usize,
+        pub hit_count: usize,
+        pub output: Option<PyQuality>,
+        pub elapsed: u128,
+    }
+
+    impl From<QueryStats> for PyQueryStats {
+        fn from(item: QueryStats) -> Self {
+            Self {
+                aabb_tests: item.aabb_tests,
+                simplex_tests: item.simplex_tests,
+                hit_count: item.hit_count,
+                output: item.output.map(|x| x.into()),
+                elapsed: item.elapsed,
+            }
+        }
+    }
+
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub struct PyAabb {
+        min: PyPoint,
+        max: PyPoint,
+    }
+    impl From<Aabb<Real, 3>> for PyAabb {
+        fn from(item: Aabb<Real, 3>) -> Self {
+            Self {
+                min: item.min.into(),
+                max: item.max.into(),
+            }
+        }
+    }
+
     #[pyclass]
     pub struct PyModel {
         pub inner: Arc<MeshModel>,
@@ -221,6 +259,15 @@ mod nzcvm {
         pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<PyQuality>> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query(pt).map(|q| q.into()))
+        }
+
+        pub fn aabb(&self) -> PyResult<PyAabb> {
+            Ok(self.inner.aabb().into())
+        }
+
+        pub fn query_stats(&self, x: Real, y: Real, z: Real) -> PyResult<PyQueryStats> {
+            let pt = Point3::new(x, y, z);
+            Ok(self.inner.query_stats(pt).into())
         }
 
         pub fn explain(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {

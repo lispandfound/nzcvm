@@ -1,4 +1,6 @@
+import pyproj
 from collections.abc import Callable
+from typing import Any
 import scipy as sp
 import numpy as np
 import xarray as xr
@@ -16,38 +18,44 @@ class Coordinate(StrEnum):
     K = auto()
 
 
+NO_ORIGIN = 0
+WGS84_CRS = 4326
+
+
 @dataclass
 class CoordinateSystem:
-    origin_x: float
-    origin_y: float
-    false_northing: float
-    false_easting: float
+    target_crs: Any
+    origin_lon: float
+    origin_lat: float
+
     azimuth: float
+
     transpose: bool = False
+    origin_crs: Any = WGS84_CRS
+    origin_x: float = NO_ORIGIN
+    origin_y: float = NO_ORIGIN
 
-    def __call__(self, x, y, z):
-        # 1. Center and Stack: (ni, nj, nk, 3)
-        # Using dask.array.stack keeps this lazy
-        coords = da.stack(
-            [x - np.float32(self.origin_x), y - np.float32(self.origin_y), z], axis=-1
-        )
-        rotation = sp.spatial.transform.Rotation.from_rotvec(
-            self.azimuth * np.array([0.0, 0.0, 1.0]), degrees=True
-        )
-
-        # 2. Get matrix
-        R = rotation.as_matrix().astype(np.float32)
-
-        # 3. Apply rotation via matmul
-        # (..., 3) @ (3, 3) -> (..., 3)
-        output = da.matmul(coords, R)
-
-        x_out = output[..., 0] + np.float32(self.false_northing)
-        y_out = output[..., 1] + np.float32(self.false_easting)
-        z_out = output[..., 2]
-
+    def __call__(self, x: xr.DataArray, y: xr.DataArray, z: xr.DataArray):
         if self.transpose:
-            x_out, y_out = y_out, x_out
+            x, y = y, x
+
+        x_shifted = x - np.float32(self.origin_x)
+        y_shifted = y - np.float32(self.origin_y)
+
+        theta = -np.radians(np.float32(self.azimuth))
+        c, s = np.cos(theta), np.sin(theta)
+
+        x_rot = c * x_shifted - s * y_shifted
+        y_rot = s * x_shifted + c * y_shifted
+        z_out = z
+
+        trns = pyproj.Transformer.from_crs(
+            self.origin_crs, self.target_crs, always_xy=True
+        )
+        false_easting, false_northing = trns.transform(self.origin_lon, self.origin_lat)
+
+        x_out = x_rot + np.float32(false_easting)
+        y_out = y_rot + np.float32(false_northing)
 
         return x_out, y_out, z_out
 

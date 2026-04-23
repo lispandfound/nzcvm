@@ -13,7 +13,12 @@ classifiers = [
 dynamic = ["version"]
 dependencies = [
     "bokeh>=3.9.0",
+    "branca>=0.8.2",
+    "folium>=0.20.0",
+    "geopandas>=1.1.3",
+    "h5netcdf>=1.8.1",
     "h5py>=3.16.0",
+    "mashumaro[json,toml,yaml]>=3.20",
     "matplotlib>=3.10.8",
     "meshio>=5.3.5",
     "numba>=0.65.0",
@@ -24,10 +29,15 @@ dependencies = [
     "rich>=14.3.3",
     "scikit-learn>=1.8.0",
     "shapely>=2.1.2",
+    "tqdm>=4.67.3",
+    "typed-argument-parser>=1.12.0",
     "xarray>=2026.2.0",
     "xoak>=0.2.0",
     "zarr>=3.1.6",
 ]
+
+[project.scripts]
+nzcvm = "nzcvm.scripts.nzcvm:main"
 
 [tool.uv]
 cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]

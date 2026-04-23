@@ -1,13 +1,13 @@
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from pathlib import Path
 
 
 import numpy as np
 import xarray as xr
 import xoak
-from typing import Self, Any
+from typing import Self, Any, get_type_hints
 from rich.tree import Tree
 import rich
 
@@ -17,25 +17,45 @@ from nzcvm import nzcvm, mesh
 from .nzcvm import PyModel
 
 
+class RSBase:
+    @classmethod
+    def _from_rs(cls, rs_obj: Any) -> Self:
+        """
+        Automagically maps attributes from a Rust-backed object to this dataclass.
+        Handles recursive deserialization for fields that inherit from RSBase.
+        """
+        if rs_obj is None:
+            return None
+
+        # Get type hints to handle the recursive case
+        hints = get_type_hints(cls)
+        init_kwargs = {}
+
+        for field in fields(cls):
+            field_name = field.name
+            field_type = hints[field_name]
+
+            val = getattr(rs_obj, field_name)
+
+            try:
+                if issubclass(field_type, RSBase):
+                    init_kwargs[field_name] = field_type._from_rs(val)
+                else:
+                    init_kwargs[field_name] = val
+            except TypeError:
+                init_kwargs[field_name] = val
+
+        return cls(**init_kwargs)
+
+
 @dataclass
-class Quality:
+class Quality(RSBase):
     rho: float
     vp: float
     vs: float
     qp: float
     qs: float
     alpha: float
-
-    @classmethod
-    def _from_rs_quality(cls, quality_rs: Any) -> Self:
-        return cls(
-            rho=quality_rs.rho,
-            vp=quality_rs.vp,
-            vs=quality_rs.vs,
-            qp=quality_rs.qp,
-            qs=quality_rs.qs,
-            alpha=quality_rs.alpha,
-        )
 
     def __str__(self):
         return (
@@ -45,36 +65,22 @@ class Quality:
 
 
 @dataclass
-class Point:
+class Point(RSBase):
     x: float
     y: float
     z: float
-
-    @classmethod
-    def _from_rs_point(cls, point_rs: Any) -> Self:
-        return cls(point_rs.x, point_rs.y, point_rs.z)
 
     def __str__(self) -> str:
         return f"({self.x:.6g}, {self.y:.6g}, {self.z:.6g})"
 
 
 @dataclass
-class Simplex:
+class Simplex(RSBase):
     c0: Point
     c1: Point
     c2: Point
     c3: Point
     priority: int
-
-    @classmethod
-    def _from_rs_simplex(cls, simplex_rs: Any) -> Self:
-        return cls(
-            c0=Point._from_rs_point(simplex_rs.c0),
-            c1=Point._from_rs_point(simplex_rs.c1),
-            c2=Point._from_rs_point(simplex_rs.c2),
-            c3=Point._from_rs_point(simplex_rs.c3),
-            priority=simplex_rs.priority,
-        )
 
     def __str__(self) -> str:
         c0 = str(self.c0)
@@ -85,7 +91,7 @@ class Simplex:
 
 
 @dataclass
-class ConstantModel:
+class ConstantModel(RSBase):
     quality: Quality
 
     def __str__(self) -> str:
@@ -93,7 +99,7 @@ class ConstantModel:
 
 
 @dataclass
-class InterpolatedModel:
+class InterpolatedModel(RSBase):
     x: Quality
     y: Quality
     z: Quality
@@ -106,23 +112,27 @@ class InterpolatedModel:
         )
 
 
+@dataclass
+class QueryStats(RSBase):
+    aabb_tests: int
+    simplex_tests: int
+    hit_count: int
+    output: Quality | None
+    elapsed: int
+
+
 SimplexModel = ConstantModel | InterpolatedModel
 
 
 def _from_rs_simplex_model(model: Any) -> SimplexModel:
-    if hasattr(model, "quality"):
-        return ConstantModel(quality=Quality._from_rs_quality(model.quality))
-    else:
-        return InterpolatedModel(
-            x=Quality._from_rs_quality(model.x),
-            y=Quality._from_rs_quality(model.y),
-            z=Quality._from_rs_quality(model.z),
-            w=Quality._from_rs_quality(model.w),
-        )
+    try:
+        return ConstantModel._from_rs(model)
+    except AttributeError:
+        return InterpolatedModel._from_rs(model)
 
 
 @dataclass
-class Explanation:
+class Explanation(RSBase):
     simplices: list[Simplex]
     qualities: list[Quality]
     models: list[SimplexModel]
@@ -130,17 +140,13 @@ class Explanation:
     termination: int | None
 
     @classmethod
-    def _from_rs_explanation(cls, explanation: Any) -> Self:
+    def _from_rs(cls, rs_obj: Any) -> Self:
         return cls(
-            simplices=[
-                Simplex._from_rs_simplex(simplex) for simplex in explanation.simplices
-            ],
-            qualities=[
-                Quality._from_rs_quality(quality) for quality in explanation.qualities
-            ],
-            models=[_from_rs_simplex_model(model) for model in explanation.models],
-            output=Quality._from_rs_quality(explanation.output),
-            termination=explanation.termination,
+            simplices=[Simplex._from_rs(simplex) for simplex in rs_obj.simplices],
+            qualities=[Quality._from_rs(quality) for quality in rs_obj.qualities],
+            models=[_from_rs_simplex_model(model) for model in rs_obj.models],
+            output=Quality._from_rs(rs_obj.output),
+            termination=rs_obj.termination,
         )
 
     def __rich__(self) -> Tree:
@@ -211,13 +217,24 @@ class Model:
         )
         return cls(raw)
 
+    @property
+    def aabb(self) -> tuple[np.ndarray, np.ndarray]:
+        aabb = self._raw.aabb()
+        min = np.array([aabb.min.x, aabb.min.y, aabb.min.z])
+        max = np.array([aabb.max.x, aabb.max.y, aabb.max.z])
+        return min, max
+
     def query(self, x, y, z) -> Quality:
         quality_rs = self._raw.query(x, y, z)
-        return Quality._from_rs_quality(quality_rs)
+        return Quality._from_rs(quality_rs)
+
+    def query_stats(self, x, y, z) -> QueryStats:
+        quality_rs = self._raw.query_stats(x, y, z)
+        return QueryStats._from_rs(quality_rs)
 
     def get_explanation(self, x, y, z) -> Explanation:
         explanation_rs = self._raw.explain(x, y, z)
-        return Explanation._from_rs_explanation(explanation_rs)
+        return Explanation._from_rs(explanation_rs)
 
     def explain(self, x: float, y: float, z: float) -> None:
         explanation = self.get_explanation(x, y, z)

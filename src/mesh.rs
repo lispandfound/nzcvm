@@ -1,14 +1,25 @@
+use std::time::{Duration, Instant};
+
 use crate::model::*;
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
-use crate::tree_query::{contains_point_iterator, nearest_to_point_within};
+use crate::tree_query::{contains_point_iterator, contains_point_stats_iterator};
 use approx::abs_diff_eq;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bvh::Bvh;
 use bvh::bvh::BvhNode;
 use nalgebra::{Point3, Point4};
 use smallvec::SmallVec;
+
+#[derive(Debug)]
+pub struct QueryStats {
+    pub aabb_tests: usize,
+    pub simplex_tests: usize,
+    pub hit_count: usize,
+    pub output: Option<Quality>,
+    pub elapsed: u128,
+}
 
 pub struct Explanation {
     pub simplices: Vec<Simplex>,
@@ -27,6 +38,10 @@ pub struct MeshModel {
 }
 
 impl MeshModel {
+    pub fn aabb(&self) -> Aabb<Real, 3> {
+        self.bvh_tree.nodes[0].get_node_aabb(&self.simplices)
+    }
+
     pub fn curvilinear_mesh<F>(
         vertices: Vec<Point3<Real>>,
         qualities: Vec<Quality>,
@@ -220,6 +235,49 @@ impl MeshModel {
             depth
         )
     }
+
+    pub fn query_stats(&self, point: Point3<Real>) -> QueryStats {
+        let now = Instant::now();
+        let mut iter = contains_point_stats_iterator(&self.bvh_tree, &self.simplices, &point);
+        let mut simplices: SmallVec<[&Simplex; 8]> = SmallVec::new();
+
+        // We manually drive the iterator so `iter` doesn't get consumed/moved
+        // by a `for` loop. This lets us read `iter.stats` after.
+        while let Some(simplex) = iter.next() {
+            simplices.push(simplex);
+        }
+
+        let hit_count = simplices.len();
+
+        // Extract the stats before `iter` goes out of scope
+        let stats = iter.stats;
+
+        let quality = if hit_count == 1 {
+            Some(self.quality_for(simplices[0], &point))
+        } else if hit_count > 0 {
+            simplices.sort_by_key(|simplex| simplex.priority);
+            let mut q = self.quality_for(simplices[0], &point);
+
+            for i in 1..simplices.len() {
+                if abs_diff_eq!(q.alpha, 1.0, epsilon = 1e-4) {
+                    break;
+                }
+                q = q.blend(&self.quality_for(simplices[i], &point));
+            }
+            Some(q)
+        } else {
+            None
+        };
+        let elapsed_time = now.elapsed();
+
+        QueryStats {
+            aabb_tests: stats.aabb_tests,
+            simplex_tests: stats.simplex_tests,
+            hit_count,
+            output: quality,
+            elapsed: elapsed_time.as_nanos(),
+        }
+    }
 }
 
 impl Bounded<Real, 3> for MeshModel {
@@ -232,7 +290,7 @@ impl Bounded<Real, 3> for MeshModel {
 mod tests {
     use super::*;
     use approx::assert_relative_eq;
-    use bvh::point_query::PointDistance;
+
     use nalgebra::{Point3, Point4};
 
     fn unit_tetrahedron_universe() -> Vec<Point3<Real>> {

@@ -1,16 +1,49 @@
-from nzcvm.coordinates import CoordinateSystem, Coordinate
+from nzcvm.coordinates import Coordinate, WGS84_CRS, NO_ORIGIN, CoordinateSystem
 from nzcvm.components import Component
 from dataclasses import dataclass, field
+from typing import Any, Self
+from pathlib import Path
+from enum import StrEnum, auto
+
 import dataclasses
 import dask.array as da
 import xarray as xr
 import numpy as np
+from mashumaro.mixins.dict import DataClassDictMixin
+from mashumaro.mixins.json import DataClassJSONMixin
+from mashumaro.mixins.yaml import DataClassYAMLMixin
+from mashumaro.mixins.toml import DataClassTOMLMixin
+from mashumaro.config import BaseConfig
+
+from mashumaro.codecs.json import JSONDecoder
+from mashumaro.codecs.yaml import YAMLDecoder
+from mashumaro.codecs.toml import TOMLDecoder
+
+
+class ConfigObject(
+    DataClassJSONMixin, DataClassYAMLMixin, DataClassTOMLMixin, DataClassDictMixin
+):
+    class Meta(BaseConfig):
+        serialize_by_alias = True
+        omit_none = True
 
 
 @dataclass
-class ModelMetadata:
+class ModelMetadata(ConfigObject):
     """Flattened metadata object containing all descriptive, attribution,
     repository, data, and coordinate information for the model."""
+
+    # Coordinate metadata
+    target_crs: Any
+    origin_lon: float
+    origin_lat: float
+
+    azimuth: float
+
+    transpose: bool = False
+    origin_crs: Any = WGS84_CRS
+    origin_x: float = NO_ORIGIN
+    origin_y: float = NO_ORIGIN
 
     # Basic Descriptive Metadata
     title: str | None = None
@@ -36,13 +69,22 @@ class ModelMetadata:
     repository_name: str | None = None
     repository_url: str | None = None
 
-    def to_dict(self) -> dict:
-        """Converts the metadata to a dictionary, removing None values."""
-        return {k: v for k, v in dataclasses.asdict(self).items() if v is not None}
+    @property
+    def coordinate_system(self) -> CoordinateSystem:
+        return CoordinateSystem(
+            target_crs=self.target_crs,
+            origin_lon=self.origin_lon,
+            origin_lat=self.origin_lat,
+            azimuth=self.azimuth,
+            transpose=self.transpose,
+            origin_crs=self.origin_crs,
+            origin_x=self.origin_x,
+            origin_y=self.origin_y,
+        )
 
 
 @dataclass
-class Block:
+class Block(ConfigObject):
     resolution_horiz: float
     resolution_vert: float
     z_top: float
@@ -68,15 +110,24 @@ class Block:
 
 
 @dataclass
-class Surface:
+class Surface(ConfigObject):
     shape: tuple[int, int]
     resolution_horiz: float
     name: str
 
 
+DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
+
+
+class GeoModelGridFormat(StrEnum):
+    INFERRED = auto()
+    YAML = auto()
+    TOML = auto()
+    JSON = auto()
+
+
 @dataclass
-class GeoModelGrid:
-    coordinate_system: CoordinateSystem
+class GeoModelGrid(ConfigObject):
     metadata: ModelMetadata = field(default_factory=ModelMetadata)
     surfaces: list[Surface] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
@@ -91,10 +142,18 @@ class GeoModelGrid:
             {"block": blocks, "surface": surfaces}, name=name, nested=True
         )
 
-        # Update root attributes with the flattened metadata dictionary
         root.attrs.update(self.metadata.to_dict())
 
         return root
+
+    @classmethod
+    def read_config(cls, config_path: Path, format: GeoModelGridFormat) -> Self:
+        decoder = (
+            DECODER_MAP[format]
+            if format != GeoModelGridFormat.INFERRED
+            else DECODER_MAP.get(config_path.suffix, TOMLDecoder)
+        )
+        return decoder(cls).decode(config_path.read_text())
 
 
 def empty_block(block: Block) -> xr.Dataset:

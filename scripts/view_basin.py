@@ -31,13 +31,11 @@ def main():
             topo, style="wireframe", color="black", opacity=0.3, label="Surface"
         )
 
-    else:
-        # Standard render if no topography provided
-        pl.add_mesh(mesh, scalars=args.scalar, cmap="viridis")
+    pl.add_mesh(mesh)
 
     pl.camera.up = (0.0, 0.0, -1.0)
 
-    pl.add_axes()
+    # pl.add_axes()
     pl.show()
 
 

@@ -6,10 +6,16 @@ use crate::tree_query::{contains_point_iterator, Contains};
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
-use nalgebra::{Point3, Point4};
+use nalgebra::{Point, Point3, Point4};
 
 /// Default priority for models that do not specify one explicitly.
 pub const DEFAULT_PRIORITY: u8 = 0;
+
+/// Half-unit extent added to the priority dimension of the 4D AABB to keep
+/// the AABB non-degenerate. The value 0.5 sits between any two consecutive
+/// integer priorities, so BVH node AABBs correctly reflect the minimum and
+/// maximum priority reachable through each subtree.
+const PRIORITY_AABB_EXTENT: Real = 0.5;
 
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
@@ -173,13 +179,41 @@ impl Contains<Real, 3, (u8, Quality)> for MeshModel {
     }
 }
 
-impl Bounded<Real, 3> for MeshModel {
-    fn aabb(&self) -> Aabb<Real, 3> {
+/// Returns the 3-D bounding box of this model's geometry.
+/// Used when the caller needs the geometry AABB without the priority dimension.
+impl MeshModel {
+    pub fn aabb3(&self) -> Aabb<Real, 3> {
         self.aabb
     }
 }
 
-impl BHShape<Real, 3> for MeshModel {
+/// 4-D AABB used by the outer `ModelTree` BVH.
+///
+/// The first three dimensions are the model's geometry AABB. The fourth
+/// dimension is the model's priority: both `min[3]` and `max[3]` are set to
+/// `priority` (with a half-unit extent so the AABB is non-degenerate), which
+/// lets the priority-ray traversal use `aabb.min[3]` as the `t_min` hit
+/// distance and thereby visit models in priority order.
+impl Bounded<Real, 4> for MeshModel {
+    fn aabb(&self) -> Aabb<Real, 4> {
+        let p = self.priority as Real;
+        let min4 = Point::<Real, 4>::from(nalgebra::vector![
+            self.aabb.min.x,
+            self.aabb.min.y,
+            self.aabb.min.z,
+            p
+        ]);
+        let max4 = Point::<Real, 4>::from(nalgebra::vector![
+            self.aabb.max.x,
+            self.aabb.max.y,
+            self.aabb.max.z,
+            p + PRIORITY_AABB_EXTENT
+        ]);
+        Aabb::with_bounds(min4, max4)
+    }
+}
+
+impl BHShape<Real, 4> for MeshModel {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }

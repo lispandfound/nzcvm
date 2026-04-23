@@ -46,23 +46,22 @@ impl Query for ModelTree {
     type Explanation = Explanation;
 
     fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        let mut models: Vec<&MeshModel> =
+        // The iterator yields (priority, quality) pairs – no second traversal needed.
+        let mut hits: Vec<(u8, Quality)> =
             contains_point_iterator(&self.bvh_tree, &self.models, &point).collect();
 
-        if models.is_empty() {
+        if hits.is_empty() {
             return None;
         }
 
-        models.sort_by_key(|m| m.priority);
+        hits.sort_by_key(|(priority, _)| *priority);
 
-        let mut quality = models[0].query(point)?;
-        for model in &models[1..] {
+        let mut quality = hits[0].1;
+        for (_, q) in &hits[1..] {
             if abs_diff_eq!(quality.alpha, 1.0, epsilon = 1e-4) {
                 break;
             }
-            if let Some(q) = model.query(point) {
-                quality = quality.blend(&q);
-            }
+            quality = quality.blend(q);
         }
         Some(quality)
     }
@@ -71,27 +70,24 @@ impl Query for ModelTree {
         let now = Instant::now();
 
         let mut iter = contains_point_stats_iterator(&self.bvh_tree, &self.models, &point);
-        let mut models: Vec<&MeshModel> = Vec::new();
-        while let Some(model) = iter.next() {
-            models.push(model);
+        let mut hits: Vec<(u8, Quality)> = Vec::new();
+        while let Some(hit) = iter.next() {
+            hits.push(hit);
         }
         let outer_stats = iter.stats;
-        let hit_count = models.len();
+        let hit_count = hits.len();
 
-        models.sort_by_key(|m| m.priority);
+        hits.sort_by_key(|(priority, _)| *priority);
 
-        let quality = if hit_count > 0 {
-            let mut q = models[0].query(point);
-            for model in &models[1..] {
-                let Some(ref current) = q else { break };
-                if abs_diff_eq!(current.alpha, 1.0, epsilon = 1e-4) {
+        let quality = if !hits.is_empty() {
+            let mut q = hits[0].1;
+            for (_, next_q) in &hits[1..] {
+                if abs_diff_eq!(q.alpha, 1.0, epsilon = 1e-4) {
                     break;
                 }
-                if let Some(next_q) = model.query(point) {
-                    q = Some(current.blend(&next_q));
-                }
+                q = q.blend(next_q);
             }
-            q
+            Some(q)
         } else {
             None
         };
@@ -106,43 +102,42 @@ impl Query for ModelTree {
     }
 
     fn query_explain(&self, point: Point3<Real>) -> Explanation {
-        let mut models: Vec<&MeshModel> =
+        // Collect (priority, quality) pairs in a single pass over the BVH.
+        let mut hits: Vec<(u8, Quality)> =
             contains_point_iterator(&self.bvh_tree, &self.models, &point).collect();
 
         let mut contributions = Vec::new();
         let mut output = None;
         let mut termination = None;
 
-        if !models.is_empty() {
-            models.sort_by_key(|m| m.priority);
+        if !hits.is_empty() {
+            hits.sort_by_key(|(priority, _)| *priority);
 
             let mut blended: Option<Quality> = None;
 
-            for (i, model) in models.iter().enumerate() {
-                if let Some(q) = model.query(point) {
-                    contributions.push(ModelContribution {
-                        priority: model.priority,
-                        quality: q,
-                    });
+            for (i, (priority, q)) in hits.iter().enumerate() {
+                contributions.push(ModelContribution {
+                    priority: *priority,
+                    quality: *q,
+                });
 
-                    blended = Some(match blended {
-                        None => q,
-                        Some(ref current) => {
-                            // Record the index at which the blended quality was
-                            // already saturated (alpha ≈ 1).  The contribution at
-                            // this index is still included in the output for
-                            // informational purposes but is marked inactive by
-                            // callers via `termination` (i.e. index < termination
-                            // ⇒ active).
-                            if abs_diff_eq!(current.alpha, 1.0, epsilon = 1e-4)
-                                && termination.is_none()
-                            {
-                                termination = Some(i);
-                            }
-                            current.blend(&q)
+                blended = Some(match blended {
+                    None => *q,
+                    Some(ref current) => {
+                        // Record the index at which the blended quality was
+                        // already saturated (alpha ≈ 1).  The contribution at
+                        // this index is still included in the output for
+                        // informational purposes but is marked inactive by
+                        // callers via `termination` (i.e. index < termination
+                        // ⇒ active).
+                        if abs_diff_eq!(current.alpha, 1.0, epsilon = 1e-4)
+                            && termination.is_none()
+                        {
+                            termination = Some(i);
                         }
-                    });
-                }
+                        current.blend(q)
+                    }
+                });
             }
 
             output = blended;

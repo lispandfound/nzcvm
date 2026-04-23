@@ -136,7 +136,7 @@ impl MeshModel {
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
         contains_point_iterator(&self.bvh_tree, &self.simplices, &point)
             .next()
-            .map(|simplex| self.quality_for(simplex, &point))
+            .map(|simplex| self.quality_for(&simplex, &point))
     }
 
     pub fn pretty_print(&self) {
@@ -164,11 +164,12 @@ impl MeshModel {
     }
 }
 
-impl Contains<Real, 3> for MeshModel {
-    fn contains(&self, query_point: &Point3<Real>) -> bool {
-        contains_point_iterator(&self.bvh_tree, &self.simplices, query_point)
-            .next()
-            .is_some()
+/// `Contains` for `MeshModel` yields `(priority, quality)` when a simplex inside
+/// this model contains the query point. This avoids a second BVH traversal in
+/// the outer `ModelTree` – the traversal result is returned directly.
+impl Contains<Real, 3, (u8, Quality)> for MeshModel {
+    fn contains(&self, query_point: &Point3<Real>) -> Option<(u8, Quality)> {
+        self.query(*query_point).map(|q| (self.priority, q))
     }
 }
 

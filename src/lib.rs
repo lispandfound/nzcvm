@@ -1,7 +1,9 @@
 mod geometry;
 pub mod mesh;
 pub mod model;
+pub mod model_tree;
 pub mod quality;
+pub mod query;
 mod real;
 mod simplex;
 mod tree_query;
@@ -9,12 +11,12 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::mesh::{Explanation, MeshModel, QueryStats};
-
+    use crate::mesh::MeshModel;
     use crate::model::{ConstantModel, InterpolateModel, Model, ModelExplanation};
+    use crate::model_tree::ModelTree;
     use crate::quality::Quality;
+    use crate::query::{Explanation, ModelContribution, Query, QueryStats};
     use crate::real::Real;
-    use crate::simplex::Simplex;
     use bvh::aabb::Aabb;
     use nalgebra::{Point3, Point4};
     use ndarray::{azip, Array2, Axis};
@@ -23,7 +25,6 @@ mod nzcvm {
     use pyo3::prelude::*;
 
     use std::sync::Arc;
-    use std::time::Duration;
 
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
@@ -78,32 +79,6 @@ mod nzcvm {
 
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
-    pub struct PySimplex {
-        c0: PyPoint,
-        c1: PyPoint,
-        c2: PyPoint,
-        c3: PyPoint,
-        priority: u8,
-    }
-
-    impl From<Simplex> for PySimplex {
-        fn from(item: Simplex) -> Self {
-            // REFACTOR REQUIRED: Simplex now only stores c3 and inv_matrix.
-            // You can either reconstruct c0, c1, c2 here or change the PySimplex struct.
-            PySimplex {
-                // c0: item.c0.into(), // ERROR: No field c0
-                // c1: item.c1.into(), // ERROR: No field c1
-                // c2: item.c2.into(), // ERROR: No field c2
-                c0: item.c3.into(), // Placeholder
-                c1: item.c3.into(), // Placeholder
-                c2: item.c3.into(), // Placeholder
-                c3: item.c3.into(),
-                priority: item.priority,
-            }
-        }
-    }
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
     pub struct PyQuality {
         pub rho: Real,
         pub vp: Real,
@@ -126,12 +101,28 @@ mod nzcvm {
         }
     }
 
+    /// A single model contribution in an explanation: the priority of the model
+    /// and the quality it returned for the queried point.
+    #[pyclass(get_all, from_py_object)]
+    #[derive(Clone, Debug)]
+    pub struct PyModelContribution {
+        pub priority: u8,
+        pub quality: PyQuality,
+    }
+
+    impl From<ModelContribution> for PyModelContribution {
+        fn from(item: ModelContribution) -> Self {
+            PyModelContribution {
+                priority: item.priority,
+                quality: item.quality.into(),
+            }
+        }
+    }
+
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyExplanation {
-        pub simplices: Vec<PySimplex>,
-        pub qualities: Vec<PyQuality>,
-        pub models: Vec<PySimplexModel>,
+        pub contributions: Vec<PyModelContribution>,
         pub output: Option<PyQuality>,
         pub termination: Option<usize>,
     }
@@ -139,10 +130,8 @@ mod nzcvm {
     impl From<Explanation> for PyExplanation {
         fn from(item: Explanation) -> Self {
             PyExplanation {
-                simplices: item.simplices.into_iter().map(|x| x.into()).collect(),
-                qualities: item.qualities.into_iter().map(|x| x.into()).collect(),
-                models: item.models.into_iter().map(|x| x.into()).collect(),
-                output: item.output.map(|x| x.into()),
+                contributions: item.contributions.into_iter().map(|c| c.into()).collect(),
+                output: item.output.map(|q| q.into()),
                 termination: item.termination,
             }
         }
@@ -185,11 +174,24 @@ mod nzcvm {
         }
     }
 
+    /// Intermediate object representing a single mesh model before it is inserted
+    /// into a `ModelTree`.  Call `model_tree([mesh_model(...), ...])` to combine
+    /// one or more `PyMeshModel` objects into a queryable `PyModel`.
     #[pyclass]
-    pub struct PyModel {
-        pub inner: Arc<MeshModel>,
+    pub struct PyMeshModel {
+        inner: Option<MeshModel>,
     }
 
+    /// A queryable model tree wrapping one or more `MeshModel`s.
+    #[pyclass]
+    pub struct PyModel {
+        pub inner: Arc<ModelTree>,
+    }
+
+    // -------------------------------------------------------------------------
+    // mesh_model() – constructs a single MeshModel from numpy arrays.
+    // `priority` is now a scalar (u8) that applies to the whole model.
+    // -------------------------------------------------------------------------
     #[pyfunction]
     pub fn mesh_model(
         vertices_py: PyReadonlyArray2<Real>,
@@ -197,8 +199,8 @@ mod nzcvm {
         types_py: PyReadonlyArray1<u8>,
         models_py: PyReadonlyArray1<usize>,
         qualities_py: PyReadonlyArray2<Real>,
-        priorities_py: PyReadonlyArray1<u8>,
-    ) -> PyResult<PyModel> {
+        priority: u8,
+    ) -> PyResult<PyMeshModel> {
         let vertices = vertices_py
             .as_array()
             .axis_iter(Axis(0))
@@ -246,14 +248,36 @@ mod nzcvm {
                 }
             }
         }
-        let priority = priorities_py.as_array().to_vec();
-        Ok(PyModel {
-            inner: Arc::new(MeshModel::new(
-                vertices, faces, models_vec, qualities, priority,
-            )),
+
+        Ok(PyMeshModel {
+            inner: Some(MeshModel::new(vertices, faces, models_vec, qualities, priority)),
         })
     }
 
+    // -------------------------------------------------------------------------
+    // model_tree() – combines a list of PyMeshModel objects into a PyModel.
+    // Each PyMeshModel is consumed (its inner MeshModel is moved into the tree).
+    // -------------------------------------------------------------------------
+    #[pyfunction]
+    pub fn model_tree(py: Python<'_>, mesh_models: Vec<Py<PyMeshModel>>) -> PyResult<PyModel> {
+        let mut models = Vec::with_capacity(mesh_models.len());
+        for m_py in mesh_models {
+            let mut m = m_py.borrow_mut(py);
+            let model = m.inner.take().ok_or_else(|| {
+                PyValueError::new_err(
+                    "MeshModel has already been consumed by a previous model_tree() call",
+                )
+            })?;
+            models.push(model);
+        }
+        Ok(PyModel {
+            inner: Arc::new(ModelTree::new(models)),
+        })
+    }
+
+    // -------------------------------------------------------------------------
+    // PyModel methods – delegate to the inner ModelTree via the Query trait.
+    // -------------------------------------------------------------------------
     #[pymethods]
     impl PyModel {
         pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<PyQuality>> {
@@ -272,7 +296,7 @@ mod nzcvm {
 
         pub fn explain(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
             let pt = Point3::new(x, y, z);
-            Ok(self.inner.explain(pt).into())
+            Ok(self.inner.query_explain(pt).into())
         }
 
         pub fn query_many<'py>(
@@ -318,9 +342,12 @@ mod nzcvm {
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyQuality>()?;
+        m.add_class::<PyMeshModel>()?;
         m.add_class::<PyModel>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
+        m.add_function(wrap_pyfunction!(model_tree, m)?)?;
 
         Ok(())
     }
 }
+

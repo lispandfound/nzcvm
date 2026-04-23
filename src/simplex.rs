@@ -13,7 +13,6 @@ pub struct Simplex {
 
     pub id: usize,
     node_index: usize,
-    pub priority: u8,
 }
 
 impl Simplex {
@@ -49,7 +48,6 @@ impl Simplex {
             aabb,
             id,
             node_index: 0,
-            priority: 0,
         }
     }
 

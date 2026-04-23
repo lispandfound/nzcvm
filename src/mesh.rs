@@ -1,33 +1,15 @@
-use std::time::{Duration, Instant};
-
 use crate::model::*;
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
-use crate::tree_query::{contains_point_iterator, contains_point_stats_iterator};
-use approx::abs_diff_eq;
+use crate::tree_query::{contains_point_iterator, Contains};
 use bvh::aabb::{Aabb, Bounded};
+use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::Bvh;
-use bvh::bvh::BvhNode;
 use nalgebra::{Point3, Point4};
-use smallvec::SmallVec;
 
-#[derive(Debug)]
-pub struct QueryStats {
-    pub aabb_tests: usize,
-    pub simplex_tests: usize,
-    pub hit_count: usize,
-    pub output: Option<Quality>,
-    pub elapsed: u128,
-}
-
-pub struct Explanation {
-    pub simplices: Vec<Simplex>,
-    pub qualities: Vec<Quality>,
-    pub models: Vec<ModelExplanation>,
-    pub output: Option<Quality>,
-    pub termination: Option<usize>,
-}
+/// Default priority for models that do not specify one explicitly.
+pub const DEFAULT_PRIORITY: u8 = 0;
 
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
@@ -35,13 +17,14 @@ pub struct MeshModel {
     model_map: Vec<Model>,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
+    pub priority: u8,
+
+    // BVH bookkeeping for the model tree
+    pub id: usize,
+    node_index: usize,
 }
 
 impl MeshModel {
-    pub fn aabb(&self) -> Aabb<Real, 3> {
-        self.bvh_tree.nodes[0].get_node_aabb(&self.simplices)
-    }
-
     pub fn curvilinear_mesh<F>(
         vertices: Vec<Point3<Real>>,
         qualities: Vec<Quality>,
@@ -89,9 +72,8 @@ impl MeshModel {
             .iter()
             .map(|q| Model::from(InterpolateModel { qualities: *q }))
             .collect();
-        let priority = vec![0; faces.len()];
 
-        Self::new(vertices, faces, models, qualities, priority)
+        Self::new(vertices, faces, models, qualities, DEFAULT_PRIORITY)
     }
 
     pub fn new(
@@ -99,7 +81,7 @@ impl MeshModel {
         faces: Vec<Point4<usize>>,
         models: Vec<Model>,
         qualities: Vec<Quality>,
-        priority: Vec<u8>,
+        priority: u8,
     ) -> Self {
         let min_point = vertices
             .iter()
@@ -118,16 +100,13 @@ impl MeshModel {
             .iter()
             .enumerate()
             .map(|(i, f)| {
-                let mut simplex = Simplex::new(
+                Simplex::new(
                     vertices[f.x],
                     vertices[f.y],
                     vertices[f.z],
                     vertices[f.w],
                     i,
-                );
-
-                simplex.priority = priority[i];
-                simplex
+                )
             })
             .collect();
         let bvh_tree = Bvh::build(&mut simplices);
@@ -138,6 +117,9 @@ impl MeshModel {
             qualities,
             aabb,
             model_map: models,
+            priority,
+            id: 0,
+            node_index: 0,
         }
     }
 
@@ -145,144 +127,64 @@ impl MeshModel {
         self.qualities.len()
     }
 
-    fn model_for(&self, simplex: &Simplex) -> ModelExplanation {
-        self.model_map[simplex.id].explanation(&self.qualities)
-    }
-
     fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
         self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
-    pub fn explain(&self, point: Point3<Real>) -> Explanation {
-        let mut simplices: Vec<&Simplex> =
-            contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
-        let mut query_simplices = Vec::new();
-        let mut query_models = Vec::new();
-        let mut query_qualities = Vec::new();
-        let mut quality = None;
-        let mut termination = None;
-
-        if simplices.len() > 0 {
-            simplices.sort_by_key(|simplex| simplex.priority);
-            let mut computed_quality = self.quality_for(simplices[0], &point);
-            query_simplices.push(*simplices[0]);
-            query_models.push(self.model_for(simplices[0]));
-            query_qualities.push(computed_quality);
-
-            for i in 1..simplices.len() {
-                if abs_diff_eq!(computed_quality.alpha, 1.0, epsilon = 1e-4)
-                    && termination.is_none()
-                {
-                    termination = Some(i);
-                }
-                let new_quality = self.quality_for(simplices[i], &point);
-                query_simplices.push(*simplices[i]);
-                query_models.push(self.model_for(simplices[i]));
-                query_qualities.push(new_quality);
-                computed_quality = computed_quality.blend(&new_quality);
-            }
-
-            quality = Some(computed_quality);
-        }
-
-        Explanation {
-            simplices: query_simplices,
-            models: query_models,
-            qualities: query_qualities,
-            output: quality,
-            termination: termination,
-        }
-    }
-
+    /// Returns the quality at the given point using the first simplex that contains it.
+    /// Returns `None` if no simplex contains the point.
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        let mut simplices: SmallVec<[&Simplex; 8]> =
-            contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
-        if simplices.len() == 1 {
-            Some(self.quality_for(simplices[0], &point))
-        } else if simplices.len() > 0 {
-            simplices.sort_by_key(|simplex| simplex.priority);
-            let mut quality = self.quality_for(simplices[0], &point);
-
-            for i in 1..simplices.len() {
-                if abs_diff_eq!(quality.alpha, 1.0, epsilon = 1e-4) {
-                    break;
-                }
-                quality = quality.blend(&self.quality_for(simplices[i], &point));
-            }
-            Some(quality)
-        } else {
-            None
-        }
+        contains_point_iterator(&self.bvh_tree, &self.simplices, &point)
+            .next()
+            .map(|simplex| self.quality_for(simplex, &point))
     }
 
     pub fn pretty_print(&self) {
+        use bvh::bvh::BvhNode;
         fn max_depth(nodes: &[BvhNode<Real, 3>], node_index: usize) -> usize {
             match nodes[node_index] {
                 BvhNode::Node {
                     child_l_index,
                     child_r_index,
                     ..
-                } => (max_depth(nodes, child_l_index) + 1).max(max_depth(nodes, child_r_index) + 1),
+                } => (max_depth(nodes, child_l_index) + 1)
+                    .max(max_depth(nodes, child_r_index) + 1),
                 _ => 0,
             }
         }
 
         let depth = max_depth(&self.bvh_tree.nodes, 0);
         println!(
-            "Mesh model with {} vertices and {} simplices, tree depth = {}.",
+            "Mesh model with {} vertices and {} simplices, tree depth = {}, priority = {}.",
             self.qualities.len(),
             self.simplices.len(),
-            depth
+            depth,
+            self.priority,
         )
     }
+}
 
-    pub fn query_stats(&self, point: Point3<Real>) -> QueryStats {
-        let now = Instant::now();
-        let mut iter = contains_point_stats_iterator(&self.bvh_tree, &self.simplices, &point);
-        let mut simplices: SmallVec<[&Simplex; 8]> = SmallVec::new();
-
-        // We manually drive the iterator so `iter` doesn't get consumed/moved
-        // by a `for` loop. This lets us read `iter.stats` after.
-        while let Some(simplex) = iter.next() {
-            simplices.push(simplex);
-        }
-
-        let hit_count = simplices.len();
-
-        // Extract the stats before `iter` goes out of scope
-        let stats = iter.stats;
-
-        let quality = if hit_count == 1 {
-            Some(self.quality_for(simplices[0], &point))
-        } else if hit_count > 0 {
-            simplices.sort_by_key(|simplex| simplex.priority);
-            let mut q = self.quality_for(simplices[0], &point);
-
-            for i in 1..simplices.len() {
-                if abs_diff_eq!(q.alpha, 1.0, epsilon = 1e-4) {
-                    break;
-                }
-                q = q.blend(&self.quality_for(simplices[i], &point));
-            }
-            Some(q)
-        } else {
-            None
-        };
-        let elapsed_time = now.elapsed();
-
-        QueryStats {
-            aabb_tests: stats.aabb_tests,
-            simplex_tests: stats.simplex_tests,
-            hit_count,
-            output: quality,
-            elapsed: elapsed_time.as_nanos(),
-        }
+impl Contains<Real, 3> for MeshModel {
+    fn contains(&self, query_point: &Point3<Real>) -> bool {
+        contains_point_iterator(&self.bvh_tree, &self.simplices, query_point)
+            .next()
+            .is_some()
     }
 }
 
 impl Bounded<Real, 3> for MeshModel {
     fn aabb(&self) -> Aabb<Real, 3> {
         self.aabb
+    }
+}
+
+impl BHShape<Real, 3> for MeshModel {
+    fn set_bh_node_index(&mut self, index: usize) {
+        self.node_index = index;
+    }
+
+    fn bh_node_index(&self) -> usize {
+        self.node_index
     }
 }
 
@@ -406,3 +308,4 @@ mod tests {
         assert_relative_eq!(q_in.rho, 7.4, epsilon = 1e-5);
     }
 }
+

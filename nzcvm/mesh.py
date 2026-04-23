@@ -68,10 +68,10 @@ class Mesh:
 
         out_types = np.empty(total_cells, dtype=np.uint8)
         out_models = np.empty(total_model_indices, dtype=np.uint64)
-        out_priority = np.empty(total_cells, dtype=np.uint8)
 
-        # Prepare FieldData (Qualities) containers
-        field_keys = meshes[0].field_data.keys()
+        # Prepare FieldData (Qualities) containers – priority is excluded here
+        # because it is a model-level attribute, not a cell-level attribute.
+        field_keys = [k for k in meshes[0].field_data.keys() if k != "priority"]
         out_field_data = {
             k: np.empty(total_qualities, dtype=meshes[0].field_data[k].dtype)
             for k in field_keys
@@ -83,13 +83,12 @@ class Mesh:
         for m in meshes:
             n_p, n_c = len(m.points), len(m.connectivity)
             n_m = len(m.cell_data["models"])
-            n_q = len(next(iter(m.field_data.values())))
+            n_q = len(next(iter(m.field_data[k] for k in field_keys)))
 
             out_points[p_off : p_off + n_p] = m.points
             out_conn[c_off : c_off + n_c] = m.connectivity + p_off
 
             out_types[c_off : c_off + n_c] = m.cell_data["model_type"]
-            out_priority[c_off : c_off + n_c] = m.cell_data["priority"]
             out_models[m_off : m_off + n_m] = m.cell_data["models"] + q_off
 
             for k in field_keys:
@@ -107,7 +106,6 @@ class Mesh:
             cell_data={
                 "model_type": out_types,
                 "models": out_models,
-                "priority": out_priority,
             },
             field_data=out_field_data,
         )
@@ -141,11 +139,23 @@ class Mesh:
                 name: np.array(dset) for name, dset in vtkhdf["PointData"].items()
             }
             cell_data = {
-                name: np.array(dset) for name, dset in vtkhdf["CellData"].items()
+                name: np.array(dset)
+                for name, dset in vtkhdf["CellData"].items()
+                if name != "priority"
             }
             field_data = {
                 name: np.array(dset) for name, dset in vtkhdf["FieldData"].items()
             }
+            # Priority is a model-level scalar stored in FieldData.
+            # Legacy files that stored it as a per-cell CellData array are handled
+            # by taking the first element.
+            if "priority" not in field_data:
+                if "priority" in vtkhdf["CellData"]:
+                    field_data["priority"] = np.array(
+                        [vtkhdf["CellData"]["priority"][0]], dtype=np.uint8
+                    )
+                else:
+                    field_data["priority"] = np.array([0], dtype=np.uint8)
         return cls(
             points=points,
             connectivity=connectivity,

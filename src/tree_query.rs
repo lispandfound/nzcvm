@@ -16,6 +16,9 @@ pub trait Contains<T: BHValue, const D: usize, Data> {
     fn contains(&self, point: &Point<T, D>) -> Option<Data>;
 }
 
+const SMALL_VEC_SIZE: usize = 16;
+const SMALL_VEC_RAY_SIZE: usize = 8;
+
 pub struct ContainsIterator<
     'bvh,
     'shape,
@@ -27,12 +30,11 @@ pub struct ContainsIterator<
     bvh: &'bvh Bvh<T, D>,
     point: &'bvh Point<T, D>,
     shapes: &'shape [Shape],
-    heap: SmallVec<[usize; 16]>,
+    stack: SmallVec<[usize; SMALL_VEC_SIZE]>,
     _phantom: std::marker::PhantomData<Data>,
 }
 
-impl<'bvh, 'shape, T, const D: usize, Data, Shape>
-    ContainsIterator<'bvh, 'shape, T, D, Data, Shape>
+impl<'bvh, 'shape, T, const D: usize, Data, Shape> ContainsIterator<'bvh, 'shape, T, D, Data, Shape>
 where
     T: BHValue,
     Shape: Bounded<T, D> + Contains<T, D, Data>,
@@ -49,7 +51,7 @@ where
             bvh,
             point,
             shapes,
-            heap,
+            stack: heap,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -64,7 +66,7 @@ where
     type Item = Data;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(heap_leader) = self.heap.pop() {
+        while let Some(heap_leader) = self.stack.pop() {
             match self.bvh.nodes[heap_leader] {
                 BvhNode::Leaf { shape_index, .. } => {
                     let shape = &self.shapes[shape_index];
@@ -80,10 +82,10 @@ where
                     ..
                 } => {
                     if child_l_aabb.contains(self.point) {
-                        self.heap.push(child_l_index);
+                        self.stack.push(child_l_index);
                     }
                     if child_r_aabb.contains(self.point) {
-                        self.heap.push(child_r_index);
+                        self.stack.push(child_r_index);
                     }
                 }
             }
@@ -162,7 +164,7 @@ pub struct PriorityRayIterator<
     bvh: &'bvh Bvh<T, DBVH>,
     point: Point<T, DQ>,
     shapes: &'shape [Shape],
-    stack: SmallVec<[usize; 16]>,
+    stack: SmallVec<[usize; SMALL_VEC_RAY_SIZE]>,
     _phantom: std::marker::PhantomData<Data>,
 }
 

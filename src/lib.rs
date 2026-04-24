@@ -6,6 +6,7 @@ pub mod quality;
 pub mod query;
 mod real;
 mod simplex;
+mod size;
 mod tree_query;
 use pyo3::prelude::*;
 
@@ -18,11 +19,12 @@ mod nzcvm {
     use crate::query::{Explanation, ModelContribution, Query, QueryStats};
     use crate::real::Real;
     use bvh::aabb::Aabb;
-    use nalgebra::{Point3, Point4};
+    use nalgebra::{Affine3, Matrix4, Point3, Point4};
     use ndarray::{azip, Array2, Axis};
     use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
+    use pythonize::pythonize;
 
     use std::sync::Arc;
 
@@ -101,8 +103,6 @@ mod nzcvm {
         }
     }
 
-    /// A single model contribution in an explanation: the priority of the model
-    /// and the quality it returned for the queried point.
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyModelContribution {
@@ -174,24 +174,16 @@ mod nzcvm {
         }
     }
 
-    /// Intermediate object representing a single mesh model before it is inserted
-    /// into a `ModelTree`.  Call `model_tree([mesh_model(...), ...])` to combine
-    /// one or more `PyMeshModel` objects into a queryable `PyModel`.
     #[pyclass]
     pub struct PyMeshModel {
         inner: Option<MeshModel>,
     }
 
-    /// A queryable model tree wrapping one or more `MeshModel`s.
     #[pyclass]
     pub struct PyModel {
         pub inner: Arc<ModelTree>,
     }
 
-    // -------------------------------------------------------------------------
-    // mesh_model() – constructs a single MeshModel from numpy arrays.
-    // `priority` is now a scalar (u8) that applies to the whole model.
-    // -------------------------------------------------------------------------
     #[pyfunction]
     pub fn mesh_model(
         vertices_py: PyReadonlyArray2<Real>,
@@ -200,6 +192,7 @@ mod nzcvm {
         models_py: PyReadonlyArray1<usize>,
         qualities_py: PyReadonlyArray2<Real>,
         priority: u8,
+        transform_py: Option<PyReadonlyArray2<Real>>,
     ) -> PyResult<PyMeshModel> {
         let vertices = vertices_py
             .as_array()
@@ -249,15 +242,17 @@ mod nzcvm {
             }
         }
 
+        let transform = transform_py.map(|arr| {
+            Affine3::from_matrix_unchecked(Matrix4::from_iterator(arr.as_array().iter().cloned()))
+        });
+
         Ok(PyMeshModel {
-            inner: Some(MeshModel::new(vertices, faces, models_vec, qualities, priority)),
+            inner: Some(MeshModel::new(
+                vertices, faces, models_vec, qualities, priority, transform,
+            )),
         })
     }
 
-    // -------------------------------------------------------------------------
-    // model_tree() – combines a list of PyMeshModel objects into a PyModel.
-    // Each PyMeshModel is consumed (its inner MeshModel is moved into the tree).
-    // -------------------------------------------------------------------------
     #[pyfunction]
     pub fn model_tree(py: Python<'_>, mesh_models: Vec<Py<PyMeshModel>>) -> PyResult<PyModel> {
         let mut models = Vec::with_capacity(mesh_models.len());
@@ -275,9 +270,6 @@ mod nzcvm {
         })
     }
 
-    // -------------------------------------------------------------------------
-    // PyModel methods – delegate to the inner ModelTree via the Query trait.
-    // -------------------------------------------------------------------------
     #[pymethods]
     impl PyModel {
         pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<PyQuality>> {
@@ -297,6 +289,11 @@ mod nzcvm {
         pub fn explain(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query_explain(pt).into())
+        }
+
+        pub fn view<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+            let view = self.inner.view();
+            pythonize(py, &view).map_err(|e| e.into())
         }
 
         pub fn query_many<'py>(
@@ -350,4 +347,3 @@ mod nzcvm {
         Ok(())
     }
 }
-

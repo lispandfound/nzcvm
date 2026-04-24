@@ -1,6 +1,7 @@
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
+use deepsize::{Context, DeepSizeOf};
 use enum_dispatch::enum_dispatch;
 use nalgebra::Scalar;
 use nalgebra::{Point3, Point4};
@@ -21,6 +22,12 @@ pub trait Queryable {
 pub enum Model {
     Constant(ConstantModel<usize>),
     Interpolate(InterpolateModel<usize>),
+}
+
+impl DeepSizeOf for Model {
+    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
+        0
+    }
 }
 
 pub struct ConstantModel<T> {

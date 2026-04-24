@@ -2,9 +2,11 @@ use crate::real::Real;
 use crate::tree_query::Contains;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
+use deepsize::{Context, DeepSizeOf};
+
 use nalgebra::{Matrix3, Point3, Point4};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
 pub struct Simplex {
     pub c3: Point3<Real>,
     inv_matrix: Matrix3<Real>,
@@ -13,6 +15,12 @@ pub struct Simplex {
 
     pub id: usize,
     node_index: usize,
+}
+
+impl DeepSizeOf for Simplex {
+    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
+        0
+    }
 }
 
 impl Simplex {

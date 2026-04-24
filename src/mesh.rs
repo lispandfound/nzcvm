@@ -3,10 +3,13 @@ use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
 use crate::tree_query::{contains_point_iterator, Contains};
+use deepsize::{Context, DeepSizeOf};
+
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
-use bvh::bvh::Bvh;
-use nalgebra::{Point, Point3, Point4};
+use bvh::bvh::{Bvh, BvhNode};
+use nalgebra::{Affine3, Point, Point3, Point4};
+use serde::Serialize;
 
 /// Default priority for models that do not specify one explicitly.
 pub const DEFAULT_PRIORITY: u8 = 0;
@@ -17,17 +20,36 @@ pub const DEFAULT_PRIORITY: u8 = 0;
 /// maximum priority reachable through each subtree.
 const PRIORITY_AABB_EXTENT: Real = 0.5;
 
+#[derive(Serialize)]
+pub struct MeshModelView {
+    pub id: usize,
+    pub bounds: [f32; 6],
+    pub transform: Option<Affine3<Real>>,
+    pub priority: u8,
+    pub size: usize,
+}
+
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
     model_map: Vec<Model>,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
+    transform: Option<Affine3<Real>>,
     pub priority: u8,
 
     // BVH bookkeeping for the model tree
     pub id: usize,
     node_index: usize,
+}
+
+impl DeepSizeOf for MeshModel {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.simplices.deep_size_of_children(context)
+            + self.model_map.deep_size_of_children(context)
+            + self.qualities.deep_size_of_children(context)
+            + self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
+    }
 }
 
 impl MeshModel {
@@ -79,7 +101,7 @@ impl MeshModel {
             .map(|q| Model::from(InterpolateModel { qualities: *q }))
             .collect();
 
-        Self::new(vertices, faces, models, qualities, DEFAULT_PRIORITY)
+        Self::new(vertices, faces, models, qualities, DEFAULT_PRIORITY, None)
     }
 
     pub fn new(
@@ -88,18 +110,32 @@ impl MeshModel {
         models: Vec<Model>,
         qualities: Vec<Quality>,
         priority: u8,
+        transform: Option<Affine3<Real>>,
     ) -> Self {
-        let min_point = vertices
-            .iter()
-            .fold(Point3::new(Real::MAX, Real::MAX, Real::MAX), |acc, p| {
-                Point3::new(acc.x.min(p.x), acc.y.min(p.y), acc.z.min(p.z))
-            });
+        let local_to_global_map = |p| transform.map_or(p, |aff| aff.inverse_transform_point(&p));
+        let min_point =
+            vertices
+                .iter()
+                .fold(Point3::new(Real::MAX, Real::MAX, Real::MAX), |acc, p| {
+                    let transformed = local_to_global_map(*p);
+                    Point3::new(
+                        acc.x.min(transformed.x),
+                        acc.y.min(transformed.y),
+                        acc.z.min(transformed.z),
+                    )
+                });
 
-        let max_point = vertices
-            .iter()
-            .fold(Point3::new(Real::MIN, Real::MIN, Real::MIN), |acc, p| {
-                Point3::new(acc.x.max(p.x), acc.y.max(p.y), acc.z.max(p.z))
-            });
+        let max_point =
+            vertices
+                .iter()
+                .fold(Point3::new(Real::MIN, Real::MIN, Real::MIN), |acc, p| {
+                    let transformed = local_to_global_map(*p);
+                    Point3::new(
+                        acc.x.max(transformed.x),
+                        acc.y.max(transformed.y),
+                        acc.z.max(transformed.z),
+                    )
+                });
         let aabb = Aabb::with_bounds(min_point, max_point);
 
         let mut simplices: Vec<Simplex> = faces
@@ -126,6 +162,7 @@ impl MeshModel {
             priority,
             id: 0,
             node_index: 0,
+            transform: transform,
         }
     }
 
@@ -137,12 +174,18 @@ impl MeshModel {
         self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
+    pub fn global_to_local(&self, point: Point3<Real>) -> Point3<Real> {
+        self.transform
+            .map_or(point, |aff| aff.transform_point(&point))
+    }
+
     /// Returns the quality at the given point using the first simplex that contains it.
     /// Returns `None` if no simplex contains the point.
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        contains_point_iterator(&self.bvh_tree, &self.simplices, &point)
+        let transformed = self.global_to_local(point);
+        contains_point_iterator(&self.bvh_tree, &self.simplices, &transformed)
             .next()
-            .map(|simplex| self.quality_for(&simplex, &point))
+            .map(|simplex| self.quality_for(&simplex, &transformed))
     }
 
     pub fn pretty_print(&self) {
@@ -153,8 +196,7 @@ impl MeshModel {
                     child_l_index,
                     child_r_index,
                     ..
-                } => (max_depth(nodes, child_l_index) + 1)
-                    .max(max_depth(nodes, child_r_index) + 1),
+                } => (max_depth(nodes, child_l_index) + 1).max(max_depth(nodes, child_r_index) + 1),
                 _ => 0,
             }
         }
@@ -167,6 +209,24 @@ impl MeshModel {
             depth,
             self.priority,
         )
+    }
+
+    pub fn view(&self) -> MeshModelView {
+        let bounds = [
+            self.aabb.min.x,
+            self.aabb.min.y,
+            self.aabb.min.z,
+            self.aabb.max.x,
+            self.aabb.max.y,
+            self.aabb.max.z,
+        ];
+        MeshModelView {
+            id: self.id,
+            bounds: bounds,
+            transform: self.transform,
+            priority: self.priority,
+            size: self.deep_size_of(),
+        }
     }
 }
 
@@ -343,4 +403,3 @@ mod tests {
         assert_relative_eq!(q_in.rho, 7.4, epsilon = 1e-5);
     }
 }
-

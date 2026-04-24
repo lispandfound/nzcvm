@@ -13,12 +13,15 @@ high_precision = []
 [dependencies]
 approx = "0.5.1"
 bvh = {version = "0.12.0"}
+deepsize = "0.2.0"
 enum_dispatch = "0.3.13"
 nalgebra = "0.34.2"
 ndarray = { version = "0.17.2", features = ["approx", "rayon"] }
 numpy = "0.28.0"
-pyo3 = "0.28.2"
+pyo3 = { version = "0.28.2", features = ["serde"] }
+pythonize = "0.28.0"
 rayon = "1.11.0"
+serde = { version = "1.0.228", features = ["derive"] }
 smallvec = "1.15.1"
 
 

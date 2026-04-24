@@ -224,7 +224,7 @@ class Mesh:
             for point_array_name, point_array in self.point_data.items():
                 point_array_dataset = point_data.create_dataset(
                     point_array_name,
-                    (len(point_array),),
+                    point_array.shape,
                     dtype=point_array.dtype,
                     compression="gzip",
                 )
@@ -236,7 +236,7 @@ class Mesh:
             for cell_array_name, cell_array in self.cell_data.items():
                 cell_array_dataset = cell_data.create_dataset(
                     cell_array_name,
-                    (len(cell_array),),
+                    cell_array.shape,
                     dtype=cell_array.dtype,
                     compression="gzip",
                 )
@@ -248,7 +248,7 @@ class Mesh:
             for field_array_name, field_array in self.field_data.items():
                 field_array_dataset = field_data.create_dataset(
                     field_array_name,
-                    (len(field_array),),
+                    field_array.shape,
                     dtype=field_array.dtype,
                     compression="gzip",
                 )

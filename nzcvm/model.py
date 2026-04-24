@@ -6,15 +6,18 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
-import xoak
+
 from typing import Self, Any, get_type_hints
 from rich.tree import Tree
+from rich.console import Console, ConsoleOptions
 import rich
 
 
 from nzcvm import nzcvm, mesh
 
 from .nzcvm import PyModel
+
+MB = 1 / (1024 * 1024)
 
 
 class RSBase:
@@ -101,9 +104,7 @@ class Explanation(RSBase):
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self:
         return cls(
-            contributions=[
-                ModelContribution._from_rs(c) for c in rs_obj.contributions
-            ],
+            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],
             output=Quality._from_rs(rs_obj.output),
             termination=rs_obj.termination,
         )
@@ -128,8 +129,9 @@ class Explanation(RSBase):
 class Model:
     """A high-level wrapper for the Rust ModelTree."""
 
-    def __init__(self, internal_py_model: PyModel):
+    def __init__(self, internal_py_model: PyModel, model_map: dict):
         self._raw = internal_py_model
+        self.model_map = model_map
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
@@ -141,8 +143,9 @@ class Model:
         mesh_models = [
             _mesh_model_from_mesh(mesh.Mesh.read_vtkhdf(p)) for p in mesh_paths
         ]
+        model_map = {i: p.stem for i, p in enumerate(mesh_paths)}
         raw = nzcvm.model_tree(mesh_models)
-        return cls(raw)
+        return cls(raw, model_map)
 
     @classmethod
     def from_mesh(cls, mesh_model: mesh.Mesh):
@@ -205,12 +208,6 @@ class Model:
             },
         )
 
-        dset = dset.set_xindex(
-            ["x", "y", "z"],
-            xr.indexes.NDPointIndex,
-            tree_adapter_cls=xoak.SklearnBallTreeAdapter,
-        )
-
         return dset
 
     def _query_chunk_wrapper(self, x, y, z):
@@ -254,6 +251,44 @@ class Model:
         model["block"] = model["block"].map_over_datasets(process_node)
         return model
 
+    def view(self) -> Tree:
+        """Generates a rich.tree.Tree representation of the model structure."""
+        data = self._raw.view()
+
+        total_size_mb = round(data["size"] * MB)
+        tree = Tree(
+            f"[bold blue]Model Tree[/bold blue] (Total Size: {total_size_mb:,} MB)"
+        )
+
+        for m in data["models"]:
+            m_id = m["id"]
+            name = self.model_map.get(m_id, f"Model {m_id}")
+
+            branch = tree.add(f"[bold green]{name}[/bold green] (ID: {m_id})")
+            size_mb = round(m["size"] * MB)
+            branch.add(f"Priority: {m['priority']}")
+
+            if size_mb > 1024:
+                branch.add(f"[red]Size: {size_mb:,} MB[/red]")
+            else:
+                branch.add(f"Size: {size_mb:,} MB")
+
+            b = m["bounds"]
+            branch.add(
+                f"Bounds: [X: {b[0]:.0f}-{b[3]:.0f}, Y: {b[1]:.0f}-{b[4]:.0f}, Z: {b[2]:.0f}-{b[5]:.0f}]"
+            )
+
+            transform_str = "None" if m["transform"] is None else "Active"
+            branch.add(f"Transform: {transform_str}")
+
+        return tree
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        """Allows direct usage of rich.print(model)"""
+        yield self.view()
+
 
 def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
     """Build a PyMeshModel from a Mesh object.
@@ -274,6 +309,7 @@ def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
     # Mesh.read_vtkhdf (which either reads a scalar from FieldData or falls back
     # to the first cell-level value from a legacy file).
     priority = np.uint8(mesh_model.field_data["priority"][0])
+    transform = mesh_model.field_data.get("transform")
     return nzcvm.mesh_model(
         mesh_model.points.astype(np.float32),
         mesh_model.connectivity.astype(np.uint64),
@@ -281,5 +317,5 @@ def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
         model_idx,
         qualities.astype(np.float32),
         priority,
+        transform,
     )
-

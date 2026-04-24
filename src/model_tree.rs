@@ -1,9 +1,11 @@
 use std::time::Instant;
 
 use approx::abs_diff_eq;
-use bvh::bvh::Bvh;
+use bvh::bvh::{Bvh, BvhNode};
+use deepsize::{Context, DeepSizeOf};
+use serde::Serialize;
 
-use crate::mesh::MeshModel;
+use crate::mesh::{MeshModel, MeshModelView};
 use crate::quality::Quality;
 use crate::query::{Explanation, ModelContribution, Query, QueryStats};
 use crate::real::Real;
@@ -16,14 +18,26 @@ use nalgebra::Point3;
 const ALPHA_SATURATED: Real = 1.0;
 const ALPHA_EPS: Real = 1e-4;
 
+#[derive(Serialize)]
+pub struct ModelTreeView {
+    pub models: Vec<MeshModelView>,
+    pub size: usize,
+}
+
 pub struct ModelTree {
     bvh_tree: Bvh<Real, 4>,
     models: Vec<MeshModel>,
 }
 
+impl DeepSizeOf for ModelTree {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
+            + self.models.deep_size_of_children(context)
+    }
+}
+
 impl ModelTree {
     pub fn new(mut models: Vec<MeshModel>) -> Self {
-        // Assign stable ids before building the BVH (which sets node_index).
         for (i, model) in models.iter_mut().enumerate() {
             model.id = i;
         }
@@ -45,14 +59,19 @@ impl ModelTree {
             model.pretty_print();
         }
     }
+
+    pub fn view(&self) -> ModelTreeView {
+        ModelTreeView {
+            models: self.models.iter().map(|model| model.view()).collect(),
+            size: self.deep_size_of(),
+        }
+    }
 }
 
 impl Query for ModelTree {
     type Explanation = Explanation;
 
     fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        // The iterator yields (priority, quality) pairs already in priority
-        // order — no post-traversal sort needed.
         let mut quality: Option<Quality> = None;
 
         for (_, q) in priority_ray_iterator(&self.bvh_tree, &self.models, point) {
@@ -79,21 +98,21 @@ impl Query for ModelTree {
             hits.push(hit);
         }
         let outer_stats = iter.stats;
-        let hit_count = hits.len();
+        let mut hit_count = 0;
+        let mut quality: Option<Quality> = None;
 
-        // Hits already arrive in priority order; no sort needed.
-        let quality = if !hits.is_empty() {
-            let mut q = hits[0].1;
-            for (_, next_q) in &hits[1..] {
-                if abs_diff_eq!(q.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS) {
-                    break;
+        for (_, q) in priority_ray_iterator(&self.bvh_tree, &self.models, point) {
+            hit_count += 1;
+            quality = Some(match quality {
+                None => q,
+                Some(current) => {
+                    if abs_diff_eq!(current.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS) {
+                        break;
+                    }
+                    current.blend(&q)
                 }
-                q = q.blend(next_q);
-            }
-            Some(q)
-        } else {
-            None
-        };
+            });
+        }
 
         QueryStats {
             aabb_tests: outer_stats.aabb_tests,
@@ -105,7 +124,6 @@ impl Query for ModelTree {
     }
 
     fn query_explain(&self, point: Point3<Real>) -> Explanation {
-        // Hits arrive in priority order from the ray traversal.
         let mut contributions = Vec::new();
         let mut blended: Option<Quality> = None;
         let mut termination = None;
@@ -113,18 +131,17 @@ impl Query for ModelTree {
         for (i, (priority, q)) in
             priority_ray_iterator(&self.bvh_tree, &self.models, point).enumerate()
         {
-            contributions.push(ModelContribution { priority, quality: q });
+            contributions.push(ModelContribution {
+                priority,
+                quality: q,
+            });
 
             blended = Some(match blended {
                 None => q,
                 Some(ref current) => {
-                    // Record the index at which the blended quality was
-                    // already saturated (alpha ≈ 1).  The contribution at
-                    // this index is still included in the output for
-                    // informational purposes but is marked inactive by
-                    // callers via `termination` (i.e. index < termination
-                    // ⇒ active).
-                    if abs_diff_eq!(current.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS) && termination.is_none() {
+                    if abs_diff_eq!(current.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS)
+                        && termination.is_none()
+                    {
                         termination = Some(i);
                     }
                     current.blend(&q)

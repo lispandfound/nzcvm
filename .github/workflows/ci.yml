@@ -32,20 +32,18 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Set up Python environment
-        run: uv sync --dev
+      - name: Clippy (Rust linter)
+        run: cargo test
 
-      - name: Build Rust extension (maturin develop)
-        run: uv run --config-setting 'build-args=--profile=dev' maturin develop
+      - name: pytest
+        run: uv run --dev --config-setting 'build-args=--profile=dev' pytest tests/ -v
 
       - name: Clippy (Rust linter)
         run: cargo clippy -- -D warnings
 
       - name: Ruff (Python linter)
-        run: uv run ruff check .
+        run: uv run --dev --config-setting 'build-args=--profile=dev' ruff check .
 
       - name: ty (Python type checker)
-        run: uv run ty check nzcvm/
+        run: uv run --dev --config-setting 'build-args=--profile=dev' ty check nzcvm/
 
-      - name: pytest
-        run: uv run pytest tests/ -v

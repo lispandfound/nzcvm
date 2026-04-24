@@ -257,6 +257,7 @@ class GeoModelGrid(ConfigObject):
         'b0'
         """
         name = self.metadata.title or "model"
+
         blocks = {b.name: empty_block(b) for b in self.blocks}
         surfaces = {s.name: empty_surface(s) for s in self.surfaces}
 

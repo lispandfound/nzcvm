@@ -1,13 +1,13 @@
-from nzcvm.model import Model
-from nzcvm.layers import helpers
-from nzcvm.coordinates import Coordinate
-from nzcvm.components import Component
-from rich.tree import Tree
-import xarray as xr
 import numpy as np
-
+import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
 from xarray.core.treenode import NodePath
+
+from nzcvm.components import Component
+from nzcvm.coordinates import Coordinate
+from nzcvm.layers import helpers
+from nzcvm.model import Model
 
 
 class ModelLayer:

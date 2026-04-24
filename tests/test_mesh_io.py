@@ -5,6 +5,7 @@ NZCVM-specific data (points, connectivity, field data, cell data) survive a
 save/load roundtrip and that ``nzcvm.mesh.read_vtkhdf`` raises when the file
 is not an ``UnstructuredGrid``.
 """
+
 import numpy as np
 import pytest
 import pyvista as pv
@@ -100,7 +101,7 @@ class TestPyVistaVtkHdfRoundtrip:
         mesh.save(str(path))
         loaded = pv.read(str(path))
         loaded_conn = loaded.cells_dict[pv.CellType.TETRA]
-        orig_conn = mesh.cells_dict[pv.CellType.TETRA]
+        orig_conn = mesh.cells_dict[np.uint8(pv.CellType.TETRA)]
         np.testing.assert_array_equal(loaded_conn, orig_conn)
 
     def test_read_vtkhdf_raises_for_wrong_type(self, tmp_path):

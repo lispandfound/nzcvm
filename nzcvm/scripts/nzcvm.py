@@ -1,23 +1,22 @@
 import os
-from pathlib import Path
 from contextlib import nullcontext
+from pathlib import Path
 
-import psutil
 import dask
+import psutil
 import rich
+import rich.box
+from dask.diagnostics import Profiler, ResourceProfiler, visualize
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-import rich.box
+from tap import Positional, Tap
 from tqdm.dask import TqdmCallback
-from dask.diagnostics import Profiler, ResourceProfiler, visualize
-from tap import Tap, Positional
+
 from nzcvm import formats, surface
-
-from nzcvm.model import Model
 from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
-from nzcvm.layers import CoordinateTransformLayer, ModelLayer, DepthTransformLayer
-
+from nzcvm.layers import CoordinateTransformLayer, DepthTransformLayer, ModelLayer
+from nzcvm.model import Model
 
 console = Console()
 
@@ -129,7 +128,8 @@ def main():
         topography = surface.read_surface_from_path(args.topography)
 
     model_pipeline = CoordinateTransformLayer(
-        coordinate_system, DepthTransformLayer(topography, ModelLayer(model))  # ty: ignore[invalid-argument-type]
+        coordinate_system,
+        DepthTransformLayer(topography, ModelLayer(model)),  # ty: ignore[invalid-argument-type]
     )
     rich.print(model_pipeline)
     breakpoint()

@@ -1,9 +1,10 @@
+from dataclasses import dataclass
+from pathlib import Path
+
 import numpy as np
 import pyvista as pv
-from dataclasses import dataclass
-from rich.tree import Tree
 from rich.console import Console, ConsoleOptions, RenderResult
-from pathlib import Path
+from rich.tree import Tree
 
 
 @dataclass

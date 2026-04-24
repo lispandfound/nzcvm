@@ -1,17 +1,13 @@
 from dataclasses import dataclass, fields
 from pathlib import Path
-
+from typing import Any, Self, get_type_hints
 
 import numpy as np
-import xarray as xr
-
-from typing import Self, Any, get_type_hints
-from rich.tree import Tree
-from rich.console import Console, ConsoleOptions, RenderResult
-import rich
-
-
 import pyvista as pv
+import rich
+import xarray as xr
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
 
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import read_vtkhdf
@@ -141,15 +137,15 @@ class Model:
         else:
             mesh_paths = [Path(p) for p in models]
 
-        mesh_models = [
-            _mesh_model_from_pyvista(read_vtkhdf(p)) for p in mesh_paths
-        ]
+        mesh_models = [_mesh_model_from_pyvista(read_vtkhdf(p)) for p in mesh_paths]
         model_map = {i: p.stem for i, p in enumerate(mesh_paths)}
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw, model_map)
 
     @classmethod
-    def from_mesh(cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None) -> Self:
+    def from_mesh(
+        cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None
+    ) -> Self:
         raw_mesh_model = _mesh_model_from_pyvista(mesh_model)
         raw = nzcvm.model_tree([raw_mesh_model])
         return cls(raw, model_map or {})
@@ -253,21 +249,38 @@ def _mesh_model_from_pyvista(mesh_model: pv.UnstructuredGrid):
 
     Priority is a model-level scalar stored in ``field_data["priority"]``.
     """
-    connectivity = mesh_model.cells_dict[int(pv.CellType.TETRA)]  # ty: ignore[invalid-argument-type]
-    types = mesh_model.cell_data["model_type"]
-    model_idx = mesh_model.cell_data["models"]
-    rho = mesh_model.field_data["rho"]
-    vp = mesh_model.field_data["vp"]
-    vs = mesh_model.field_data["vs"]
-    qp = mesh_model.field_data["qp"]
-    qs = mesh_model.field_data["qs"]
-    alpha = mesh_model.field_data["alpha"]
+    # Extract connectivity and wrap in asarray
+    connectivity = np.asarray(mesh_model.cells_dict[np.uint8(pv.CellType.TETRA)])
 
+    # Convert cell_data attributes
+    types = np.asarray(mesh_model.cell_data["model_type"])
+    model_idx = np.asarray(mesh_model.cell_data["models"]).ravel().astype(np.uint64)
+
+    # Convert field_data attributes
+    rho = np.asarray(mesh_model.field_data["rho"])
+    vp = np.asarray(mesh_model.field_data["vp"])
+    vs = np.asarray(mesh_model.field_data["vs"])
+    qp = np.asarray(mesh_model.field_data["qp"])
+    qs = np.asarray(mesh_model.field_data["qs"])
+    alpha = np.asarray(mesh_model.field_data["alpha"])
+
+    # Stack into qualities matrix
     qualities = np.c_[rho, vp, vs, qp, qs, alpha]
-    priority = np.uint8(mesh_model.field_data["priority"][0])
+
+    # Handle priority scalar
+    if "priority" not in mesh_model.field_data:
+        priority = np.uint8(255)
+    else:
+        # field_data is often stored as a single-element array in PyVista
+        priority = np.uint8(np.asarray(mesh_model.field_data["priority"])[0])
+
+    # Handle transform if it exists
     transform = mesh_model.field_data.get("transform")
+    if transform is not None:
+        transform = np.asarray(transform)
+
     return nzcvm.mesh_model(
-        mesh_model.points.astype(np.float32),
+        np.asarray(mesh_model.points).astype(np.float32),
         connectivity.astype(np.uint64),
         types,
         model_idx,

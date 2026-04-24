@@ -4,6 +4,7 @@ PyVista supports reading and writing VTKHDF files natively via ``pv.read()`` and
 ``mesh.save()``.  This module provides thin helpers for creating and loading
 tetrahedral meshes in the format expected by the NZCVM Rust extension.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -64,9 +65,7 @@ def make_mesh(
     pyvista.UnstructuredGrid
     """
     n_cells = len(connectivity)
-    cells = np.column_stack(
-        [np.full(n_cells, 4, dtype=np.int64), connectivity]
-    ).ravel()
+    cells = np.column_stack([np.full(n_cells, 4, dtype=np.int64), connectivity]).ravel()
     cell_types = np.full(n_cells, pv.CellType.TETRA, dtype=np.uint8)
     mesh = pv.UnstructuredGrid(cells, cell_types, points)
     for k, v in cell_data.items():

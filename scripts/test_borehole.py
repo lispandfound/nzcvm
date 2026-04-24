@@ -1,9 +1,10 @@
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pyproj
 
-from nzcvm import model, mesh
-from pathlib import Path
+from nzcvm import mesh, model
 
 
 def load_models(*models: Path) -> model.Model:

@@ -1,18 +1,24 @@
 """Tests for the Python-level Model wrapper (nzcvm.model)."""
+
 import numpy as np
 import pytest
 
-from nzcvm import nzcvm as _nzcvm
-from nzcvm.model import Model, Quality, Explanation, QueryStats
+from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import make_mesh
+from nzcvm.model import Explanation, Model, Quality, QueryStats
 
 
 def _make_raw_model(rho=2700.0, alpha=1.0):
     """Build a raw PyModel via the low-level Rust API."""
-    vertices = np.array([
-        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
-    ], dtype=np.float32)
+    vertices = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
     faces = np.array([[0, 1, 2, 3]], dtype=np.uint64)
     types = np.array([0], dtype=np.uint8)
     idx = np.array([0], dtype=np.uint64)
@@ -23,10 +29,15 @@ def _make_raw_model(rho=2700.0, alpha=1.0):
 
 def _make_pv_model(rho=2700.0, alpha=1.0) -> Model:
     """Build a Model from a pyvista UnstructuredGrid via Model.from_mesh."""
-    points = np.array([
-        [0.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
-    ], dtype=np.float32)
+    points = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=np.float32,
+    )
     pv_mesh = make_mesh(
         points=points,
         connectivity=np.array([[0, 1, 2, 3]], dtype=np.int64),

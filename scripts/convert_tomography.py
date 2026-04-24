@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
-from pathlib import Path
-from enum import StrEnum, auto
-import pandas as pd
-import numpy as np
-import numba
-import pyvista as pv
 from dataclasses import dataclass
-from nzcvm.mesh import make_mesh
+from enum import StrEnum, auto
+from pathlib import Path
 
-
+import numba
+import numpy as np
+import pandas as pd
+import pyvista as pv
 from pyproj import CRS, Transformer
+
+from nzcvm.mesh import make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
 CRS_WGS = CRS.from_epsg(4326)
@@ -215,7 +215,7 @@ def morton_map(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
 def tet_connectivity(ni: int, nj: int, nk: int):
     # 5 tetrahedra per voxel
     num_voxels = (ni - 1) * (nj - 1) * (nk - 1)
-    connectivity = np.empty((num_voxels * 5, 4), dtype=np.uint64)
+    connectivity = np.empty((num_voxels * 5, 4), dtype=np.int64)
 
     # Inline the indexing helper (row-major: k is fastest varying)
     # chart(i, j, k) = i*(nj*nk) + j*nk + k
@@ -249,6 +249,7 @@ def tet_connectivity(ni: int, nj: int, nk: int):
                 idx += 5
 
     return connectivity
+
 
 def data_frame_to_mesh(
     df: pd.DataFrame, tomography_model: TomographyModel
@@ -295,7 +296,7 @@ def data_frame_to_mesh(
     # simplex are close to each other to minimise the number of cache misses
     # when mesh lookup occur. This matters in the codebase because qualities are
     # associated with vertices. We use the morton map as a z-order curve that optimises the vertex ordering.
-    z_idx, y_idx, x_idx = np.indices((nz, ny, nx), dtype=np.uint64)
+    z_idx, y_idx, x_idx = np.indices((nz, ny, nx), dtype=np.int64)
 
     z_flat = z_idx.flatten()
     y_flat = y_idx.flatten()
@@ -323,13 +324,16 @@ def data_frame_to_mesh(
     }
     num_cells = len(connectivity)
     model_type = np.full(num_cells, 1, dtype=np.uint8)
-    models = connectivity.ravel().astype(np.uint64)
     priority = np.full(num_cells, np.iinfo(np.uint8).max, dtype=np.uint8)
 
     return make_mesh(
         points=points,
         connectivity=connectivity,
-        cell_data=dict(model_type=model_type, models=models, priority=priority),
+        cell_data=dict(
+            model_type=model_type,
+            models=connectivity.astype(np.uint64),
+            priority=priority,
+        ),
         field_data=field_data,
     )
 

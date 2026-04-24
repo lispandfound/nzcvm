@@ -1,28 +1,28 @@
 #!/usr/bin/env python3
 
 import argparse
-import numpy as np
-from numba import njit
-from pathlib import Path
 import time
+from pathlib import Path
+
+import numpy as np
+import pyvista as pv
+from numba import njit
+from rich import box
+from rich.columns import Columns
 
 # --- RICH IMPORTS ---
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
+    TextColumn,
 )
-from rich.columns import Columns
-from rich import box
+from rich.table import Table
 
-import pyvista as pv
 from nzcvm.mesh import read_vtkhdf
-
 
 console = Console()
 

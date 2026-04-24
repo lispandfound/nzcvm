@@ -1,16 +1,19 @@
 """Tests for GeoModelGrid and dask laziness of empty_block / empty_surface."""
+
+import dask.array as da
 import numpy as np
 import pytest
-import dask.array as da
 import xarray as xr
 
+from nzcvm.coordinates import Coordinate
 from nzcvm.geomodelgrid import (
     Block,
-    Surface as GeoSurface,
     empty_block,
     empty_surface,
 )
-from nzcvm.coordinates import Coordinate
+from nzcvm.geomodelgrid import (
+    Surface as GeoSurface,
+)
 
 
 class TestEmptyBlockDaskLaziness:

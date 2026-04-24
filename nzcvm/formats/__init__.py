@@ -1,7 +1,9 @@
 from enum import StrEnum, auto
 from pathlib import Path
+
 import xarray as xr
-from . import sfile, emod3d
+
+from . import emod3d, sfile
 
 
 class Format(StrEnum):

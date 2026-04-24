@@ -8,22 +8,23 @@ computing any actual model queries (all inputs are dask-backed, so the
 assertions check the *lazy* graph, not computed values).
 """
 
+import dask.array as da
 import numpy as np
 import pytest
-import dask.array as da
 import xarray as xr
+from rich.console import Console, ConsoleOptions, RenderResult
 
-from nzcvm import nzcvm as _nzcvm
-from nzcvm.model import Model
-from nzcvm.layers.query import ModelLayer
-from nzcvm.layers.coordinates import CoordinateTransformLayer
+from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.coordinates import Coordinate, CoordinateSystem
 from nzcvm.geomodelgrid import Block, empty_block
-
+from nzcvm.layers.coordinates import CoordinateTransformLayer
+from nzcvm.layers.query import ModelLayer
+from nzcvm.model import Model
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
     """Return a constant-quality Model spanning a [0, size]^3 cube.
@@ -35,13 +36,13 @@ def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
     vertices = np.array(
         [
             [0.0, 0.0, 0.0],
-            [s,   0.0, 0.0],
-            [0.0, s,   0.0],
-            [s,   s,   0.0],
+            [s, 0.0, 0.0],
+            [0.0, s, 0.0],
+            [s, s, 0.0],
             [0.0, 0.0, s],
-            [s,   0.0, s],
-            [0.0, s,   s],
-            [s,   s,   s],
+            [s, 0.0, s],
+            [0.0, s, s],
+            [s, s, s],
         ],
         dtype=np.float32,
     )
@@ -58,11 +59,9 @@ def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
         dtype=np.uint64,
     )
     n_cells = len(faces)
-    types = np.zeros(n_cells, dtype=np.uint8)          # Constant model
-    quality_idx = np.zeros(n_cells, dtype=np.uint64)   # All → quality[0]
-    qualities = np.array(
-        [[rho, 6000.0, 3500.0, 200.0, 100.0, 1.0]], dtype=np.float32
-    )
+    types = np.zeros(n_cells, dtype=np.uint8)  # Constant model
+    quality_idx = np.zeros(n_cells, dtype=np.uint64)  # All → quality[0]
+    qualities = np.array([[rho, 6000.0, 3500.0, 200.0, 100.0, 1.0]], dtype=np.float32)
     raw_mesh = _nzcvm.mesh_model(
         vertices, faces, types, quality_idx, qualities, np.uint8(0), None
     )
@@ -88,6 +87,7 @@ def _make_block_datatree(
 # ---------------------------------------------------------------------------
 # ModelLayer dimension contract
 # ---------------------------------------------------------------------------
+
 
 class TestModelLayerDimensions:
     """ModelLayer must attach velocity components with the same dims as x/y/z."""
@@ -180,20 +180,25 @@ class TestModelLayerDimensions:
 # CoordinateTransformLayer dimension contract
 # ---------------------------------------------------------------------------
 
+
 class _PassThroughLayer:
     """Minimal QueryLayer that returns the DataTree unchanged."""
 
     def __call__(self, tree: xr.DataTree) -> xr.DataTree:
         return tree
 
-    def __rich_console__(self, _console, _options):
+    def __rich_console__(
+        self, _console: Console, _options: ConsoleOptions
+    ) -> RenderResult:
         return iter([])
 
 
 class TestCoordinateTransformLayerDimensions:
     """CoordinateTransformLayer must preserve (i, j, k) dims while updating x/y/z."""
 
-    def _make_cs(self, azimuth: float = 0.0, transpose: bool = False) -> CoordinateSystem:
+    def _make_cs(
+        self, azimuth: float = 0.0, transpose: bool = False
+    ) -> CoordinateSystem:
         return CoordinateSystem(
             target_crs=2193,
             origin_lon=172.0,
@@ -204,7 +209,7 @@ class TestCoordinateTransformLayerDimensions:
 
     def test_dims_preserved_after_transform(self):
         cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())
+        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=3, nj=2, nk=2)
         result = layer(tree)
         block_ds = result["/block/test"].dataset
@@ -217,7 +222,7 @@ class TestCoordinateTransformLayerDimensions:
     def test_shape_preserved_after_transform(self):
         ni, nj, nk = 3, 2, 2
         cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())
+        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=ni, nj=nj, nk=nk)
         result = layer(tree)
         block_ds = result["/block/test"].dataset
@@ -228,7 +233,7 @@ class TestCoordinateTransformLayerDimensions:
     def test_x_y_z_remain_dask_backed(self):
         """Coordinate values must stay lazy (dask-backed) after the transform."""
         cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())
+        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=3, nj=2, nk=2)
         result = layer(tree)
         block_ds = result["/block/test"].dataset
@@ -238,7 +243,7 @@ class TestCoordinateTransformLayerDimensions:
     def test_z_passthrough_after_transform(self):
         """Z must not be altered by CoordinateTransformLayer (only x/y are rotated)."""
         cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())
+        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=2, nj=2, nk=3, size=6.0)
         original_z = tree["/block/test"].dataset[Coordinate.Z].values.copy()
         result = layer(tree)
@@ -250,8 +255,8 @@ class TestCoordinateTransformLayerDimensions:
         the non-transposed version to (y0, x0)."""
         cs_normal = self._make_cs(transpose=False)
         cs_transposed = self._make_cs(transpose=True)
-        layer_normal = CoordinateTransformLayer(cs_normal, _PassThroughLayer())
-        layer_transposed = CoordinateTransformLayer(cs_transposed, _PassThroughLayer())
+        layer_normal = CoordinateTransformLayer(cs_normal, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        layer_transposed = CoordinateTransformLayer(cs_transposed, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
         tree = _make_block_datatree(ni=3, nj=2, nk=2, size=5.0)
         block_ds = tree["/block/test"].dataset

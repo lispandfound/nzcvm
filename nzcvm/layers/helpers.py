@@ -1,12 +1,12 @@
-from collections.abc import Callable, Mapping
-from typing import Any
-from pathlib import PurePosixPath
 import glob
 import re
+from collections.abc import Callable, Mapping
+from pathlib import PurePosixPath
+from typing import Any
 
 import xarray as xr
-from xarray.core.utils import result_name
 from xarray.core.treenode import NodePath
+from xarray.core.utils import result_name
 
 DatasetTransform = Callable[..., xr.Dataset]
 

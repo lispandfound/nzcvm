@@ -36,7 +36,7 @@ jobs:
         run: uv sync --dev
 
       - name: Build Rust extension (maturin develop)
-        run: uv run maturin develop
+        run: uv run --config-setting 'build-args=--profile=dev' maturin develop
 
       - name: Clippy (Rust linter)
         run: cargo clippy -- -D warnings

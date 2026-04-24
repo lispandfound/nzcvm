@@ -32,7 +32,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Clippy (Rust linter)
+      - name: cargo test
         run: cargo test
 
       - name: pytest

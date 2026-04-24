@@ -2,9 +2,11 @@ use crate::real::Real;
 use crate::tree_query::Contains;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
+use deepsize::{Context, DeepSizeOf};
+
 use nalgebra::{Matrix3, Point3, Point4};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Clone, Copy, Debug)]
 pub struct Simplex {
     pub c3: Point3<Real>,
     inv_matrix: Matrix3<Real>,
@@ -13,7 +15,12 @@ pub struct Simplex {
 
     pub id: usize,
     node_index: usize,
-    pub priority: u8,
+}
+
+impl DeepSizeOf for Simplex {
+    fn deep_size_of_children(&self, _context: &mut Context) -> usize {
+        0
+    }
 }
 
 impl Simplex {
@@ -49,7 +56,6 @@ impl Simplex {
             aabb,
             id,
             node_index: 0,
-            priority: 0,
         }
     }
 
@@ -66,10 +72,10 @@ impl Simplex {
     }
 }
 
-impl Contains<Real, 3> for Simplex {
+impl Contains<Real, 3, Simplex> for Simplex {
     // This one inline statement speeds up calculations by 6%!
     #[inline(always)]
-    fn contains(&self, query_point: &Point3<Real>) -> bool {
+    fn contains(&self, query_point: &Point3<Real>) -> Option<Simplex> {
         let diff = query_point - self.c3;
         let l = self.inv_matrix * diff;
 
@@ -77,7 +83,11 @@ impl Contains<Real, 3> for Simplex {
 
         let sum = l.x + l.y + l.z;
 
-        (l.x >= -eps) & (l.y >= -eps) & (l.z >= -eps) & (sum <= 1.0 + eps)
+        if (l.x >= -eps) & (l.y >= -eps) & (l.z >= -eps) & (sum <= 1.0 + eps) {
+            Some(*self)
+        } else {
+            None
+        }
     }
 }
 

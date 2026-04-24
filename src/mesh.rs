@@ -1,32 +1,32 @@
-use std::time::{Duration, Instant};
-
 use crate::model::*;
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
-use crate::tree_query::{contains_point_iterator, contains_point_stats_iterator};
-use approx::abs_diff_eq;
+use crate::tree_query::{contains_point_iterator, Contains};
+use deepsize::{Context, DeepSizeOf};
+
 use bvh::aabb::{Aabb, Bounded};
-use bvh::bvh::Bvh;
-use bvh::bvh::BvhNode;
-use nalgebra::{Point3, Point4};
-use smallvec::SmallVec;
+use bvh::bounding_hierarchy::BHShape;
+use bvh::bvh::{Bvh, BvhNode};
+use nalgebra::{Affine3, Point, Point3, Point4};
+use serde::Serialize;
 
-#[derive(Debug)]
-pub struct QueryStats {
-    pub aabb_tests: usize,
-    pub simplex_tests: usize,
-    pub hit_count: usize,
-    pub output: Option<Quality>,
-    pub elapsed: u128,
-}
+/// Default priority for models that do not specify one explicitly.
+pub const DEFAULT_PRIORITY: u8 = 0;
 
-pub struct Explanation {
-    pub simplices: Vec<Simplex>,
-    pub qualities: Vec<Quality>,
-    pub models: Vec<ModelExplanation>,
-    pub output: Option<Quality>,
-    pub termination: Option<usize>,
+/// Half-unit extent added to the priority dimension of the 4D AABB to keep
+/// the AABB non-degenerate. The value 0.5 sits between any two consecutive
+/// integer priorities, so BVH node AABBs correctly reflect the minimum and
+/// maximum priority reachable through each subtree.
+const PRIORITY_AABB_EXTENT: Real = 0.5;
+
+#[derive(Serialize)]
+pub struct MeshModelView {
+    pub id: usize,
+    pub bounds: [f32; 6],
+    pub transform: Option<Affine3<Real>>,
+    pub priority: u8,
+    pub size: usize,
 }
 
 pub struct MeshModel {
@@ -35,13 +35,24 @@ pub struct MeshModel {
     model_map: Vec<Model>,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
+    transform: Option<Affine3<Real>>,
+    pub priority: u8,
+
+    // BVH bookkeeping for the model tree
+    pub id: usize,
+    node_index: usize,
+}
+
+impl DeepSizeOf for MeshModel {
+    fn deep_size_of_children(&self, context: &mut Context) -> usize {
+        self.simplices.deep_size_of_children(context)
+            + self.model_map.deep_size_of_children(context)
+            + self.qualities.deep_size_of_children(context)
+            + self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
+    }
 }
 
 impl MeshModel {
-    pub fn aabb(&self) -> Aabb<Real, 3> {
-        self.bvh_tree.nodes[0].get_node_aabb(&self.simplices)
-    }
-
     pub fn curvilinear_mesh<F>(
         vertices: Vec<Point3<Real>>,
         qualities: Vec<Quality>,
@@ -89,9 +100,8 @@ impl MeshModel {
             .iter()
             .map(|q| Model::from(InterpolateModel { qualities: *q }))
             .collect();
-        let priority = vec![0; faces.len()];
 
-        Self::new(vertices, faces, models, qualities, priority)
+        Self::new(vertices, faces, models, qualities, DEFAULT_PRIORITY, None)
     }
 
     pub fn new(
@@ -99,35 +109,46 @@ impl MeshModel {
         faces: Vec<Point4<usize>>,
         models: Vec<Model>,
         qualities: Vec<Quality>,
-        priority: Vec<u8>,
+        priority: u8,
+        transform: Option<Affine3<Real>>,
     ) -> Self {
-        let min_point = vertices
-            .iter()
-            .fold(Point3::new(Real::MAX, Real::MAX, Real::MAX), |acc, p| {
-                Point3::new(acc.x.min(p.x), acc.y.min(p.y), acc.z.min(p.z))
-            });
+        let local_to_global_map = |p| transform.map_or(p, |aff| aff.inverse_transform_point(&p));
+        let min_point =
+            vertices
+                .iter()
+                .fold(Point3::new(Real::MAX, Real::MAX, Real::MAX), |acc, p| {
+                    let transformed = local_to_global_map(*p);
+                    Point3::new(
+                        acc.x.min(transformed.x),
+                        acc.y.min(transformed.y),
+                        acc.z.min(transformed.z),
+                    )
+                });
 
-        let max_point = vertices
-            .iter()
-            .fold(Point3::new(Real::MIN, Real::MIN, Real::MIN), |acc, p| {
-                Point3::new(acc.x.max(p.x), acc.y.max(p.y), acc.z.max(p.z))
-            });
+        let max_point =
+            vertices
+                .iter()
+                .fold(Point3::new(Real::MIN, Real::MIN, Real::MIN), |acc, p| {
+                    let transformed = local_to_global_map(*p);
+                    Point3::new(
+                        acc.x.max(transformed.x),
+                        acc.y.max(transformed.y),
+                        acc.z.max(transformed.z),
+                    )
+                });
         let aabb = Aabb::with_bounds(min_point, max_point);
 
         let mut simplices: Vec<Simplex> = faces
             .iter()
             .enumerate()
             .map(|(i, f)| {
-                let mut simplex = Simplex::new(
+                Simplex::new(
                     vertices[f.x],
                     vertices[f.y],
                     vertices[f.z],
                     vertices[f.w],
                     i,
-                );
-
-                simplex.priority = priority[i];
-                simplex
+                )
             })
             .collect();
         let bvh_tree = Bvh::build(&mut simplices);
@@ -138,6 +159,10 @@ impl MeshModel {
             qualities,
             aabb,
             model_map: models,
+            priority,
+            id: 0,
+            node_index: 0,
+            transform: transform,
         }
     }
 
@@ -145,77 +170,26 @@ impl MeshModel {
         self.qualities.len()
     }
 
-    fn model_for(&self, simplex: &Simplex) -> ModelExplanation {
-        self.model_map[simplex.id].explanation(&self.qualities)
-    }
-
     fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
         self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
-    pub fn explain(&self, point: Point3<Real>) -> Explanation {
-        let mut simplices: Vec<&Simplex> =
-            contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
-        let mut query_simplices = Vec::new();
-        let mut query_models = Vec::new();
-        let mut query_qualities = Vec::new();
-        let mut quality = None;
-        let mut termination = None;
-
-        if simplices.len() > 0 {
-            simplices.sort_by_key(|simplex| simplex.priority);
-            let mut computed_quality = self.quality_for(simplices[0], &point);
-            query_simplices.push(*simplices[0]);
-            query_models.push(self.model_for(simplices[0]));
-            query_qualities.push(computed_quality);
-
-            for i in 1..simplices.len() {
-                if abs_diff_eq!(computed_quality.alpha, 1.0, epsilon = 1e-4)
-                    && termination.is_none()
-                {
-                    termination = Some(i);
-                }
-                let new_quality = self.quality_for(simplices[i], &point);
-                query_simplices.push(*simplices[i]);
-                query_models.push(self.model_for(simplices[i]));
-                query_qualities.push(new_quality);
-                computed_quality = computed_quality.blend(&new_quality);
-            }
-
-            quality = Some(computed_quality);
-        }
-
-        Explanation {
-            simplices: query_simplices,
-            models: query_models,
-            qualities: query_qualities,
-            output: quality,
-            termination: termination,
-        }
+    pub fn global_to_local(&self, point: Point3<Real>) -> Point3<Real> {
+        self.transform
+            .map_or(point, |aff| aff.transform_point(&point))
     }
 
+    /// Returns the quality at the given point using the first simplex that contains it.
+    /// Returns `None` if no simplex contains the point.
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        let mut simplices: SmallVec<[&Simplex; 8]> =
-            contains_point_iterator(&self.bvh_tree, &self.simplices, &point).collect();
-        if simplices.len() == 1 {
-            Some(self.quality_for(simplices[0], &point))
-        } else if simplices.len() > 0 {
-            simplices.sort_by_key(|simplex| simplex.priority);
-            let mut quality = self.quality_for(simplices[0], &point);
-
-            for i in 1..simplices.len() {
-                if abs_diff_eq!(quality.alpha, 1.0, epsilon = 1e-4) {
-                    break;
-                }
-                quality = quality.blend(&self.quality_for(simplices[i], &point));
-            }
-            Some(quality)
-        } else {
-            None
-        }
+        let transformed = self.global_to_local(point);
+        contains_point_iterator(&self.bvh_tree, &self.simplices, &transformed)
+            .next()
+            .map(|simplex| self.quality_for(&simplex, &transformed))
     }
 
     pub fn pretty_print(&self) {
+        use bvh::bvh::BvhNode;
         fn max_depth(nodes: &[BvhNode<Real, 3>], node_index: usize) -> usize {
             match nodes[node_index] {
                 BvhNode::Node {
@@ -229,60 +203,83 @@ impl MeshModel {
 
         let depth = max_depth(&self.bvh_tree.nodes, 0);
         println!(
-            "Mesh model with {} vertices and {} simplices, tree depth = {}.",
+            "Mesh model with {} vertices and {} simplices, tree depth = {}, priority = {}.",
             self.qualities.len(),
             self.simplices.len(),
-            depth
+            depth,
+            self.priority,
         )
     }
 
-    pub fn query_stats(&self, point: Point3<Real>) -> QueryStats {
-        let now = Instant::now();
-        let mut iter = contains_point_stats_iterator(&self.bvh_tree, &self.simplices, &point);
-        let mut simplices: SmallVec<[&Simplex; 8]> = SmallVec::new();
-
-        // We manually drive the iterator so `iter` doesn't get consumed/moved
-        // by a `for` loop. This lets us read `iter.stats` after.
-        while let Some(simplex) = iter.next() {
-            simplices.push(simplex);
-        }
-
-        let hit_count = simplices.len();
-
-        // Extract the stats before `iter` goes out of scope
-        let stats = iter.stats;
-
-        let quality = if hit_count == 1 {
-            Some(self.quality_for(simplices[0], &point))
-        } else if hit_count > 0 {
-            simplices.sort_by_key(|simplex| simplex.priority);
-            let mut q = self.quality_for(simplices[0], &point);
-
-            for i in 1..simplices.len() {
-                if abs_diff_eq!(q.alpha, 1.0, epsilon = 1e-4) {
-                    break;
-                }
-                q = q.blend(&self.quality_for(simplices[i], &point));
-            }
-            Some(q)
-        } else {
-            None
-        };
-        let elapsed_time = now.elapsed();
-
-        QueryStats {
-            aabb_tests: stats.aabb_tests,
-            simplex_tests: stats.simplex_tests,
-            hit_count,
-            output: quality,
-            elapsed: elapsed_time.as_nanos(),
+    pub fn view(&self) -> MeshModelView {
+        let bounds = [
+            self.aabb.min.x,
+            self.aabb.min.y,
+            self.aabb.min.z,
+            self.aabb.max.x,
+            self.aabb.max.y,
+            self.aabb.max.z,
+        ];
+        MeshModelView {
+            id: self.id,
+            bounds: bounds,
+            transform: self.transform,
+            priority: self.priority,
+            size: self.deep_size_of(),
         }
     }
 }
 
-impl Bounded<Real, 3> for MeshModel {
-    fn aabb(&self) -> Aabb<Real, 3> {
+/// `Contains` for `MeshModel` yields `(priority, quality)` when a simplex inside
+/// this model contains the query point. This avoids a second BVH traversal in
+/// the outer `ModelTree` – the traversal result is returned directly.
+impl Contains<Real, 3, (u8, Quality)> for MeshModel {
+    fn contains(&self, query_point: &Point3<Real>) -> Option<(u8, Quality)> {
+        self.query(*query_point).map(|q| (self.priority, q))
+    }
+}
+
+/// Returns the 3-D bounding box of this model's geometry.
+/// Used when the caller needs the geometry AABB without the priority dimension.
+impl MeshModel {
+    pub fn aabb3(&self) -> Aabb<Real, 3> {
         self.aabb
+    }
+}
+
+/// 4-D AABB used by the outer `ModelTree` BVH.
+///
+/// The first three dimensions are the model's geometry AABB. The fourth
+/// dimension is the model's priority: both `min[3]` and `max[3]` are set to
+/// `priority` (with a half-unit extent so the AABB is non-degenerate), which
+/// lets the priority-ray traversal use `aabb.min[3]` as the `t_min` hit
+/// distance and thereby visit models in priority order.
+impl Bounded<Real, 4> for MeshModel {
+    fn aabb(&self) -> Aabb<Real, 4> {
+        let p = self.priority as Real;
+        let min4 = Point::<Real, 4>::from(nalgebra::vector![
+            self.aabb.min.x,
+            self.aabb.min.y,
+            self.aabb.min.z,
+            p
+        ]);
+        let max4 = Point::<Real, 4>::from(nalgebra::vector![
+            self.aabb.max.x,
+            self.aabb.max.y,
+            self.aabb.max.z,
+            p + PRIORITY_AABB_EXTENT
+        ]);
+        Aabb::with_bounds(min4, max4)
+    }
+}
+
+impl BHShape<Real, 4> for MeshModel {
+    fn set_bh_node_index(&mut self, index: usize) {
+        self.node_index = index;
+    }
+
+    fn bh_node_index(&self) -> usize {
+        self.node_index
     }
 }
 

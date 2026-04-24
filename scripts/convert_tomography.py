@@ -11,8 +11,174 @@ from dataclasses import dataclass
 from nzcvm import mesh
 
 
+import numpy as np
+from pyproj import CRS, Transformer
+
+CRS_NZTM = CRS.from_epsg(2193)
+CRS_WGS = CRS.from_epsg(4326)
+CRS_TM = CRS.from_epsg(27200)
+CRS_NZGD49 = CRS.from_epsg(4272)
+CRS_UTM60S = CRS.from_epsg(32760)  # UTM zone 60S with WGS 84 geodetic coordinates
+CRS_NZGD2000 = CRS.from_epsg(4167)
+
+
+class GeneralTransform:
+    """
+    A general-purpose 2D coordinate transformation class that applies
+    rotation, scaling, and optional axis flips, and maps between coordinate
+    reference systems (CRS) using `pyproj`.
+    Parameters
+    ----------
+    from_crs : pyproj.CRS
+        Source coordinate reference system.
+    to_crs : pyproj.CRS
+        Target coordinate reference system.
+    rotation : float
+        Rotation angle in degrees. Counterclockwise by default unless `ccw=False`.
+    scale : float
+        Scaling factor applied before coordinate transformation.
+    ccw : bool, optional
+        If False, interprets rotation as clockwise. Default is True.
+    flip_ew : bool, optional
+        If True, flips the east-west axis. Default is False.
+    flip_ns : bool, optional
+        If True, flips the north-south axis. Default is False.
+    origin : np.ndarray or None, optional
+        Origin of the transformation, expressed as (x, y) in `origin_crs`.
+        If None, the origin is set to (0, 0).
+    origin_crs : pyproj.CRS or None, optional
+        CRS in which the `origin` coordinates are defined.
+    """
+
+    def __init__(
+        self,
+        from_crs: CRS,
+        to_crs: CRS,
+        rotation: float,
+        scale: float,
+        ccw: bool = True,
+        flip_ew: bool = False,
+        flip_ns: bool = False,
+        origin: np.ndarray | None = None,
+        origin_crs: CRS | None = None,
+    ):
+        self.coordinate_transform = Transformer.from_crs(
+            from_crs, to_crs, always_xy=True
+        )
+        self.inv_coordinate_transform = Transformer.from_crs(
+            to_crs, from_crs, always_xy=True
+        )
+
+        if not ccw:
+            rotation = 360 - rotation
+        theta = np.radians(rotation)
+        ct = np.cos(theta)
+        st = np.sin(theta)
+        rotation_matrix = np.array([[ct, -st], [st, ct]])
+
+        axis_matrix = (
+            np.array(
+                [[(-1.0 if flip_ew else 1.0), 0.0], [0.0, (-1.0 if flip_ns else 1.0)]]
+            )
+            / scale
+        )
+        self.scale = scale
+
+        self.transform_matrix = rotation_matrix @ axis_matrix
+
+        if (origin is not None) and origin_crs:
+            origin_transform = Transformer.from_crs(
+                origin_crs, from_crs, always_xy=True
+            )
+            self.origin = np.array(origin_transform.transform(*origin))
+        else:
+            self.origin = origin or np.zeros((2,), dtype=float)
+
+    def transform(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Transform coordinates from model space to the target CRS.
+        Parameters
+        ----------
+        x, y : np.ndarray
+            Arrays of model-space coordinates to transform.
+        Returns
+        -------
+        tuple of np.ndarray
+            Transformed coordinates (x_out, y_out) in the target CRS.
+        """
+        up_x, up_y = np.linalg.solve(self.transform_matrix, np.array([x, y]))
+        up_x += self.origin[0]
+        up_y += self.origin[1]
+        return self.coordinate_transform.transform(up_x, up_y)
+
+    @property
+    def affine(self) -> np.ndarray:
+        return np.linalg.inv(self.inverse_affine)
+
+    @property
+    def inverse_affine(self) -> np.ndarray:
+        affine_matrix = np.zeros((4, 4), dtype=float)
+        affine_matrix[2, 2] = 1 / self.scale
+        affine_matrix[-1, -1] = 1.0
+        affine_matrix[0:2, 0:2] = self.transform_matrix
+
+        translation_matrix = np.eye(4, dtype=float)
+        translation_matrix[0:2, -1] = -self.origin
+        return affine_matrix @ translation_matrix
+
+    def inverse(self, x: np.ndarray, y: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Transform coordinates from the target CRS back to model space.
+        Parameters
+        ----------
+        x, y : np.ndarray
+            Arrays of coordinates in the target CRS.
+        Returns
+        -------
+        tuple of np.ndarray
+            Transformed coordinates (x_model, y_model) in model space.
+        """
+        up_x, up_y = self.inv_coordinate_transform.transform(x, y)
+        up_x -= self.origin[0]
+        up_y -= self.origin[1]
+        x, y = self.transform_matrix @ np.array([up_x, up_y])
+        return x, y
+
+
+EP2010_TRANSFORM = GeneralTransform(
+    CRS_NZTM,
+    CRS_NZTM,
+    140.0,
+    1000.0,
+    flip_ew=True,
+    origin=np.array([172.9037, -41.7638]),
+    origin_crs=CRS_NZGD49,
+)
+
+
+EP2020_TRANSFORM = GeneralTransform(
+    CRS_NZTM,
+    CRS_NZTM,
+    140.0,
+    1000.0,
+    flip_ew=True,
+    origin=np.array([172.9037, -41.7638]),
+    origin_crs=CRS_NZGD2000,
+)
+
+
+DB2025_TRANSFORM = GeneralTransform(
+    CRS_UTM60S,
+    CRS_NZTM,
+    35.0,
+    1000.0,
+    origin=np.array([177.0, -39.7499]),
+    origin_crs=CRS_WGS,
+)
+
+
 @dataclass
-class ColumnKey:
+class TomographyModel:
     latitude: str
     longitude: str
     x: str
@@ -21,12 +187,10 @@ class ColumnKey:
     rho: str
     vp: str
     vs: str
+    transform: GeneralTransform
     # Some models don't contain a qp/qs column, so we prefill where that makes sense.
     qp: str = "qp"
     qs: str = "qs"
-
-
-TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
 
 # See https://www.forceflow.be/2013/10/07/morton-encodingdecoding-through-bit-interleaving-implementations/#%E2%80%9CMagic_Bits%E2%80%9D_method
@@ -88,20 +252,18 @@ def tet_connectivity(ni: int, nj: int, nk: int):
     return connectivity
 
 
-def data_frame_to_mesh(df: pd.DataFrame, column_key: ColumnKey) -> mesh.Mesh:
-    latitude = df[column_key.latitude]
-    longitude = df[column_key.longitude]
+def data_frame_to_mesh(
+    df: pd.DataFrame, tomography_model: TomographyModel
+) -> mesh.Mesh:
+    rho = df[tomography_model.rho]
+    vp = df[tomography_model.vp]
+    vs = df[tomography_model.vs]
+    qp = df[tomography_model.qp]
+    qs = df[tomography_model.qs]
 
-    x, y = TRANSFORMER.transform(longitude, latitude)
-    rho = df[column_key.rho]
-    vp = df[column_key.vp]
-    vs = df[column_key.vs]
-    qp = df[column_key.qp]
-    qs = df[column_key.qs]
-
-    model_x = df[column_key.x]
-    model_y = df[column_key.y]
-    model_z = df[column_key.z]
+    model_x = df[tomography_model.x]
+    model_y = df[tomography_model.y]
+    model_z = df[tomography_model.z]
 
     nz = len(np.unique_values(model_z))
     ny = len(np.unique_values(model_y))
@@ -119,7 +281,7 @@ def data_frame_to_mesh(df: pd.DataFrame, column_key: ColumnKey) -> mesh.Mesh:
 
     # We need to sort x, y, z so that they are topologically close (i.e. x[i]
     # has neighbour x[i + 1], x[i - 1]). That's what the sorter achieves.
-    points = np.c_[x, y, model_z * 1000]
+    points = np.c_[model_x, model_y, model_z]
     points = points[sorter]
     rho = rho[sorter]
     vp = vp[sorter]
@@ -150,6 +312,7 @@ def data_frame_to_mesh(df: pd.DataFrame, column_key: ColumnKey) -> mesh.Mesh:
 
     points = points[morton_sorter]
     connectivity = inverse_map[naive_idx]
+    transform = tomography_model.transform.inverse_affine.T.astype(np.float32)
 
     field_data = {
         "rho": rho[morton_sorter].values.astype(np.float32),
@@ -158,6 +321,7 @@ def data_frame_to_mesh(df: pd.DataFrame, column_key: ColumnKey) -> mesh.Mesh:
         "qp": qp[morton_sorter].values.astype(np.float32),
         "qs": qs[morton_sorter].values.astype(np.float32),
         "alpha": np.ones(len(points), dtype=np.float32),
+        "transform": transform,
     }
     num_cells = len(connectivity)
     model_type = np.full(num_cells, 1, dtype=np.uint8)
@@ -180,7 +344,7 @@ class ModelType(StrEnum):
 MODEL_KWARGS = {ModelType.EP2020: dict(header=1, sep=r"\s+")}
 
 MODEL_COLUMNS = {
-    ModelType.EP2020: ColumnKey(
+    ModelType.EP2020: TomographyModel(
         latitude="Latitude",
         longitude="Longitude",
         x="x(km)",
@@ -189,6 +353,7 @@ MODEL_COLUMNS = {
         rho="Density",
         vp="Vp",
         vs="Vs",
+        transform=EP2020_TRANSFORM,
     )
 }
 

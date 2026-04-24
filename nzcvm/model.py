@@ -6,15 +6,18 @@ from pathlib import Path
 
 import numpy as np
 import xarray as xr
-import xoak
+
 from typing import Self, Any, get_type_hints
 from rich.tree import Tree
+from rich.console import Console, ConsoleOptions
 import rich
 
 
 from nzcvm import nzcvm, mesh
 
 from .nzcvm import PyModel
+
+MB = 1 / (1024 * 1024)
 
 
 class RSBase:
@@ -75,44 +78,6 @@ class Point(RSBase):
 
 
 @dataclass
-class Simplex(RSBase):
-    c0: Point
-    c1: Point
-    c2: Point
-    c3: Point
-    priority: int
-
-    def __str__(self) -> str:
-        c0 = str(self.c0)
-        c1 = str(self.c1)
-        c2 = str(self.c2)
-        c3 = str(self.c3)
-        return f"Tetrahedron with corners:\nc0={c0}\nc1={c1}\nc2={c2}\nc3={c3}"
-
-
-@dataclass
-class ConstantModel(RSBase):
-    quality: Quality
-
-    def __str__(self) -> str:
-        return f"Constant model with quality = {str(self.quality)}"
-
-
-@dataclass
-class InterpolatedModel(RSBase):
-    x: Quality
-    y: Quality
-    z: Quality
-    w: Quality
-
-    def __str__(self) -> str:
-        return (
-            f"Barycentric interpolation between:\n"
-            f"x={str(self.x)}\ny={str(self.y)}\nz={str(self.z)}\nw={str(self.w)}"
-        )
-
-
-@dataclass
 class QueryStats(RSBase):
     aabb_tests: int
     simplex_tests: int
@@ -121,30 +86,25 @@ class QueryStats(RSBase):
     elapsed: int
 
 
-SimplexModel = ConstantModel | InterpolatedModel
+@dataclass
+class ModelContribution(RSBase):
+    priority: int
+    quality: Quality
 
-
-def _from_rs_simplex_model(model: Any) -> SimplexModel:
-    try:
-        return ConstantModel._from_rs(model)
-    except AttributeError:
-        return InterpolatedModel._from_rs(model)
+    def __str__(self) -> str:
+        return f"priority={self.priority}, quality={str(self.quality)}"
 
 
 @dataclass
 class Explanation(RSBase):
-    simplices: list[Simplex]
-    qualities: list[Quality]
-    models: list[SimplexModel]
+    contributions: list[ModelContribution]
     output: Quality | None
     termination: int | None
 
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self:
         return cls(
-            simplices=[Simplex._from_rs(simplex) for simplex in rs_obj.simplices],
-            qualities=[Quality._from_rs(quality) for quality in rs_obj.qualities],
-            models=[_from_rs_simplex_model(model) for model in rs_obj.models],
+            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],
             output=Quality._from_rs(rs_obj.output),
             termination=rs_obj.termination,
         )
@@ -155,19 +115,13 @@ class Explanation(RSBase):
 
         root = Tree(f"[bold white]{self.output}[/bold white]")
 
-        for i, (simplex, model, quality) in enumerate(
-            zip(self.simplices, self.models, self.qualities)
-        ):
+        for i, contribution in enumerate(self.contributions):
             is_active = self.termination is None or i < self.termination
             colour = "green" if is_active else "red"
-
-            simplex_node = root.add(
-                f"[{colour}]Simplex {i} (priority = {simplex.priority})[/{colour}]"
+            node = root.add(
+                f"[{colour}]Model {i} (priority = {contribution.priority})[/{colour}]"
             )
-
-            simplex_node.add(f"Model: {model}")
-            simplex_node.add(f"Simplex quality: {quality}")
-            simplex_node.add(f"Geometry: {simplex}")
+            node.add(f"Quality: {contribution.quality}")
 
         return root
 
@@ -175,46 +129,28 @@ class Explanation(RSBase):
 class Model:
     """A high-level wrapper for the Rust ModelTree."""
 
-    def __init__(self, internal_py_model: PyModel):
+    def __init__(self, internal_py_model: PyModel, model_map: dict):
         self._raw = internal_py_model
+        self.model_map = model_map
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
         if len(models) == 1 and Path(models[0]).is_dir():
-            meshes = [
-                mesh.Mesh.read_vtkhdf(mesh_path)
-                for mesh_path in Path(models[0]).glob("*.vtkhdf")
-            ]
+            mesh_paths = list(Path(models[0]).glob("*.vtkhdf"))
         else:
-            meshes = [mesh.Mesh.read_vtkhdf(mesh_path) for mesh_path in models]
-        all = mesh.Mesh.union(*meshes)
-        return cls.from_mesh(all)
+            mesh_paths = [Path(p) for p in models]
+
+        mesh_models = [
+            _mesh_model_from_mesh(mesh.Mesh.read_vtkhdf(p)) for p in mesh_paths
+        ]
+        model_map = {i: p.stem for i, p in enumerate(mesh_paths)}
+        raw = nzcvm.model_tree(mesh_models)
+        return cls(raw, model_map)
 
     @classmethod
     def from_mesh(cls, mesh_model: mesh.Mesh):
-        # Determine the model type from the available data
-        # Point data => tomography model
-        # Cell data => Basin model
-        # TODO: Map this explicitly to field data in the vtkhdf
-
-        types = mesh_model.cell_data["model_type"]
-        model_idx = mesh_model.cell_data["models"]
-        rho = mesh_model.field_data["rho"]
-        vp = mesh_model.field_data["vp"]
-        vs = mesh_model.field_data["vs"]
-        qp = mesh_model.field_data["qp"]
-        qs = mesh_model.field_data["qs"]
-        alpha = mesh_model.field_data["alpha"]
-
-        qualities = np.c_[rho, vp, vs, qp, qs, alpha]
-        raw = nzcvm.mesh_model(
-            mesh_model.points.astype(np.float32),
-            mesh_model.connectivity.astype(np.uint64),
-            types,
-            model_idx,
-            qualities.astype(np.float32),
-            mesh_model.cell_data["priority"],
-        )
+        raw_mesh_model = _mesh_model_from_mesh(mesh_model)
+        raw = nzcvm.model_tree([raw_mesh_model])
         return cls(raw)
 
     @property
@@ -239,7 +175,7 @@ class Model:
     def explain(self, x: float, y: float, z: float) -> None:
         explanation = self.get_explanation(x, y, z)
         rich.print(explanation)
-        if len(explanation.qualities) > 1:
+        if len(explanation.contributions) > 1:
             rich.print(
                 "Qualities alpha-blended together until exhaustion "
                 "or combined quality alpha ~ 1.0"
@@ -270,12 +206,6 @@ class Model:
                 "y": (dims, y),
                 "z": (dims, z),
             },
-        )
-
-        dset = dset.set_xindex(
-            ["x", "y", "z"],
-            xr.indexes.NDPointIndex,
-            tree_adapter_cls=xoak.SklearnBallTreeAdapter,
         )
 
         return dset
@@ -320,3 +250,72 @@ class Model:
 
         model["block"] = model["block"].map_over_datasets(process_node)
         return model
+
+    def view(self) -> Tree:
+        """Generates a rich.tree.Tree representation of the model structure."""
+        data = self._raw.view()
+
+        total_size_mb = round(data["size"] * MB)
+        tree = Tree(
+            f"[bold blue]Model Tree[/bold blue] (Total Size: {total_size_mb:,} MB)"
+        )
+
+        for m in data["models"]:
+            m_id = m["id"]
+            name = self.model_map.get(m_id, f"Model {m_id}")
+
+            branch = tree.add(f"[bold green]{name}[/bold green] (ID: {m_id})")
+            size_mb = round(m["size"] * MB)
+            branch.add(f"Priority: {m['priority']}")
+
+            if size_mb > 1024:
+                branch.add(f"[red]Size: {size_mb:,} MB[/red]")
+            else:
+                branch.add(f"Size: {size_mb:,} MB")
+
+            b = m["bounds"]
+            branch.add(
+                f"Bounds: [X: {b[0]:.0f}-{b[3]:.0f}, Y: {b[1]:.0f}-{b[4]:.0f}, Z: {b[2]:.0f}-{b[5]:.0f}]"
+            )
+
+            transform_str = "None" if m["transform"] is None else "Active"
+            branch.add(f"Transform: {transform_str}")
+
+        return tree
+
+    def __rich_console__(
+        self, console: Console, options: ConsoleOptions
+    ) -> RenderResult:
+        """Allows direct usage of rich.print(model)"""
+        yield self.view()
+
+
+def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
+    """Build a PyMeshModel from a Mesh object.
+
+    Priority is now a model-level scalar read from ``field_data["priority"]``.
+    """
+    types = mesh_model.cell_data["model_type"]
+    model_idx = mesh_model.cell_data["models"]
+    rho = mesh_model.field_data["rho"]
+    vp = mesh_model.field_data["vp"]
+    vs = mesh_model.field_data["vs"]
+    qp = mesh_model.field_data["qp"]
+    qs = mesh_model.field_data["qs"]
+    alpha = mesh_model.field_data["alpha"]
+
+    qualities = np.c_[rho, vp, vs, qp, qs, alpha]
+    # field_data["priority"] is guaranteed to be a non-empty 1-element array by
+    # Mesh.read_vtkhdf (which either reads a scalar from FieldData or falls back
+    # to the first cell-level value from a legacy file).
+    priority = np.uint8(mesh_model.field_data["priority"][0])
+    transform = mesh_model.field_data.get("transform")
+    return nzcvm.mesh_model(
+        mesh_model.points.astype(np.float32),
+        mesh_model.connectivity.astype(np.uint64),
+        types,
+        model_idx,
+        qualities.astype(np.float32),
+        priority,
+        transform,
+    )

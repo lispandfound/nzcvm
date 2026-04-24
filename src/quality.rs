@@ -1,8 +1,9 @@
 use crate::real::Real;
+use deepsize::DeepSizeOf;
 use ndarray::{Array1, ArrayView1};
 use std::ops::{Add, Mul};
 
-#[derive(Clone, Debug, Copy, PartialEq)]
+#[derive(Clone, Debug, Copy, PartialEq, DeepSizeOf)]
 pub struct Quality {
     pub rho: Real,
     pub vp: Real,

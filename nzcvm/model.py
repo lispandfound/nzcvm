@@ -11,14 +11,15 @@ nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
 nzcvm.mesh : Mesh I/O utilities used by :meth:`Model.load_models`.
 """
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Self, get_type_hints
+from typing import Any, Self
 
 import numpy as np
 import pyvista as pv
 import rich
 import xarray as xr
+from mashumaro.mixins.dict import DataClassDictMixin
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
@@ -30,47 +31,8 @@ from .nzcvm import PyModel  # ty: ignore[unresolved-import]
 MB = 1 / (1024 * 1024)
 
 
-class RSBase:
-    """Mixin that deserialises a corresponding Rust-backed PyO3 object.
-
-    Subclasses that are also dataclasses gain :meth:`_from_rs`, which
-    maps attributes from a PyO3 object into the Python dataclass by
-    matching field names. Fields whose type is itself an ``RSBase``
-    subclass are converted recursively.
-    """
-    @classmethod
-    def _from_rs(cls, rs_obj: Any) -> Self | None:
-        """Map attributes from a Rust-backed PyO3 object to this dataclass.
-
-        Fields whose type is itself an ``RSBase`` subclass are converted
-        recursively.  Returns ``None`` when *rs_obj* is ``None``.
-        """
-        if rs_obj is None:
-            return None
-
-        # Get type hints to handle the recursive case
-        hints = get_type_hints(cls)
-        init_kwargs = {}
-
-        for field in fields(cls):
-            field_name = field.name
-            field_type = hints[field_name]
-
-            val = getattr(rs_obj, field_name)
-
-            try:
-                if issubclass(field_type, RSBase):
-                    init_kwargs[field_name] = field_type._from_rs(val)
-                else:
-                    init_kwargs[field_name] = val
-            except TypeError:
-                init_kwargs[field_name] = val
-
-        return cls(**init_kwargs)
-
-
 @dataclass
-class Quality(RSBase):
+class Quality(DataClassDictMixin):
     """Seismic material properties at a single point in the velocity model.
 
     Parameters
@@ -112,7 +74,7 @@ class Quality(RSBase):
 
 
 @dataclass
-class Point(RSBase):
+class Point(DataClassDictMixin):
     """A 3-D point returned by some query methods.
 
     Examples
@@ -131,7 +93,7 @@ class Point(RSBase):
 
 
 @dataclass
-class QueryStats(RSBase):
+class QueryStats(DataClassDictMixin):
     """Diagnostic counters for a single model query.
 
     Useful for profiling BVH traversal efficiency. Returned by
@@ -158,7 +120,7 @@ class QueryStats(RSBase):
 
 
 @dataclass
-class ModelContribution(RSBase):
+class ModelContribution(DataClassDictMixin):
     """A single model's contribution to a blended quality result.
 
     Parameters
@@ -177,7 +139,7 @@ class ModelContribution(RSBase):
 
 
 @dataclass
-class Explanation(RSBase):
+class Explanation(DataClassDictMixin):
     """Full audit trail for how a query result was produced.
 
     Returned by :meth:`Model.get_explanation`. Each element in
@@ -201,15 +163,6 @@ class Explanation(RSBase):
     contributions: list[ModelContribution]
     output: Quality | None
     termination: int | None
-
-    @classmethod
-    def _from_rs(cls, rs_obj: Any) -> Self:
-        """Deserialise from the Rust-backed explanation object."""
-        return cls(
-            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],  # ty: ignore[invalid-argument-type]
-            output=Quality._from_rs(rs_obj.output),
-            termination=rs_obj.termination,
-        )
 
     def __rich__(self) -> Tree:
         """Return a :class:`rich.tree.Tree` showing per-model contributions."""
@@ -333,11 +286,9 @@ class Model:
             in the model's coordinate system.
         """
         aabb = self._raw.aabb()
-        min = np.array([aabb.min.x, aabb.min.y, aabb.min.z])
-        max = np.array([aabb.max.x, aabb.max.y, aabb.max.z])
-        return min, max
+        return np.array(aabb["min"]), np.array(aabb["max"])
 
-    def query(self, x, y, z) -> Quality | None:
+    def query(self, x: Any, y: Any, z: Any) -> Quality | None:
         """Query material properties at a single point.
 
         Parameters
@@ -357,10 +308,10 @@ class Model:
         Model.query_stats : Query with BVH traversal diagnostics.
         Model.get_explanation : Query with per-model contribution details.
         """
-        quality_rs = self._raw.query(x, y, z)
-        return Quality._from_rs(quality_rs)
+        quality_dict = self._raw.query(x, y, z)
+        return Quality.from_dict(quality_dict) if quality_dict is not None else None
 
-    def query_stats(self, x, y, z) -> QueryStats | None:
+    def query_stats(self, x: Any, y: Any, z: Any) -> QueryStats:
         """Query a single point and return traversal diagnostics.
 
         Parameters
@@ -376,10 +327,9 @@ class Model:
         --------
         Model.query : Query without diagnostics.
         """
-        quality_rs = self._raw.query_stats(x, y, z)
-        return QueryStats._from_rs(quality_rs)
+        return QueryStats.from_dict(self._raw.query_stats(x, y, z))
 
-    def get_explanation(self, x, y, z) -> Explanation:
+    def get_explanation(self, x: Any, y: Any, z: Any) -> Explanation:
         """Return a full :class:`Explanation` for a single-point query.
 
         Parameters
@@ -395,8 +345,7 @@ class Model:
         --------
         Model.explain : Pretty-print the explanation to the terminal.
         """
-        explanation_rs = self._raw.explain(x, y, z)
-        return Explanation._from_rs(explanation_rs)
+        return Explanation.from_dict(self._raw.explain(x, y, z))
 
     def explain(self, x: float, y: float, z: float) -> None:
         """Pretty-print the blending explanation for a query point.
@@ -421,7 +370,7 @@ class Model:
                 "or combined quality alpha ~ 1.0"
             )
 
-    def query_many_raw(self, x, y, z) -> np.ndarray:
+    def query_many_raw(self, x: Any, y: Any, z: Any) -> np.ndarray:
         """Vectorised query returning a raw float32 array.
 
         Parameters
@@ -445,7 +394,7 @@ class Model:
             z.astype(np.float32, copy=False).ravel(),
         ).reshape(x.shape + (6,))
 
-    def query_many(self, x, y, z) -> xr.Dataset:
+    def query_many(self, x: Any, y: Any, z: Any) -> xr.Dataset:
         """Vectorised query returning a labelled :class:`xarray.Dataset`.
 
         Parameters

@@ -36,9 +36,9 @@ class TestRustQueryContract:
         model = make_constant_model()
         q = model.query(0.1, 0.1, 0.1)
         assert q is not None
-        assert q.rho == pytest.approx(2700.0, rel=1e-4)
-        assert q.vp == pytest.approx(6000.0, rel=1e-4)
-        assert q.vs == pytest.approx(3500.0, rel=1e-4)
+        assert q["rho"] == pytest.approx(2700.0, rel=1e-4)
+        assert q["vp"] == pytest.approx(6000.0, rel=1e-4)
+        assert q["vs"] == pytest.approx(3500.0, rel=1e-4)
 
     def test_query_outside_returns_none(self):
         model = make_constant_model()
@@ -60,27 +60,27 @@ class TestRustQueryContract:
         z = np.array([0.1], dtype=np.float32)
         result = model.query_many(x, y, z)
         single = model.query(0.1, 0.1, 0.1)
-        assert result[0, 0] == pytest.approx(single.rho, rel=1e-3)
+        assert result[0, 0] == pytest.approx(single["rho"], rel=1e-3)
 
     def test_aabb_covers_model_geometry(self):
         model = make_constant_model()
         aabb = model.aabb()
-        assert aabb.min.x == pytest.approx(0.0, abs=1e-4)
-        assert aabb.max.x == pytest.approx(1.0, abs=1e-4)
+        assert aabb["min"][0] == pytest.approx(0.0, abs=1e-4)
+        assert aabb["max"][0] == pytest.approx(1.0, abs=1e-4)
 
     def test_query_stats_hit_count(self):
         model = make_constant_model()
         stats = model.query_stats(0.1, 0.1, 0.1)
-        assert stats.hit_count >= 1
-        assert stats.output is not None
-        assert stats.aabb_tests >= 0
-        assert stats.simplex_tests >= 0
+        assert stats["hit_count"] >= 1
+        assert stats["output"] is not None
+        assert stats["aabb_tests"] >= 0
+        assert stats["simplex_tests"] >= 0
 
     def test_explain_contributions_non_empty(self):
         model = make_constant_model()
         expl = model.explain(0.1, 0.1, 0.1)
-        assert len(expl.contributions) >= 1
-        assert expl.output is not None
+        assert len(expl["contributions"]) >= 1
+        assert expl["output"] is not None
 
     def test_priority_low_number_wins(self):
         """Priority 0 (low number = high priority) should dominate when alpha=1."""
@@ -106,7 +106,7 @@ class TestRustQueryContract:
         model = _nzcvm.model_tree([mesh0, mesh1])
         q = model.query(0.1, 0.1, 0.1)
         assert q is not None
-        assert q.rho == pytest.approx(100.0, rel=1e-3)
+        assert q["rho"] == pytest.approx(100.0, rel=1e-3)
 
     def test_alpha_blending(self):
         """Semi-transparent model blends with lower-priority model."""
@@ -132,7 +132,7 @@ class TestRustQueryContract:
         model = _nzcvm.model_tree([mesh0, mesh1])
         q = model.query(0.1, 0.1, 0.1)
         assert q is not None
-        assert q.rho == pytest.approx(5.0, rel=1e-3)
+        assert q["rho"] == pytest.approx(5.0, rel=1e-3)
 
 
 class TestRustMeshModelInvalidInputs:

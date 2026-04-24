@@ -11,10 +11,9 @@ use pyo3::prelude::*;
 #[pymodule]
 mod nzcvm {
     use crate::mesh::MeshModel;
-    use crate::model::{ConstantModel, InterpolateModel, Model, ModelExplanation};
+    use crate::model::{ConstantModel, InterpolateModel, Model};
     use crate::model_tree::ModelTree;
-    use crate::quality::Quality;
-    use crate::query::{Explanation, ModelContribution, Query, QueryStats};
+    use crate::query::Query;
     use crate::real::Real;
     use bvh::aabb::Aabb;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
@@ -23,161 +22,22 @@ mod nzcvm {
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
+    use serde::Serialize;
 
     use std::sync::Arc;
 
-    /// Python-facing description of the model applied inside a single simplex.
-    ///
-    /// Reflects the Rust `Model` enum: either a constant quality or a
-    /// barycentric interpolation between the four simplex vertices.
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub enum PySimplexModel {
-        Constant {
-            quality: PyQuality,
-        },
-
-        Interpolate {
-            x: PyQuality,
-            y: PyQuality,
-            z: PyQuality,
-            w: PyQuality,
-        },
+    /// Serialisable view of a 3-D axis-aligned bounding box.
+    #[derive(Serialize)]
+    struct AabbView {
+        min: [Real; 3],
+        max: [Real; 3],
     }
 
-    impl From<ModelExplanation> for PySimplexModel {
-        fn from(item: ModelExplanation) -> Self {
-            match item {
-                ModelExplanation::Constant(ConstantModel { quality }) => PySimplexModel::Constant {
-                    quality: quality.into(),
-                },
-                ModelExplanation::Interpolate(InterpolateModel { qualities }) => {
-                    PySimplexModel::Interpolate {
-                        x: qualities.x.into(),
-                        y: qualities.y.into(),
-                        z: qualities.z.into(),
-                        w: qualities.w.into(),
-                    }
-                }
-            }
-        }
-    }
-
-    /// Python-facing 3-D point (x, y, z).
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub struct PyPoint {
-        x: Real,
-        y: Real,
-        z: Real,
-    }
-
-    impl From<Point3<Real>> for PyPoint {
-        fn from(item: Point3<Real>) -> Self {
-            PyPoint {
-                x: item.x,
-                y: item.y,
-                z: item.z,
-            }
-        }
-    }
-
-    /// Python-facing seismic quality at a single point (mirrors [`Quality`]).
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub struct PyQuality {
-        pub rho: Real,
-        pub vp: Real,
-        pub vs: Real,
-        pub qp: Real,
-        pub qs: Real,
-        pub alpha: Real,
-    }
-
-    impl From<Quality> for PyQuality {
-        fn from(item: Quality) -> Self {
-            PyQuality {
-                rho: item.rho,
-                vp: item.vp,
-                vs: item.vs,
-                qp: item.qp,
-                qs: item.qs,
-                alpha: item.alpha,
-            }
-        }
-    }
-
-    /// Python-facing single-model contribution to a blended query result.
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub struct PyModelContribution {
-        pub priority: u8,
-        pub quality: PyQuality,
-    }
-
-    impl From<ModelContribution> for PyModelContribution {
-        fn from(item: ModelContribution) -> Self {
-            PyModelContribution {
-                priority: item.priority,
-                quality: item.quality.into(),
-            }
-        }
-    }
-
-    /// Python-facing diagnostic breakdown of a query (mirrors [`Explanation`]).
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub struct PyExplanation {
-        pub contributions: Vec<PyModelContribution>,
-        pub output: Option<PyQuality>,
-        pub termination: Option<usize>,
-    }
-
-    impl From<Explanation> for PyExplanation {
-        fn from(item: Explanation) -> Self {
-            PyExplanation {
-                contributions: item.contributions.into_iter().map(|c| c.into()).collect(),
-                output: item.output.map(|q| q.into()),
-                termination: item.termination,
-            }
-        }
-    }
-
-    /// Python-facing query performance counters (mirrors [`QueryStats`]).
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub struct PyQueryStats {
-        pub aabb_tests: usize,
-        pub simplex_tests: usize,
-        pub hit_count: usize,
-        pub output: Option<PyQuality>,
-        pub elapsed: u128,
-    }
-
-    impl From<QueryStats> for PyQueryStats {
-        fn from(item: QueryStats) -> Self {
-            Self {
-                aabb_tests: item.aabb_tests,
-                simplex_tests: item.simplex_tests,
-                hit_count: item.hit_count,
-                output: item.output.map(|x| x.into()),
-                elapsed: item.elapsed,
-            }
-        }
-    }
-
-    /// Python-facing 3-D axis-aligned bounding box.
-    #[pyclass(get_all, from_py_object)]
-    #[derive(Clone, Debug)]
-    pub struct PyAabb {
-        min: PyPoint,
-        max: PyPoint,
-    }
-    impl From<Aabb<Real, 3>> for PyAabb {
+    impl From<Aabb<Real, 3>> for AabbView {
         fn from(item: Aabb<Real, 3>) -> Self {
             Self {
-                min: item.min.into(),
-                max: item.max.into(),
+                min: [item.min.x, item.min.y, item.min.z],
+                max: [item.max.x, item.max.y, item.max.z],
             }
         }
     }
@@ -303,27 +163,58 @@ mod nzcvm {
     impl PyModel {
         /// Query the velocity model at a single point.
         ///
-        /// Returns `None` if the point lies outside all model regions.
-        pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<PyQuality>> {
+        /// Returns a dict with keys `rho`, `vp`, `vs`, `qp`, `qs`, `alpha`,
+        /// or `None` if the point lies outside all model regions.
+        pub fn query<'py>(
+            &self,
+            py: Python<'py>,
+            x: Real,
+            y: Real,
+            z: Real,
+        ) -> PyResult<Option<Bound<'py, PyAny>>> {
             let pt = Point3::new(x, y, z);
-            Ok(self.inner.query(pt).map(|q| q.into()))
+            self.inner
+                .query(pt)
+                .map(|q| pythonize(py, &q).map_err(|e| e.into()))
+                .transpose()
         }
 
         /// Return the combined 3-D axis-aligned bounding box of all mesh models.
-        pub fn aabb(&self) -> PyResult<PyAabb> {
-            Ok(self.inner.aabb().into())
+        ///
+        /// Returns a dict with keys `min` and `max`, each a list of three floats.
+        pub fn aabb<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+            let view: AabbView = self.inner.aabb().into();
+            pythonize(py, &view).map_err(|e| e.into())
         }
 
         /// Query with BVH traversal statistics (AABB tests, simplex tests, etc.).
-        pub fn query_stats(&self, x: Real, y: Real, z: Real) -> PyResult<PyQueryStats> {
+        ///
+        /// Returns a dict with keys `aabb_tests`, `simplex_tests`, `hit_count`,
+        /// `output` (quality dict or `None`), and `elapsed` (nanoseconds).
+        pub fn query_stats<'py>(
+            &self,
+            py: Python<'py>,
+            x: Real,
+            y: Real,
+            z: Real,
+        ) -> PyResult<Bound<'py, PyAny>> {
             let pt = Point3::new(x, y, z);
-            Ok(self.inner.query_stats(pt).into())
+            pythonize(py, &self.inner.query_stats(pt)).map_err(|e| e.into())
         }
 
         /// Return a full diagnostic breakdown listing each model's contribution.
-        pub fn explain(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
+        ///
+        /// Returns a dict with keys `contributions` (list of dicts), `output`
+        /// (quality dict or `None`), and `termination` (int or `None`).
+        pub fn explain<'py>(
+            &self,
+            py: Python<'py>,
+            x: Real,
+            y: Real,
+            z: Real,
+        ) -> PyResult<Bound<'py, PyAny>> {
             let pt = Point3::new(x, y, z);
-            Ok(self.inner.query_explain(pt).into())
+            pythonize(py, &self.inner.query_explain(pt)).map_err(|e| e.into())
         }
 
         /// Return a serialisable Python dict describing the model tree structure.
@@ -384,7 +275,6 @@ mod nzcvm {
 
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
-        m.add_class::<PyQuality>()?;
         m.add_class::<PyMeshModel>()?;
         m.add_class::<PyModel>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;

@@ -129,7 +129,7 @@ impl Query for ModelTree {
             simplex_tests: outer_stats.simplex_tests,
             hit_count,
             output: quality,
-            elapsed: now.elapsed().as_nanos(),
+            elapsed: now.elapsed().as_nanos() as u64,
         }
     }
 

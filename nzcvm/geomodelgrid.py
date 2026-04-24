@@ -108,14 +108,12 @@ class ModelMetadata(ConfigObject):
     def coordinate_system(self) -> CoordinateSystem:
         """Build a :class:`~nzcvm.coordinates.CoordinateSystem` from this metadata."""
         return CoordinateSystem(
-            target_crs=self.target_crs,
-            origin_lon=self.origin_lon,
-            origin_lat=self.origin_lat,
-            azimuth=self.azimuth,
-            transpose=self.transpose,
+            from_crs=self.target_crs,
+            to_crs=self.target_crs,
+            rotation=self.azimuth,
+            ccw=False,
+            origin=np.array([self.origin_lon, self.origin_lat]),
             origin_crs=self.origin_crs,
-            origin_x=self.origin_x,
-            origin_y=self.origin_y,
         )
 
 

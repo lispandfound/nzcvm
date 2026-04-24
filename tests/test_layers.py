@@ -199,12 +199,14 @@ class TestCoordinateTransformLayerDimensions:
     def _make_cs(
         self, azimuth: float = 0.0, transpose: bool = False
     ) -> CoordinateSystem:
+        import numpy as np
         return CoordinateSystem(
-            target_crs=2193,
-            origin_lon=172.0,
-            origin_lat=-43.5,
-            azimuth=azimuth,
-            transpose=transpose,
+            from_crs=2193,
+            to_crs=2193,
+            rotation=azimuth,
+            ccw=False,
+            origin=np.array([172.0, -43.5]),
+            origin_crs=4326,
         )
 
     def test_dims_preserved_after_transform(self):

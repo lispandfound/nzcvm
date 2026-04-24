@@ -136,14 +136,18 @@ def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
         f"{np.mean([s.aabb_tests for s in results]):.1f}",
         f"{max(s.aabb_tests for s in results)}",
     )
-    table.add_row("Simplex Tests", f"{np.mean(times_series):.1f}", f"{max(times_series)}")
+    table.add_row(
+        "Simplex Tests",
+        f"{np.mean([s.simplex_tests for s in results]):.1f}",
+        f"{max(s.simplex_tests for s in results)}",
+    )
     table.add_row(
         "Model Hit Rate", f"{(total_hits / n_samples) * 100:.1f}%", f"{total_hits} hits"
     )
     table.add_row(
         "Query time",
-        f"{mean_time:.2f} μ",
-        f"{max_time:.2f} μ",
+        f"{mean_time:.2f} μs",
+        f"{max_time:.2f} μs",
     )
 
     hist, bin_edges = np.histogram(times_series, bins=20)

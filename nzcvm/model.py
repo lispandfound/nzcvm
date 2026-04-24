@@ -152,7 +152,7 @@ class Model:
     def from_mesh(cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None) -> Self:
         raw_mesh_model = _mesh_model_from_pyvista(mesh_model)
         raw = nzcvm.model_tree([raw_mesh_model])
-        return cls(raw, model_map)
+        return cls(raw, model_map or {})
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:

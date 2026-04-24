@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  lint-and-test:
+    name: Lint and Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache Rust build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Set up Python environment
+        run: uv sync --dev
+
+      - name: Build Rust extension (maturin develop)
+        run: uv run maturin develop
+
+      - name: Clippy (Rust linter)
+        run: cargo clippy -- -D warnings
+
+      - name: Ruff (Python linter)
+        run: uv run ruff check .
+
+      - name: ty (Python type checker)
+        run: uv run ty check nzcvm/
+
+      - name: pytest
+        run: uv run pytest tests/ -v

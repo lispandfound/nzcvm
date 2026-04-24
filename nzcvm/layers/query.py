@@ -43,5 +43,5 @@ class ModelLayer:
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
         tree = Tree("[bold blue]Model Query[/bold blue]")
-        tree.add(self.model)
+        tree.add(self.model)  # ty: ignore[invalid-argument-type]
         yield tree

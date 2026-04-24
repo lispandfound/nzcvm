@@ -11,16 +11,16 @@ from rich.console import Console, ConsoleOptions, RenderResult
 import rich
 
 
-from nzcvm import nzcvm, mesh
+from nzcvm import nzcvm, mesh  # ty: ignore[unresolved-import]
 
-from .nzcvm import PyModel
+from .nzcvm import PyModel  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 
 
 class RSBase:
     @classmethod
-    def _from_rs(cls, rs_obj: Any) -> Self:
+    def _from_rs(cls, rs_obj: Any) -> Self | None:
         """
         Automagically maps attributes from a Rust-backed object to this dataclass.
         Handles recursive deserialization for fields that inherit from RSBase.
@@ -102,7 +102,7 @@ class Explanation(RSBase):
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self:
         return cls(
-            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],
+            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],  # ty: ignore[invalid-argument-type]
             output=Quality._from_rs(rs_obj.output),
             termination=rs_obj.termination,
         )
@@ -127,9 +127,9 @@ class Explanation(RSBase):
 class Model:
     """A high-level wrapper for the Rust ModelTree."""
 
-    def __init__(self, internal_py_model: PyModel, model_map: dict):
+    def __init__(self, internal_py_model: PyModel, model_map: dict | None = None):
         self._raw = internal_py_model
-        self.model_map = model_map
+        self.model_map = model_map or {}
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
@@ -158,11 +158,11 @@ class Model:
         max = np.array([aabb.max.x, aabb.max.y, aabb.max.z])
         return min, max
 
-    def query(self, x, y, z) -> Quality:
+    def query(self, x, y, z) -> Quality | None:
         quality_rs = self._raw.query(x, y, z)
         return Quality._from_rs(quality_rs)
 
-    def query_stats(self, x, y, z) -> QueryStats:
+    def query_stats(self, x, y, z) -> QueryStats | None:
         quality_rs = self._raw.query_stats(x, y, z)
         return QueryStats._from_rs(quality_rs)
 

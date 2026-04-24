@@ -253,7 +253,7 @@ def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
         triangle = shutil.which("triangle")
         opts = f"-qa{max_area:.5f}"  # Aim for a quality triangulation
         cmd = [triangle, opts, str(input_path)]
-        print(f"Calling triangle like so: ", " ".join(cmd))
+        print("Calling triangle like so: ", " ".join(cmd))
         subprocess.check_call(cmd)
         output_triangles = input_path.with_suffix(".1.ele")
         output_nodes = input_path.with_suffix(".1.node")

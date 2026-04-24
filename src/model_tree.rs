@@ -94,7 +94,7 @@ impl Query for ModelTree {
 
         let mut iter = priority_ray_stats_iterator(&self.bvh_tree, &self.models, point);
         let mut hits: Vec<(u8, Quality)> = Vec::new();
-        while let Some(hit) = iter.next() {
+        for hit in iter.by_ref() {
             hits.push(hit);
         }
         let outer_stats = iter.stats;
@@ -154,5 +154,168 @@ impl Query for ModelTree {
             output: blended,
             termination,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_relative_eq;
+    use nalgebra::{Point3, Point4};
+
+    use crate::mesh::MeshModel;
+    use crate::model::{ConstantModel, InterpolateModel, Model};
+    use crate::quality::Quality;
+    use crate::real::Real;
+
+    fn unit_cube_mesh(priority: u8, quality_val: Real, alpha: Real) -> MeshModel {
+        let vertices: Vec<Point3<Real>> = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+            Point3::new(1.0, 0.0, 1.0),
+            Point3::new(0.0, 1.0, 1.0),
+            Point3::new(1.0, 1.0, 1.0),
+        ];
+        let faces = vec![
+            Point4::new(0usize, 1, 2, 4),
+            Point4::new(3, 1, 2, 7),
+            Point4::new(5, 1, 4, 7),
+            Point4::new(6, 2, 4, 7),
+            Point4::new(1, 2, 4, 7),
+        ];
+        let q = Quality { rho: quality_val, vp: quality_val, vs: quality_val, qp: quality_val, qs: quality_val, alpha };
+        let qualities = vec![q; vertices.len()];
+        let models = faces
+            .iter()
+            .map(|f| Model::from(InterpolateModel { qualities: *f }))
+            .collect();
+        MeshModel::new(vertices, faces, models, qualities, priority, None)
+    }
+
+    #[test]
+    fn test_single_model_query_inside() {
+        let mesh = unit_cube_mesh(0, 5.0, 1.0);
+        let tree = ModelTree::new(vec![mesh]);
+        let result = tree.query(Point3::new(0.5, 0.5, 0.5));
+        assert!(result.is_some());
+        let q = result.unwrap();
+        assert_relative_eq!(q.rho, 5.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_query_outside_returns_none() {
+        let mesh = unit_cube_mesh(0, 5.0, 1.0);
+        let tree = ModelTree::new(vec![mesh]);
+        let result = tree.query(Point3::new(10.0, 10.0, 10.0));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_priority_ordering_higher_priority_wins() {
+        let mesh0 = unit_cube_mesh(0, 5.0, 1.0);
+        let mesh1 = unit_cube_mesh(1, 10.0, 1.0);
+        let tree = ModelTree::new(vec![mesh0, mesh1]);
+        let result = tree.query(Point3::new(0.5, 0.5, 0.5));
+        assert!(result.is_some());
+        let q = result.unwrap();
+        assert_relative_eq!(q.rho, 5.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_priority_ordering_lower_number_first() {
+        let mesh1 = unit_cube_mesh(1, 10.0, 1.0);
+        let mesh0 = unit_cube_mesh(0, 5.0, 1.0);
+        let tree = ModelTree::new(vec![mesh1, mesh0]);
+        let result = tree.query(Point3::new(0.5, 0.5, 0.5));
+        let q = result.unwrap();
+        assert_relative_eq!(q.rho, 5.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_alpha_blending_partial_alpha() {
+        let mesh0 = unit_cube_mesh(0, 0.0, 0.5);
+        let mesh1 = unit_cube_mesh(1, 10.0, 1.0);
+        let tree = ModelTree::new(vec![mesh0, mesh1]);
+        let result = tree.query(Point3::new(0.5, 0.5, 0.5));
+        assert!(result.is_some());
+        let q = result.unwrap();
+        assert_relative_eq!(q.rho, 5.0, epsilon = 1e-4);
+        assert_relative_eq!(q.alpha, 1.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_query_stats_counts() {
+        let mesh = unit_cube_mesh(0, 5.0, 1.0);
+        let tree = ModelTree::new(vec![mesh]);
+        let stats = tree.query_stats(Point3::new(0.5, 0.5, 0.5));
+        assert!(stats.hit_count >= 1);
+        assert!(stats.output.is_some());
+    }
+
+    #[test]
+    fn test_query_explain_contributions() {
+        let mesh0 = unit_cube_mesh(0, 5.0, 0.5);
+        let mesh1 = unit_cube_mesh(1, 10.0, 1.0);
+        let tree = ModelTree::new(vec![mesh0, mesh1]);
+        let explanation = tree.query_explain(Point3::new(0.5, 0.5, 0.5));
+        assert!(explanation.contributions.len() >= 2);
+        assert!(explanation.output.is_some());
+        assert_eq!(explanation.contributions[0].priority, 0);
+    }
+
+    #[test]
+    fn test_aabb_covers_all_models() {
+        let mesh0 = unit_cube_mesh(0, 5.0, 1.0);
+        let vertices: Vec<Point3<Real>> = vec![
+            Point3::new(2.0, 0.0, 0.0),
+            Point3::new(3.0, 0.0, 0.0),
+            Point3::new(2.0, 1.0, 0.0),
+            Point3::new(3.0, 1.0, 0.0),
+            Point3::new(2.0, 0.0, 1.0),
+            Point3::new(3.0, 0.0, 1.0),
+            Point3::new(2.0, 1.0, 1.0),
+            Point3::new(3.0, 1.0, 1.0),
+        ];
+        let faces = vec![
+            Point4::new(0usize, 1, 2, 4),
+            Point4::new(3, 1, 2, 7),
+            Point4::new(5, 1, 4, 7),
+            Point4::new(6, 2, 4, 7),
+            Point4::new(1, 2, 4, 7),
+        ];
+        let q = Quality { rho: 7.0, vp: 7.0, vs: 7.0, qp: 7.0, qs: 7.0, alpha: 1.0 };
+        let qualities = vec![q; vertices.len()];
+        let models = faces.iter().map(|f| Model::from(InterpolateModel { qualities: *f })).collect();
+        let mesh1 = MeshModel::new(vertices, faces, models, qualities, 1, None);
+
+        let tree = ModelTree::new(vec![mesh0, mesh1]);
+        let aabb = tree.aabb();
+        assert_relative_eq!(aabb.min.x, 0.0, epsilon = 1e-5);
+        assert_relative_eq!(aabb.max.x, 3.0, epsilon = 1e-5);
+        assert_relative_eq!(aabb.min.y, 0.0, epsilon = 1e-5);
+        assert_relative_eq!(aabb.max.y, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_constant_model_query() {
+        let vertices: Vec<Point3<Real>> = vec![
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+        ];
+        let faces = vec![Point4::new(0usize, 1, 2, 3)];
+        let q = Quality { rho: 42.0, vp: 1.0, vs: 1.0, qp: 1.0, qs: 1.0, alpha: 1.0 };
+        let qualities = vec![q];
+        let models = vec![Model::from(ConstantModel { quality: 0usize })];
+        let mesh = MeshModel::new(vertices, faces, models, qualities, 0, None);
+        let tree = ModelTree::new(vec![mesh]);
+        let pt = Point3::new(0.1, 0.1, 0.1);
+        let result = tree.query(pt);
+        assert!(result.is_some());
+        assert_relative_eq!(result.unwrap().rho, 42.0, epsilon = 1e-4);
     }
 }

@@ -2,6 +2,7 @@ use crate::real::Real;
 use nalgebra::Point3;
 
 /// Calculates the squared distance from a 3D point to a triangle.
+#[allow(dead_code)]
 pub fn point_triangle_distance_sq(
     q: Point3<Real>,
     p1: Point3<Real>,
@@ -63,4 +64,82 @@ pub fn point_triangle_distance_sq(
     let projection = p1 + ab * v + ac * w;
 
     (q - projection).norm_squared()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use approx::assert_relative_eq;
+    use nalgebra::Point3;
+
+    #[test]
+    fn test_distance_sq_to_vertex_p1() {
+        let q = Point3::new(0.0, 0.0, 0.0);
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(1.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 1.0, 0.0);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_distance_sq_to_vertex_p2() {
+        let q = Point3::new(1.0, 0.0, 0.0);
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(1.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 1.0, 0.0);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_distance_sq_to_vertex_p3() {
+        let q = Point3::new(0.0, 1.0, 0.0);
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(1.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 1.0, 0.0);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_distance_sq_point_on_edge_ab() {
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(2.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 2.0, 0.0);
+        let q = Point3::new(1.0, 0.0, 0.0);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, 0.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_distance_sq_point_above_interior() {
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(3.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 3.0, 0.0);
+        let height = 2.0;
+        let q = Point3::new(1.0, 1.0, height);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, height * height, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_distance_sq_outside_vertex_region_p1() {
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(1.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 1.0, 0.0);
+        let q = Point3::new(-1.0, -1.0, 0.0);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, 2.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_distance_sq_point_inside_triangle_is_zero_at_plane() {
+        let p1 = Point3::new(0.0, 0.0, 0.0);
+        let p2 = Point3::new(3.0, 0.0, 0.0);
+        let p3 = Point3::new(0.0, 3.0, 0.0);
+        let q = Point3::new(1.0, 1.0, 0.0);
+        let d = point_triangle_distance_sq(q, p1, p2, p3);
+        assert_relative_eq!(d, 0.0, epsilon = 1e-5);
+    }
 }

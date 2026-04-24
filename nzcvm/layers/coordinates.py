@@ -36,7 +36,7 @@ class CoordinateTransformLayer:
     ) -> RenderResult:
 
         tree = Tree("[bold blue]Change in Coordinates[/]")
-        tree.add(self.coordinate_system)
+        tree.add(self.coordinate_system)  # ty: ignore[invalid-argument-type]
         tree.add(self.next_layer)
 
         yield tree

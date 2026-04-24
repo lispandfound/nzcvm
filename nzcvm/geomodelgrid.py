@@ -5,7 +5,6 @@ from typing import Any, Self
 from pathlib import Path
 from enum import StrEnum, auto
 
-import dataclasses
 import dask.array as da
 import xarray as xr
 import numpy as np
@@ -128,7 +127,7 @@ class GeoModelGridFormat(StrEnum):
 
 @dataclass
 class GeoModelGrid(ConfigObject):
-    metadata: ModelMetadata = field(default_factory=ModelMetadata)
+    metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
     surfaces: list[Surface] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
 

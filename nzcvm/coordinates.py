@@ -13,7 +13,7 @@ class Coordinate(StrEnum):
     X = auto()
     Y = auto()
     Z = auto()
-    I = auto()
+    I = auto()  # noqa: E741
     J = auto()
     K = auto()
 

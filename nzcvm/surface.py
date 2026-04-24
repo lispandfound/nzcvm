@@ -8,7 +8,7 @@ from pathlib import Path
 
 @dataclass
 class Surface:
-    mesh: pv.PolyData  # Store the PyVista mesh instead of the Scipy object
+    mesh: pv.DataSet  # Store the PyVista mesh instead of the Scipy object
     bounds: np.ndarray
     n_points: int
 
@@ -41,7 +41,7 @@ class Surface:
         yield tree
 
 
-def build_surface_interpolator(mesh_data: pv.UnstructuredGrid) -> Surface:
+def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
     # Ensure the Z values are the active scalars for interpolation
     if mesh_data.active_scalars_name is None:
         # If no scalars are active, we use the Z coordinates themselves
@@ -68,5 +68,5 @@ def build_surface_interpolator(mesh_data: pv.UnstructuredGrid) -> Surface:
 
 def read_surface_from_path(surface_path: Path) -> Surface:
     # PyVista can read VTKHDF, VTK, STL, etc. directly
-    mesh = pv.read(surface_path)
-    return build_surface_interpolator(mesh)
+    mesh_data: pv.DataSet = pv.read(surface_path)  # ty: ignore[invalid-assignment]
+    return build_surface_interpolator(mesh_data)

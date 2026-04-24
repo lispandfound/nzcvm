@@ -5,13 +5,11 @@ from pathlib import Path
 from enum import StrEnum, auto
 import pandas as pd
 import numpy as np
-import pyproj
 import numba
 from dataclasses import dataclass
 from nzcvm import mesh
 
 
-import numpy as np
 from pyproj import CRS, Transformer
 
 CRS_NZTM = CRS.from_epsg(2193)

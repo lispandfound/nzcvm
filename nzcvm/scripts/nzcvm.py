@@ -53,6 +53,11 @@ class Options(Tap):
     profile_output: Path = Path("dask_profile.html")
     topography: Path
 
+    # Added in configure():
+    model_path: Path
+    model_glob: str
+    config_format: GeoModelGridFormat
+
     def configure(self):
         self.add_argument(
             "--model-path",
@@ -124,7 +129,7 @@ def main():
         topography = surface.read_surface_from_path(args.topography)
 
     model_pipeline = CoordinateTransformLayer(
-        coordinate_system, DepthTransformLayer(topography, ModelLayer(model))
+        coordinate_system, DepthTransformLayer(topography, ModelLayer(model))  # ty: ignore[invalid-argument-type]
     )
     rich.print(model_pipeline)
     breakpoint()

@@ -1,7 +1,6 @@
 from nzcvm.surface import Surface
 from nzcvm.layers import helpers, QueryLayer
 from nzcvm.coordinates import Coordinate
-from nzcvm.components import Component
 from rich.tree import Tree
 import xarray as xr
 import numpy as np
@@ -42,6 +41,6 @@ class DepthTransformLayer:
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
         tree = Tree("[bold blue]Depth Transform[/bold blue]")
-        tree.add(self.interpolator)
+        tree.add(self.interpolator)  # ty: ignore[invalid-argument-type]
         tree.add(self.next_layer)
         yield tree

@@ -1,6 +1,5 @@
 """Tests for GeoModelGrid and dask laziness of empty_block / empty_surface."""
 import numpy as np
-import pytest
 import dask.array as da
 import xarray as xr
 

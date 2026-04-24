@@ -1,6 +1,5 @@
 """Tests for CoordinateSystem.transform."""
 import numpy as np
-import pytest
 
 from nzcvm.coordinates import CoordinateSystem
 

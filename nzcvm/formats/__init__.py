@@ -43,6 +43,7 @@ def from_path(path: Path) -> Format:
     Returns
     -------
     Format
+        The inferred format for the path suffix.
 
     Raises
     ------

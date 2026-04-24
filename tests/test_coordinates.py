@@ -1,5 +1,6 @@
 """Tests for CoordinateSystem.transform."""
 import numpy as np
+import pytest
 
 from nzcvm.coordinates import CoordinateSystem
 
@@ -34,7 +35,7 @@ class TestCoordinateSystemTransform:
         y = np.array([0.0], dtype=np.float32)
         z = np.array([-500.0], dtype=np.float32)
         _, _, z_out = cs.transform(x, y, z)
-        np.testing.assert_allclose(z_out, -500.0, rtol=1e-5)
+        assert float(z_out[0]) == pytest.approx(-500.0, rel=1e-5)
 
     def test_transpose_swaps_xy(self):
         """Transposing should swap x and y before transformation."""
@@ -45,8 +46,8 @@ class TestCoordinateSystemTransform:
         z = np.array([0.0], dtype=np.float32)
         x_transposed, y_transposed, _ = cs_transposed.transform(x, y, z)
         x_normal2, y_normal2, _ = cs_normal.transform(y, x, z)
-        np.testing.assert_allclose(x_transposed, x_normal2, rtol=1e-4)
-        np.testing.assert_allclose(y_transposed, y_normal2, rtol=1e-4)
+        assert float(x_transposed[0]) == pytest.approx(float(x_normal2[0]), rel=1e-4)
+        assert float(y_transposed[0]) == pytest.approx(float(y_normal2[0]), rel=1e-4)
 
     def test_array_broadcast(self):
         """Transform should work on arrays of multiple points."""

@@ -14,10 +14,11 @@ from typing import TextIO
 import h5py
 import numpy as np
 import pyproj
+import pyvista as pv
 import scipy as sp
 import shapely
 import shapely.ops
-from nzcvm import mesh
+from nzcvm.mesh import make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -206,7 +207,7 @@ class Layer:
     alpha: float = 1.0
 
 
-def construct_volumetric_mesh(layers: list[Layer], priority: int) -> mesh.Mesh:
+def construct_volumetric_mesh(layers: list[Layer], priority: int) -> pv.UnstructuredGrid:
 
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
@@ -232,10 +233,9 @@ def construct_volumetric_mesh(layers: list[Layer], priority: int) -> mesh.Mesh:
         vertex_offset += len(layer.vertices)
         tetra_offset += len(layer.tetra)
     priority_data = np.full((len(tetra),), np.uint8(priority))
-    return mesh.Mesh(
+    return make_mesh(
         points=mesh_vertices,
         connectivity=tetra,
-        cell_type=mesh.CellType.TETRA,
         cell_data=dict(model_type=model_type, models=models, priority=priority_data),
         field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
     )
@@ -501,7 +501,7 @@ def main():
 
     print_mesh_stats(mesh)
 
-    mesh.write_vtkhdf(args.output)
+    mesh.save(str(args.output))
 
 
 if __name__ == "__main__":

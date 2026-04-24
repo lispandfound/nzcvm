@@ -1,5 +1,6 @@
 """Tests for GeoModelGrid and dask laziness of empty_block / empty_surface."""
 import numpy as np
+import pytest
 import dask.array as da
 import xarray as xr
 
@@ -47,7 +48,7 @@ class TestEmptyBlockDaskLaziness:
         ds = empty_block(block)
         x_vals = ds[Coordinate.X].values
         expected_x0 = np.arange(5) * 100.0
-        np.testing.assert_allclose(x_vals[:, 0, 0], expected_x0, rtol=1e-5)
+        assert x_vals[:, 0, 0] == pytest.approx(expected_x0, rel=1e-5)
 
     def test_z_top_offset(self):
         block = Block(
@@ -60,7 +61,7 @@ class TestEmptyBlockDaskLaziness:
         ds = empty_block(block)
         z_vals = ds[Coordinate.Z].values
         expected_z = np.array([1000.0, 1050.0, 1100.0])
-        np.testing.assert_allclose(z_vals[0, 0, :], expected_z, rtol=1e-5)
+        assert z_vals[0, 0, :] == pytest.approx(expected_z, rel=1e-5)
 
     def test_chunks_capped_at_dim_size(self):
         block = Block(
@@ -93,4 +94,4 @@ class TestEmptySurface:
         surf = GeoSurface(shape=(5, 3), resolution_horiz=500.0, name="topo")
         ds = empty_surface(surf)
         i_vals = ds.coords[Coordinate.I].values
-        np.testing.assert_allclose(i_vals[1] - i_vals[0], 500.0, rtol=1e-5)
+        assert float(i_vals[1] - i_vals[0]) == pytest.approx(500.0, rel=1e-5)

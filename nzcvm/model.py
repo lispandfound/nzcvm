@@ -11,7 +11,10 @@ from rich.console import Console, ConsoleOptions, RenderResult
 import rich
 
 
-from nzcvm import nzcvm, mesh  # ty: ignore[unresolved-import]
+import pyvista as pv
+
+from nzcvm import nzcvm  # ty: ignore[unresolved-import]
+from nzcvm.mesh import read_vtkhdf
 
 from .nzcvm import PyModel  # ty: ignore[unresolved-import]
 
@@ -139,17 +142,17 @@ class Model:
             mesh_paths = [Path(p) for p in models]
 
         mesh_models = [
-            _mesh_model_from_mesh(mesh.Mesh.read_vtkhdf(p)) for p in mesh_paths
+            _mesh_model_from_pyvista(read_vtkhdf(p)) for p in mesh_paths
         ]
         model_map = {i: p.stem for i, p in enumerate(mesh_paths)}
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw, model_map)
 
     @classmethod
-    def from_mesh(cls, mesh_model: mesh.Mesh):
-        raw_mesh_model = _mesh_model_from_mesh(mesh_model)
+    def from_mesh(cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None) -> Self:
+        raw_mesh_model = _mesh_model_from_pyvista(mesh_model)
         raw = nzcvm.model_tree([raw_mesh_model])
-        return cls(raw)
+        return cls(raw, model_map)
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
@@ -189,14 +192,13 @@ class Model:
     def query_many(self, x, y, z) -> xr.Dataset:
         x, y, z = np.broadcast_arrays(x, y, z)
 
-        original_shape = x.shape
         ndim = x.ndim
         dims = tuple(f"d{i}" for i in range(ndim))
         quality_array = self.query_many_raw(x, y, z)
         var_names = ["rho", "vp", "vs", "qp", "qs"]
         data_vars = {}
         for i, name in enumerate(var_names):
-            data_vars[name] = (dims, quality_array[:, i].reshape(original_shape))
+            data_vars[name] = (dims, quality_array[..., i])
 
         dset = xr.Dataset(
             data_vars=data_vars,
@@ -246,11 +248,12 @@ class Model:
         yield self.view()
 
 
-def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
-    """Build a PyMeshModel from a Mesh object.
+def _mesh_model_from_pyvista(mesh_model: pv.UnstructuredGrid):
+    """Build a PyMeshModel from a pyvista UnstructuredGrid.
 
-    Priority is now a model-level scalar read from ``field_data["priority"]``.
+    Priority is a model-level scalar stored in ``field_data["priority"]``.
     """
+    connectivity = mesh_model.cells_dict[int(pv.CellType.TETRA)]  # ty: ignore[invalid-argument-type]
     types = mesh_model.cell_data["model_type"]
     model_idx = mesh_model.cell_data["models"]
     rho = mesh_model.field_data["rho"]
@@ -261,14 +264,11 @@ def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
     alpha = mesh_model.field_data["alpha"]
 
     qualities = np.c_[rho, vp, vs, qp, qs, alpha]
-    # field_data["priority"] is guaranteed to be a non-empty 1-element array by
-    # Mesh.read_vtkhdf (which either reads a scalar from FieldData or falls back
-    # to the first cell-level value from a legacy file).
     priority = np.uint8(mesh_model.field_data["priority"][0])
     transform = mesh_model.field_data.get("transform")
     return nzcvm.mesh_model(
         mesh_model.points.astype(np.float32),
-        mesh_model.connectivity.astype(np.uint64),
+        connectivity.astype(np.uint64),
         types,
         model_idx,
         qualities.astype(np.float32),

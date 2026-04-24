@@ -1,4 +1,3 @@
-mod geometry;
 pub mod mesh;
 pub mod model;
 pub mod model_tree;

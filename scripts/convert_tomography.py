@@ -6,8 +6,9 @@ from enum import StrEnum, auto
 import pandas as pd
 import numpy as np
 import numba
+import pyvista as pv
 from dataclasses import dataclass
-from nzcvm import mesh
+from nzcvm.mesh import make_mesh
 
 
 from pyproj import CRS, Transformer
@@ -249,10 +250,9 @@ def tet_connectivity(ni: int, nj: int, nk: int):
 
     return connectivity
 
-
 def data_frame_to_mesh(
     df: pd.DataFrame, tomography_model: TomographyModel
-) -> mesh.Mesh:
+) -> pv.UnstructuredGrid:
     rho = df[tomography_model.rho]
     vp = df[tomography_model.vp]
     vs = df[tomography_model.vs]
@@ -326,10 +326,9 @@ def data_frame_to_mesh(
     models = connectivity.ravel().astype(np.uint64)
     priority = np.full(num_cells, np.iinfo(np.uint8).max, dtype=np.uint8)
 
-    return mesh.Mesh(
-        points,
-        connectivity,
-        cell_type=mesh.CellType.TETRA,
+    return make_mesh(
+        points=points,
+        connectivity=connectivity,
         cell_data=dict(model_type=model_type, models=models, priority=priority),
         field_data=field_data,
     )
@@ -376,7 +375,7 @@ def main():
         df[column_keys.qs] = 50.0
 
     mesh = data_frame_to_mesh(df, column_keys)
-    mesh.write_vtkhdf(args.output)
+    mesh.save(str(args.output))
 
 
 if __name__ == "__main__":

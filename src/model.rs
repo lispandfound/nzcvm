@@ -6,18 +6,25 @@ use enum_dispatch::enum_dispatch;
 use nalgebra::Scalar;
 use nalgebra::{Point3, Point4};
 
+/// Diagnostic output from a model query, carrying the per-vertex qualities
+/// used in the computation.
 pub enum ModelExplanation {
     Constant(ConstantModel<Quality>),
     Interpolate(InterpolateModel<Quality>),
 }
 
+/// A type that can report the seismic quality at a point inside a simplex.
 #[enum_dispatch]
 pub trait Queryable {
+    /// Return the quality at `point` inside `simplex`, looking up vertex
+    /// properties from `qualities`.
     fn quality_at(&self, qualities: &[Quality], simplex: &Simplex, point: &Point3<Real>)
         -> Quality;
+    /// Return a diagnostic description of this model's contribution.
     fn explanation(&self, qualities: &[Quality]) -> ModelExplanation;
 }
 
+/// Per-simplex model variant: either constant or barycentric interpolation.
 #[enum_dispatch(Queryable)]
 pub enum Model {
     Constant(ConstantModel<usize>),
@@ -30,7 +37,9 @@ impl DeepSizeOf for Model {
     }
 }
 
+/// Model that returns the same quality regardless of position within the simplex.
 pub struct ConstantModel<T> {
+    /// Index into the qualities array (or the quality itself when `T = Quality`).
     pub quality: T,
 }
 
@@ -51,7 +60,11 @@ impl Queryable for ConstantModel<usize> {
     }
 }
 
+/// Model that interpolates quality using barycentric coordinates within the simplex.
 pub struct InterpolateModel<T: Scalar> {
+    /// Indices of the four vertex qualities (or the qualities themselves when
+    /// `T = Quality`), stored in `(x, y, z, w)` order matching the simplex
+    /// vertices.
     pub qualities: Point4<T>,
 }
 

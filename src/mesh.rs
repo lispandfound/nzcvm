@@ -20,15 +20,23 @@ pub const DEFAULT_PRIORITY: u8 = 0;
 /// maximum priority reachable through each subtree.
 const PRIORITY_AABB_EXTENT: Real = 0.5;
 
+/// Serialisable summary of a [`MeshModel`] for diagnostics.
 #[derive(Serialize)]
 pub struct MeshModelView {
     pub id: usize,
     pub bounds: [f32; 6],
     pub transform: Option<Affine3<Real>>,
     pub priority: u8,
+    /// In-memory size of the model in bytes.
     pub size: usize,
 }
 
+/// A single tetrahedral mesh model with an internal BVH for fast point queries.
+///
+/// Each simplex in the mesh carries a [`Model`] that maps a query point to a
+/// [`Quality`].  The outer [`ModelTree`](crate::model_tree::ModelTree) holds
+/// a collection of `MeshModel`s and dispatches queries via a 4-D BVH (the
+/// fourth dimension encodes priority).
 pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
@@ -53,6 +61,18 @@ impl DeepSizeOf for MeshModel {
 }
 
 impl MeshModel {
+    /// Build a curvilinear mesh by decomposing a structured grid into tetrahedra.
+    ///
+    /// Each voxel is split into 5 tetrahedra using the alternating-parity
+    /// 5-simplex decomposition (Knuth, *TAOCP* Vol. 4 Fasc. 6).  All tetrahedra
+    /// use [`InterpolateModel`] for barycentric quality interpolation.
+    ///
+    /// # Parameters
+    ///
+    /// * `vertices`   – `ni × nj × nk` grid points in some ordering defined by `chart`.
+    /// * `qualities`  – one `Quality` per vertex.
+    /// * `dimensions` – `(ni, nj, nk)` grid dimensions.
+    /// * `chart`      – maps `(i, j, k)` grid indices to a vertex index.
     pub fn curvilinear_mesh<F>(
         vertices: Vec<Point3<Real>>,
         qualities: Vec<Quality>,
@@ -104,6 +124,13 @@ impl MeshModel {
         Self::new(vertices, faces, models, qualities, DEFAULT_PRIORITY, None)
     }
 
+    /// Create a mesh model from raw geometry data.
+    ///
+    /// Builds an internal BVH over the simplices.  If `transform` is
+    /// provided it is treated as a world-to-local affine map: query points
+    /// are transformed into local space before the BVH is consulted, and
+    /// the AABB is computed in world space by transforming vertices with the
+    /// inverse.
     pub fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
@@ -166,6 +193,7 @@ impl MeshModel {
         }
     }
 
+    /// Number of vertex-quality entries in this mesh.
     pub fn points(&self) -> usize {
         self.qualities.len()
     }
@@ -174,6 +202,9 @@ impl MeshModel {
         self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
+    /// Transform a point from world space into the mesh's local space.
+    ///
+    /// If no transform was supplied at construction the point is returned unchanged.
     pub fn global_to_local(&self, point: Point3<Real>) -> Point3<Real> {
         self.transform
             .map_or(point, |aff| aff.transform_point(&point))

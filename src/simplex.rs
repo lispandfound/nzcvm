@@ -6,6 +6,11 @@ use deepsize::{Context, DeepSizeOf};
 
 use nalgebra::{Matrix3, Point3, Point4};
 
+/// A tetrahedron (3-simplex) with pre-computed inverse matrix for fast
+/// barycentric coordinate queries.
+///
+/// Vertex `c3` is the "anchor" vertex; the other three vertices are stored
+/// implicitly through the inverse of the matrix `[c0-c3, c1-c3, c2-c3]`.
 #[derive(Clone, Copy, Debug)]
 pub struct Simplex {
     pub c3: Point3<Real>,
@@ -24,6 +29,15 @@ impl DeepSizeOf for Simplex {
 }
 
 impl Simplex {
+    /// Construct a new simplex from four vertices.
+    ///
+    /// The inverse of `[c0-c3, c1-c3, c2-c3]` is precomputed here and reused
+    /// in every subsequent [`barycentric_coordinates`](Self::barycentric_coordinates)
+    /// and [`Contains::contains`] call, which is the hot path for BVH queries.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the four vertices are coplanar (degenerate simplex).
     pub fn new(
         c0: Point3<Real>,
         c1: Point3<Real>,
@@ -59,6 +73,27 @@ impl Simplex {
         }
     }
 
+    /// Return the barycentric coordinates of `p` with respect to this simplex.
+    ///
+    /// The four coordinates `(l0, l1, l2, l3)` always sum to `1.0`.  A point
+    /// is inside the simplex when all four coordinates are non-negative.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use nalgebra::Point3;
+    /// use nzcvm::simplex::Simplex;
+    /// let s = Simplex::new(
+    ///     Point3::new(0.0, 0.0, 0.0),
+    ///     Point3::new(1.0, 0.0, 0.0),
+    ///     Point3::new(0.0, 1.0, 0.0),
+    ///     Point3::new(0.0, 0.0, 1.0),
+    ///     0,
+    /// );
+    /// let bary = s.barycentric_coordinates(Point3::new(0.25, 0.25, 0.25));
+    /// let sum = bary.x + bary.y + bary.z + bary.w;
+    /// assert!((sum - 1.0).abs() < 1e-5);
+    /// ```
     pub fn barycentric_coordinates(&self, p: Point3<Real>) -> Point4<Real> {
         let diff = p - self.c3;
         let l = self.inv_matrix * diff;

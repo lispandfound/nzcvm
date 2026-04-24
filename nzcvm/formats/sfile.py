@@ -1,3 +1,8 @@
+"""SFILE (HDF5) velocity-model writer.
+
+Writes a multi-grid velocity model in the NZCVM sfile HDF5 format used by
+downstream seismic simulation tools.
+"""
 #!/usr/bin/env python3
 import dask.array as da
 import h5py
@@ -27,7 +32,16 @@ COMPONENT_MAP = {
 
 
 def to_sfile(dtree, filename):
+    """Write *dtree* to *filename* in the NZCVM sfile HDF5 format.
 
+    Parameters
+    ----------
+    dtree :
+        DataTree produced by the query pipeline, with children under
+        ``/block`` and root attributes including ``azimuth``.
+    filename :
+        Destination HDF5 file path.
+    """
     with h5py.File(filename, "w") as f:
         f.attrs.create(
             ORIGIN_AZIM_ATTR,

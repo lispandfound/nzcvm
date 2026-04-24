@@ -1,3 +1,8 @@
+"""EMOD3D binary velocity-model writer.
+
+Writes ``rho3dfile.d``, ``vp3dfile.p``, and ``vs3dfile.s`` binary files into
+a directory using memory-mapped I/O via :mod:`numpy.memmap`.
+"""
 import os
 from pathlib import Path
 
@@ -15,6 +20,21 @@ DTYPE = np.float32
 
 
 def to_emod3d(dtree: xr.DataTree, directory: Path):
+    """Write a single-block velocity model to an EMOD3D binary directory.
+
+    Parameters
+    ----------
+    dtree :
+        DataTree produced by the query pipeline; must have exactly one child
+        under ``/block``.
+    directory :
+        Output directory; created if it does not exist.
+
+    Raises
+    ------
+    ValueError
+        If *dtree* contains more or fewer than one block.
+    """
     if len(dtree["block"]) != 1:
         raise ValueError("EMOD3D format requires exactly one block")
 

@@ -12,18 +12,24 @@ use crate::real::Real;
 use crate::tree_query::{priority_ray_iterator, priority_ray_stats_iterator};
 use nalgebra::Point3;
 
-/// Alpha value at which a blended quality is considered fully opaque. When
-/// the running blend reaches this threshold no further models need to
-/// contribute to the result.
+/// The fraction of the alpha channel considered "fully opaque" for early exit.
 const ALPHA_SATURATED: Real = 1.0;
 const ALPHA_EPS: Real = 1e-4;
 
+/// Serialisable top-level summary of a [`ModelTree`] for diagnostics.
 #[derive(Serialize)]
 pub struct ModelTreeView {
     pub models: Vec<MeshModelView>,
+    /// Total in-memory size of the tree in bytes.
     pub size: usize,
 }
 
+/// A collection of [`MeshModel`]s indexed by a 4-D BVH.
+///
+/// The fourth BVH dimension encodes model priority, so a conceptual ray cast
+/// along that axis visits models in ascending priority order (lowest priority
+/// number first).  [`Query::query`] blends models using Porter-Duff compositing
+/// and returns early once the accumulated alpha is saturated.
 pub struct ModelTree {
     bvh_tree: Bvh<Real, 4>,
     models: Vec<MeshModel>,
@@ -37,6 +43,9 @@ impl DeepSizeOf for ModelTree {
 }
 
 impl ModelTree {
+    /// Construct a `ModelTree` from a list of mesh models.
+    ///
+    /// Assigns consecutive IDs to models and builds the 4-D BVH.
     pub fn new(mut models: Vec<MeshModel>) -> Self {
         for (i, model) in models.iter_mut().enumerate() {
             model.id = i;
@@ -45,6 +54,7 @@ impl ModelTree {
         Self { bvh_tree, models }
     }
 
+    /// Return the combined 3-D axis-aligned bounding box of all models.
     pub fn aabb(&self) -> bvh::aabb::Aabb<Real, 3> {
         self.models
             .iter()

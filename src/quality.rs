@@ -3,6 +3,10 @@ use deepsize::DeepSizeOf;
 use ndarray::{Array1, ArrayView1};
 use std::ops::{Add, Mul};
 
+/// Seismic material properties at a single point.
+///
+/// `alpha` is the opacity weight used when blending overlapping models;
+/// it follows the Porter-Duff "over" compositing rule in [`Quality::blend`].
 #[derive(Clone, Debug, Copy, PartialEq, DeepSizeOf)]
 pub struct Quality {
     pub rho: Real,
@@ -10,10 +14,29 @@ pub struct Quality {
     pub vs: Real,
     pub qp: Real,
     pub qs: Real,
+    /// Opacity weight in `[0, 1]`.  A value of `1.0` means fully opaque:
+    /// higher-priority models beneath are ignored.
     pub alpha: Real,
 }
 
 impl Quality {
+    /// Composite `self` over `rhs` using the Porter-Duff "over" operator.
+    ///
+    /// The resulting `alpha` is `self.alpha + rhs.alpha * (1 - self.alpha)`.
+    /// Material properties are blended proportionally.
+    ///
+    /// # Examples
+    ///
+    /// A fully-opaque quality blended with anything stays unchanged:
+    ///
+    /// ```
+    /// use nzcvm::quality::Quality;
+    /// let a = Quality { rho: 2700.0, vp: 6000.0, vs: 3500.0, qp: 200.0, qs: 100.0, alpha: 1.0 };
+    /// let b = Quality { rho: 1000.0, vp: 1500.0, vs: 0.0, qp: 50.0, qs: 25.0, alpha: 0.5 };
+    /// let blended = a.blend(&b);
+    /// assert!((blended.rho - 2700.0).abs() < 1e-3);
+    /// assert!((blended.alpha - 1.0).abs() < 1e-3);
+    /// ```
     pub fn blend(&self, rhs: &Quality) -> Quality {
         let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
         let a0 = self.alpha / alpha;

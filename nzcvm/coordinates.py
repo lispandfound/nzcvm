@@ -1,3 +1,13 @@
+"""Coordinate systems and spatial transformations for the velocity model.
+
+The central class is :class:`CoordinateSystem`, which maps a local
+rotated grid (origin + azimuth) into a projected CRS such as NZTM2000.
+
+See Also
+--------
+nzcvm.geomodelgrid.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
+"""
+
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from typing import Any
@@ -9,6 +19,18 @@ from rich.tree import Tree
 
 
 class Coordinate(StrEnum):
+    """Grid axis label for projected spatial and logical index coordinates.
+
+    These are used directly as xarray dimension or variable names. Note
+    that ``Coordinate`` in this module lacks the ``COMPONENT`` member;
+    use :class:`nzcvm.components.Coordinate` when a component axis is
+    also needed.
+
+    Examples
+    --------
+    >>> Coordinate.X == "x"
+    True
+    """
     X = auto()
     Y = auto()
     Z = auto()
@@ -23,6 +45,38 @@ WGS84_CRS = 4326
 
 @dataclass
 class CoordinateSystem:
+    """A rotated, origin-shifted projection from a local grid to a target CRS.
+
+    The local grid has its origin at ``(origin_lon, origin_lat)`` and is
+    rotated by ``azimuth`` degrees clockwise from north. ``transform``
+    converts local (x, y, z) coordinates, where x and y are in metres
+    relative to the grid origin, into projected coordinates in
+    ``target_crs``.
+
+    Parameters
+    ----------
+    target_crs :
+        Destination CRS, accepted by :func:`pyproj.Transformer.from_crs`
+        (e.g. EPSG integer or CRS string such as ``"EPSG:2193"``).
+    origin_lon :
+        Longitude of the grid origin in ``origin_crs`` (default WGS84).
+    origin_lat :
+        Latitude of the grid origin in ``origin_crs``.
+    azimuth :
+        Clockwise rotation of the grid from geographic north, in degrees.
+    transpose :
+        If ``True``, swap x and y before applying the rotation.
+    origin_crs :
+        CRS of the origin lon/lat; defaults to WGS84 (EPSG:4326).
+    origin_x :
+        Additional x offset in the local grid before rotation.
+    origin_y :
+        Additional y offset in the local grid before rotation.
+
+    See Also
+    --------
+    nzcvm.geomodelgrid.ModelMetadata.coordinate_system : Builds a ``CoordinateSystem`` from model metadata.
+    """
     target_crs: Any
     origin_lon: float
     origin_lat: float
@@ -35,6 +89,21 @@ class CoordinateSystem:
     origin_y: float = NO_ORIGIN
 
     def transform(self, x, y, z):
+        """Map local grid coordinates to the target projected CRS.
+
+        Parameters
+        ----------
+        x, y :
+            Local grid coordinates in metres relative to the projected
+            origin, before rotation (or after if ``transpose`` is set).
+        z :
+            Vertical coordinate; passed through unchanged.
+
+        Returns
+        -------
+        tuple[array-like, array-like, array-like]
+            ``(x_out, y_out, z_out)`` in the target CRS.
+        """
         if self.transpose:
             x, y = y, x
 
@@ -61,19 +130,16 @@ class CoordinateSystem:
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
-        # 1. Initialize the tree with a root label
+        """Render coordinate-system parameters as a rich tree."""
         tree = Tree("Parameters")
 
-        # 2. Add branches for your transformation parameters
         tree.add(f"Origin (Lon/Lat): {self.origin_lon:,.4f}°, {self.origin_lat:,.4f}°")
         tree.add(f"Projected Origin: x: {self.origin_x}, y: {self.origin_y}")
         tree.add(f"Azimuth: {self.azimuth}°")
         tree.add(f"Transpose XY: {'Enabled' if self.transpose else 'Disabled'}")
 
-        # 3. Add branches for CRS information
         crs = tree.add("CRS Settings")
         crs.add(f"Target: {getattr(self.target_crs, 'name', self.target_crs)}")
         crs.add(f"Source: {getattr(self.origin_crs, 'name', self.origin_crs)}")
 
-        # 4. Yield the tree
         yield tree

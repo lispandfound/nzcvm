@@ -49,8 +49,8 @@ class CoordinateSystem:
 
     The local grid has its origin at ``(origin_lon, origin_lat)`` and is
     rotated by ``azimuth`` degrees clockwise from north. ``transform``
-    converts local (x, y, z) coordinates — where x and y are in metres
-    relative to the grid origin — into projected coordinates in
+    converts local (x, y, z) coordinates, where x and y are in metres
+    relative to the grid origin, into projected coordinates in
     ``target_crs``.
 
     Parameters

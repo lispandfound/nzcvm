@@ -25,6 +25,7 @@ dependencies = [
     "pyvista>=0.47.2",
     "rich>=14.3.3",
     "scikit-learn>=1.8.0",
+    "scipy>=1.17.1",
     "shapely>=2.1.2",
     "tqdm>=4.67.3",
     "typed-argument-parser>=1.12.0",

@@ -1,5 +1,3 @@
-from nzcvm.components import Component
-from nzcvm.coordinates import Coordinate
 from dataclasses import dataclass, fields
 from pathlib import Path
 
@@ -9,7 +7,7 @@ import xarray as xr
 
 from typing import Self, Any, get_type_hints
 from rich.tree import Tree
-from rich.console import Console, ConsoleOptions
+from rich.console import Console, ConsoleOptions, RenderResult
 import rich
 
 
@@ -181,19 +179,20 @@ class Model:
                 "or combined quality alpha ~ 1.0"
             )
 
+    def query_many_raw(self, x, y, z) -> np.ndarray:
+        return self._raw.query_many(
+            x.astype(np.float32, copy=False).ravel(),
+            y.astype(np.float32, copy=False).ravel(),
+            z.astype(np.float32, copy=False).ravel(),
+        ).reshape(x.shape + (6,))
+
     def query_many(self, x, y, z) -> xr.Dataset:
         x, y, z = np.broadcast_arrays(x, y, z)
 
         original_shape = x.shape
         ndim = x.ndim
         dims = tuple(f"d{i}" for i in range(ndim))
-
-        quality_array = self._raw.query_many(
-            x.astype(np.float32, copy=False).ravel(),
-            y.astype(np.float32, copy=False).ravel(),
-            z.astype(np.float32, copy=False).ravel(),
-        )
-
+        quality_array = self.query_many_raw(x, y, z)
         var_names = ["rho", "vp", "vs", "qp", "qs"]
         data_vars = {}
         for i, name in enumerate(var_names):
@@ -210,61 +209,18 @@ class Model:
 
         return dset
 
-    def _query_chunk_wrapper(self, x, y, z):
-        """
-        Internal helper to bridge Dask chunks to the Rust backend.
-        This function receives NumPy arrays (chunks) from Dask.
-        """
-        quality_array = self._raw.query_many(
-            x.ravel(),
-            y.ravel(),
-            z.ravel(),
-        )
-
-        return quality_array.reshape((*x.shape, 6))
-
-    def assign_qualities(self, model: xr.DataTree) -> xr.DataTree:
-        var_names = list(Component)
-        coords = [Coordinate.X.value, Coordinate.Y.value, Coordinate.Z.value]
-
-        def process_node(ds: xr.Dataset) -> xr.Dataset:
-            ds = ds.copy()
-            if not all(c in ds for c in coords):
-                return ds
-            qualities = xr.apply_ufunc(
-                self._query_chunk_wrapper,  # The function to apply to each chunk
-                ds[Coordinate.X],
-                ds[Coordinate.Y],
-                ds[Coordinate.Z],
-                input_core_dims=[[], [], []],  # Treat inputs as scalars per-element
-                output_core_dims=[["quality_dim"]],  # We are adding a new dimension
-                dask="parallelized",
-                output_dtypes=[np.float32],
-                dask_gufunc_kwargs={"output_sizes": {"quality_dim": len(var_names)}},
-            )
-
-            for i, name in enumerate(var_names):
-                ds[name] = qualities.isel(quality_dim=i)
-
-            return ds
-
-        model["block"] = model["block"].map_over_datasets(process_node)
-        return model
-
     def view(self) -> Tree:
         """Generates a rich.tree.Tree representation of the model structure."""
         data = self._raw.view()
 
         total_size_mb = round(data["size"] * MB)
-        tree = Tree(
-            f"[bold blue]Model Tree[/bold blue] (Total Size: {total_size_mb:,} MB)"
-        )
+        tree = Tree(f"Model Tree (Total Size: {total_size_mb:,} MB)")
 
         for m in data["models"]:
             m_id = m["id"]
             name = self.model_map.get(m_id, f"Model {m_id}")
 
-            branch = tree.add(f"[bold green]{name}[/bold green] (ID: {m_id})")
+            branch = tree.add(f"{name} (ID: {m_id})")
             size_mb = round(m["size"] * MB)
             branch.add(f"Priority: {m['priority']}")
 
@@ -284,7 +240,7 @@ class Model:
         return tree
 
     def __rich_console__(
-        self, console: Console, options: ConsoleOptions
+        self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
         """Allows direct usage of rich.print(model)"""
         yield self.view()

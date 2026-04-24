@@ -1,12 +1,12 @@
 import pyproj
-from collections.abc import Callable
 from typing import Any
-import scipy as sp
 import numpy as np
-import xarray as xr
-import dask.array as da
+
 from dataclasses import dataclass
 from enum import StrEnum, auto
+from rich.tree import Tree
+
+from rich.console import Console, ConsoleOptions, RenderResult
 
 
 class Coordinate(StrEnum):
@@ -35,7 +35,7 @@ class CoordinateSystem:
     origin_x: float = NO_ORIGIN
     origin_y: float = NO_ORIGIN
 
-    def __call__(self, x: xr.DataArray, y: xr.DataArray, z: xr.DataArray):
+    def transform(self, x, y, z):
         if self.transpose:
             x, y = y, x
 
@@ -59,17 +59,22 @@ class CoordinateSystem:
 
         return x_out, y_out, z_out
 
+    def __rich_console__(
+        self, _console: Console, _options: ConsoleOptions
+    ) -> RenderResult:
+        # 1. Initialize the tree with a root label
+        tree = Tree("Parameters")
 
-def initialise_coordinates(
-    transform: Callable,
-    velocity_model: xr.DataTree,
-) -> xr.DataTree:
-    blocks = velocity_model["block"]
-    for block_name in blocks:
-        block = blocks[block_name]
-        x, y, z = transform(block["x"], block["y"], block["z"])
-        block[Coordinate.X] = x
-        block[Coordinate.Y] = y
-        block[Coordinate.Z] = z
+        # 2. Add branches for your transformation parameters
+        tree.add(f"Origin (Lon/Lat): {self.origin_lon:,.4f}°, {self.origin_lat:,.4f}°")
+        tree.add(f"Projected Origin: x: {self.origin_x}, y: {self.origin_y}")
+        tree.add(f"Azimuth: {self.azimuth}°")
+        tree.add(f"Transpose XY: {'Enabled' if self.transpose else 'Disabled'}")
 
-    return velocity_model
+        # 3. Add branches for CRS information
+        crs = tree.add("CRS Settings")
+        crs.add(f"Target: {getattr(self.target_crs, 'name', self.target_crs)}")
+        crs.add(f"Source: {getattr(self.origin_crs, 'name', self.origin_crs)}")
+
+        # 4. Yield the tree
+        yield tree

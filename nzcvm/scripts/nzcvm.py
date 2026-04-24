@@ -1,4 +1,3 @@
-from nzcvm.coordinates import initialise_coordinates
 import os
 from pathlib import Path
 from contextlib import nullcontext
@@ -13,9 +12,11 @@ import rich.box
 from tqdm.dask import TqdmCallback
 from dask.diagnostics import Profiler, ResourceProfiler, visualize
 from tap import Tap, Positional
-from nzcvm import formats
+from nzcvm import formats, surface
+
 from nzcvm.model import Model
 from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
+from nzcvm.layers import CoordinateTransformLayer, ModelLayer, DepthTransformLayer
 
 
 console = Console()
@@ -50,6 +51,7 @@ class Options(Tap):
     progress: bool = True  # If set, show progress
     dt: float = 0.25  # Resource profiler sample rate (seconds)
     profile_output: Path = Path("dask_profile.html")
+    topography: Path
 
     def configure(self):
         self.add_argument(
@@ -118,11 +120,16 @@ def main():
     with console.status("Loading basin models"):
         model = Model.load_models(*models)
 
-    rich.print(model)
+    with console.status("Reading surface topography"):
+        topography = surface.read_surface_from_path(args.topography)
 
-    velocity_model = initialise_coordinates(coordinate_system, velocity_model)
+    model_pipeline = CoordinateTransformLayer(
+        coordinate_system, DepthTransformLayer(topography, ModelLayer(model))
+    )
+    rich.print(model_pipeline)
+    breakpoint()
 
-    velocity_model = model.assign_qualities(velocity_model)
+    velocity_model = model_pipeline(velocity_model)
 
     dask.config.set(scheduler="threads", num_workers=args.n_threads)
 

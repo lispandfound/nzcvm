@@ -35,8 +35,14 @@ jobs:
       - name: cargo test
         run: cargo test
 
+      - name: cargo doc-tests
+        run: cargo test --doc
+
       - name: pytest
         run: uv run --dev --config-setting 'build-args=--profile=dev' pytest tests/ -v
+
+      - name: pytest doctests
+        run: uv run --dev --config-setting 'build-args=--profile=dev' pytest --doctest-modules nzcvm/ -v
 
       - name: Clippy (Rust linter)
         run: cargo clippy -- -D warnings

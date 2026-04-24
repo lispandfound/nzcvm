@@ -40,9 +40,10 @@ class RSBase:
     """
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self | None:
-        """
-        Automagically maps attributes from a Rust-backed object to this dataclass.
-        Handles recursive deserialization for fields that inherit from RSBase.
+        """Map attributes from a Rust-backed PyO3 object to this dataclass.
+
+        Fields whose type is itself an ``RSBase`` subclass are converted
+        recursively.  Returns ``None`` when *rs_obj* is ``None``.
         """
         if rs_obj is None:
             return None
@@ -103,6 +104,7 @@ class Quality(RSBase):
     alpha: float
 
     def __str__(self):
+        """Return a compact string like ``(ρ=…, Vp=…, Vs=…, Qp=…, Qs=…, ɑ=…)``."""
         return (
             f"(ρ={self.rho:.2f}, Vp={self.vp:.2f}, Vs={self.vs:.2f},"
             f" Qp={self.qp:.2f}, Qs={self.qs:.2f}, ɑ={self.alpha:.2f})"
@@ -124,6 +126,7 @@ class Point(RSBase):
     z: float
 
     def __str__(self) -> str:
+        """Return ``(x, y, z)`` formatted to six significant figures."""
         return f"({self.x:.6g}, {self.y:.6g}, {self.z:.6g})"
 
 
@@ -169,6 +172,7 @@ class ModelContribution(RSBase):
     quality: Quality
 
     def __str__(self) -> str:
+        """Return ``priority=<n>, quality=<Quality>``."""
         return f"priority={self.priority}, quality={str(self.quality)}"
 
 
@@ -194,13 +198,13 @@ class Explanation(RSBase):
     -----
     If ``termination`` is ``None`` all contributions were used.
     """
-    output: Quality | None
     contributions: list[ModelContribution]
     output: Quality | None
     termination: int | None
 
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self:
+        """Deserialise from the Rust-backed explanation object."""
         return cls(
             contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],  # ty: ignore[invalid-argument-type]
             output=Quality._from_rs(rs_obj.output),
@@ -208,6 +212,7 @@ class Explanation(RSBase):
         )
 
     def __rich__(self) -> Tree:
+        """Return a :class:`rich.tree.Tree` showing per-model contributions."""
         if not self.output:
             return Tree("[red]No model coverage for query point.[/red]")
 
@@ -246,6 +251,15 @@ class Model:
     """
 
     def __init__(self, internal_py_model: PyModel, model_map: dict | None = None):
+        """
+        Parameters
+        ----------
+        internal_py_model :
+            Compiled Rust ``PyModel`` object.
+        model_map :
+            Optional mapping from integer model index to a human-readable name,
+            used when displaying the model tree.
+        """
         self._raw = internal_py_model
         self.model_map = model_map or {}
 
@@ -269,7 +283,7 @@ class Model:
         Load all mesh files in a directory (requires data files to exist):
 
         >>> from pathlib import Path
-        >>> # Model.load_models(Path("/path/to/models"))  # doctest: +SKIP
+        >>> Model.load_models(Path("/path/to/models"))  # doctest: +SKIP
         """
         if len(models) == 1 and Path(models[0]).is_dir():
             mesh_paths = list(Path(models[0]).glob("*.vtkhdf"))
@@ -503,7 +517,7 @@ class Model:
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
-        """Allows direct usage of rich.print(model)"""
+        """Render the model tree as a rich tree for ``rich.print``."""
         yield self.view()
 
 

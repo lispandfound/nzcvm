@@ -3,8 +3,8 @@ pub mod model;
 pub mod model_tree;
 pub mod quality;
 pub mod query;
-mod real;
-mod simplex;
+pub mod real;
+pub mod simplex;
 mod tree_query;
 use pyo3::prelude::*;
 
@@ -26,6 +26,10 @@ mod nzcvm {
 
     use std::sync::Arc;
 
+    /// Python-facing description of the model applied inside a single simplex.
+    ///
+    /// Reflects the Rust `Model` enum: either a constant quality or a
+    /// barycentric interpolation between the four simplex vertices.
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub enum PySimplexModel {
@@ -59,6 +63,7 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing 3-D point (x, y, z).
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyPoint {
@@ -77,6 +82,7 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing seismic quality at a single point (mirrors [`Quality`]).
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyQuality {
@@ -101,6 +107,7 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing single-model contribution to a blended query result.
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyModelContribution {
@@ -117,6 +124,7 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing diagnostic breakdown of a query (mirrors [`Explanation`]).
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyExplanation {
@@ -135,6 +143,7 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing query performance counters (mirrors [`QueryStats`]).
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyQueryStats {
@@ -157,6 +166,7 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing 3-D axis-aligned bounding box.
     #[pyclass(get_all, from_py_object)]
     #[derive(Clone, Debug)]
     pub struct PyAabb {
@@ -172,16 +182,29 @@ mod nzcvm {
         }
     }
 
+    /// Python-facing single tetrahedral mesh model (consumed by [`model_tree`]).
     #[pyclass]
     pub struct PyMeshModel {
         inner: Option<MeshModel>,
     }
 
+    /// Python-facing velocity model (a compiled [`ModelTree`]).
     #[pyclass]
     pub struct PyModel {
         pub inner: Arc<ModelTree>,
     }
 
+    /// Create a [`PyMeshModel`] from raw NumPy arrays.
+    ///
+    /// # Arguments
+    ///
+    /// * `vertices_py`   – `(N, 3)` float array of vertex coordinates.
+    /// * `faces_py`      – `(M, 4)` integer array of tetrahedral cell indices.
+    /// * `types_py`      – `(M,)` u8 array: `0` = constant, `1` = interpolate.
+    /// * `models_py`     – flat index array for the model lookup table.
+    /// * `qualities_py`  – `(Q, 6)` array of quality values indexed by `models_py`.
+    /// * `priority`      – model priority (lower number = higher priority).
+    /// * `transform_py`  – optional 4×4 world-to-local affine transform.
     #[pyfunction]
     pub fn mesh_model(
         vertices_py: PyReadonlyArray2<Real>,
@@ -251,6 +274,14 @@ mod nzcvm {
         })
     }
 
+    /// Combine one or more [`PyMeshModel`]s into a queryable [`PyModel`].
+    ///
+    /// Each `PyMeshModel` is consumed (its inner data is moved out) so it
+    /// cannot be reused after this call.
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValueError` if a `PyMeshModel` has already been consumed.
     #[pyfunction]
     pub fn model_tree(py: Python<'_>, mesh_models: Vec<Py<PyMeshModel>>) -> PyResult<PyModel> {
         let mut models = Vec::with_capacity(mesh_models.len());
@@ -270,30 +301,46 @@ mod nzcvm {
 
     #[pymethods]
     impl PyModel {
+        /// Query the velocity model at a single point.
+        ///
+        /// Returns `None` if the point lies outside all model regions.
         pub fn query(&self, x: Real, y: Real, z: Real) -> PyResult<Option<PyQuality>> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query(pt).map(|q| q.into()))
         }
 
+        /// Return the combined 3-D axis-aligned bounding box of all mesh models.
         pub fn aabb(&self) -> PyResult<PyAabb> {
             Ok(self.inner.aabb().into())
         }
 
+        /// Query with BVH traversal statistics (AABB tests, simplex tests, etc.).
         pub fn query_stats(&self, x: Real, y: Real, z: Real) -> PyResult<PyQueryStats> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query_stats(pt).into())
         }
 
+        /// Return a full diagnostic breakdown listing each model's contribution.
         pub fn explain(&self, x: Real, y: Real, z: Real) -> PyResult<PyExplanation> {
             let pt = Point3::new(x, y, z);
             Ok(self.inner.query_explain(pt).into())
         }
 
+        /// Return a serialisable Python dict describing the model tree structure.
         pub fn view<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
             let view = self.inner.view();
             pythonize(py, &view).map_err(|e| e.into())
         }
 
+        /// Query the model for many points at once, releasing the GIL.
+        ///
+        /// Returns an `(N, 6)` float32 array with columns
+        /// `[rho, vp, vs, qp, qs, alpha]`.
+        ///
+        /// # Panics
+        ///
+        /// Panics if any point lies outside all model regions.  Use
+        /// [`query`](Self::query) for individual points when coverage is uncertain.
         pub fn query_many<'py>(
             &self,
             py: Python<'py>,
@@ -329,6 +376,7 @@ mod nzcvm {
             results.into_pyarray(py)
         }
 
+        /// Print a human-readable summary of the model tree to stdout.
         pub fn print_structure(&self) {
             self.inner.pretty_print();
         }

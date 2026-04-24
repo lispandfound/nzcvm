@@ -76,6 +76,7 @@ class Surface:
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
+        """Render surface metadata as a rich tree."""
         tree = Tree("Surface Interpolation (PyVista)")
         tree.add("Kind: Linear/Sample")
         tree.add(

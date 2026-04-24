@@ -130,19 +130,16 @@ class CoordinateSystem:
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
-        # 1. Initialize the tree with a root label
+        """Render coordinate-system parameters as a rich tree."""
         tree = Tree("Parameters")
 
-        # 2. Add branches for your transformation parameters
         tree.add(f"Origin (Lon/Lat): {self.origin_lon:,.4f}°, {self.origin_lat:,.4f}°")
         tree.add(f"Projected Origin: x: {self.origin_x}, y: {self.origin_y}")
         tree.add(f"Azimuth: {self.azimuth}°")
         tree.add(f"Transpose XY: {'Enabled' if self.transpose else 'Disabled'}")
 
-        # 3. Add branches for CRS information
         crs = tree.add("CRS Settings")
         crs.add(f"Target: {getattr(self.target_crs, 'name', self.target_crs)}")
         crs.add(f"Source: {getattr(self.origin_crs, 'name', self.origin_crs)}")
 
-        # 4. Yield the tree
         yield tree

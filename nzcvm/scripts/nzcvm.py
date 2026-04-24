@@ -1,3 +1,4 @@
+"""Command-line interface for generating NZCVM velocity models."""
 import os
 from contextlib import nullcontext
 from pathlib import Path
@@ -22,6 +23,7 @@ console = Console()
 
 
 def num_cores() -> int:
+    """Return the number of CPU cores available to the current process."""
     process = psutil.Process()
 
     if hasattr(process, "cpu_affinity"):
@@ -36,6 +38,7 @@ NZCVM_DATA_ROOT = "NZCVM_DATA_ROOT"
 
 
 def determine_model_path() -> Path:
+    """Return the model data root from ``NZCVM_DATA_ROOT`` or the default cache path."""
     default_root = Path.home() / ".local" / "cache" / "nzcvm_data"
     env = os.getenv(NZCVM_DATA_ROOT)
 
@@ -43,6 +46,7 @@ def determine_model_path() -> Path:
 
 
 class Options(Tap):
+    """Command-line options for the NZCVM velocity-model generator."""
     config: Positional[Path]  # Config path to read model grid from.
     output: Positional[Path]  # Output path to write velocity model to.
     n_threads: int = num_cores()  # Number of threads to spawn to query the model.
@@ -58,6 +62,7 @@ class Options(Tap):
     config_format: GeoModelGridFormat
 
     def configure(self):
+        """Register additional argument-parser options."""
         self.add_argument(
             "--model-path",
             type=Path,
@@ -89,6 +94,7 @@ class Options(Tap):
 
 
 def main():
+    """Entry point for the ``nzcvm`` command-line tool."""
     args = Options().parse_args()
 
     console.print(

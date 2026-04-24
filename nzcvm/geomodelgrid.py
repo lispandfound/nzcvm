@@ -155,6 +155,7 @@ class Block(ConfigObject):
     >>> block.resolution_horiz
     100.0
     """
+    resolution_horiz: float
     resolution_vert: float
     z_top: float
     shape: dict[Coordinate, int]
@@ -163,6 +164,7 @@ class Block(ConfigObject):
     target_chunksize: float = 100.0
 
     def __post_init__(self):
+        """Auto-compute ``chunks`` from ``target_chunksize`` when not provided."""
         if not self.chunks:
             num_components = len(list(Component))
             bytes_per_element = 4 * num_components
@@ -193,8 +195,11 @@ class Surface(ConfigObject):
 
     Examples
     --------
-    >>> from nzcvm.geomodelgrid import Surface, empty_surface
+    >>> from nzcvm.geomodelgrid import Surface
     >>> s = Surface(shape=(3, 3), resolution_horiz=100.0, name="topo")
+    >>> s.resolution_horiz
+    100.0
+    """
     shape: tuple[int, int]
     resolution_horiz: float
     name: str
@@ -224,12 +229,34 @@ class GeoModelGrid(ConfigObject):
     GeoModelGrid.read_config : Load from a TOML, YAML, or JSON file.
     GeoModelGrid.to_datatree : Create the corresponding empty DataTree.
     """
+    metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
     surfaces: list[Surface] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
 
     def to_datatree(self) -> xr.DataTree:
-        name = self.metadata.title or "model"
+        """Build an empty :class:`xarray.DataTree` from this grid configuration.
 
+        The returned tree has nodes at ``/block/<name>`` and
+        ``/surface/<name>`` populated with coordinate arrays but no
+        material-property variables.  Pipeline layers fill those in.
+
+        Returns
+        -------
+        xarray.DataTree
+
+        Examples
+        --------
+        >>> from nzcvm.geomodelgrid import GeoModelGrid, ModelMetadata, Block
+        >>> from nzcvm.coordinates import Coordinate
+        >>> meta = ModelMetadata(target_crs=2193, origin_lon=172.0, origin_lat=-43.0, azimuth=0.0)
+        >>> block = Block(resolution_horiz=100.0, resolution_vert=50.0, z_top=0.0,
+        ...               shape={Coordinate.I: 2, Coordinate.J: 2, Coordinate.K: 2}, name="b0")
+        >>> grid = GeoModelGrid(metadata=meta, blocks=[block])
+        >>> dt = grid.to_datatree()
+        >>> dt["block/b0"].name
+        'b0'
+        """
+        name = self.metadata.title or "model"
         blocks = {b.name: empty_block(b) for b in self.blocks}
         surfaces = {s.name: empty_surface(s) for s in self.surfaces}
 
@@ -243,6 +270,20 @@ class GeoModelGrid(ConfigObject):
 
     @classmethod
     def read_config(cls, config_path: Path, format: GeoModelGridFormat) -> Self:
+        """Load a :class:`GeoModelGrid` from a TOML, YAML, or JSON file.
+
+        Parameters
+        ----------
+        config_path :
+            Path to the configuration file.
+        format :
+            Explicit file format, or ``GeoModelGridFormat.INFERRED`` to
+            detect from the file extension.
+
+        Returns
+        -------
+        GeoModelGrid
+        """
         decoder = (
             DECODER_MAP[format]
             if format != GeoModelGridFormat.INFERRED
@@ -252,6 +293,31 @@ class GeoModelGrid(ConfigObject):
 
 
 def empty_block(block: Block) -> xr.Dataset:
+    """Create an empty coordinate-only :class:`xarray.Dataset` for *block*.
+
+    Produces a 3-D grid with ``x``, ``y``, ``z`` data variables and
+    ``i``, ``j``, ``k`` dimension coordinates.  All material-property
+    variables (``rho``, ``vp``, …) are absent; pipeline layers add them.
+
+    Parameters
+    ----------
+    block :
+        Block specification defining shape, resolution, and chunk sizes.
+
+    Returns
+    -------
+    xarray.Dataset
+
+    Examples
+    --------
+    >>> from nzcvm.geomodelgrid import Block, empty_block
+    >>> from nzcvm.coordinates import Coordinate
+    >>> b = Block(resolution_horiz=100.0, resolution_vert=50.0, z_top=0.0,
+    ...           shape={Coordinate.I: 3, Coordinate.J: 3, Coordinate.K: 3}, name="b")
+    >>> ds = empty_block(b)
+    >>> [str(k) for k in ds.sizes.keys()]
+    ['i', 'j', 'k']
+    """
     # 1. Extract dimensions
     ni = block.shape[Coordinate.I]
     nj = block.shape[Coordinate.J]
@@ -294,6 +360,26 @@ def empty_block(block: Block) -> xr.Dataset:
 
 
 def empty_surface(surface: Surface) -> xr.Dataset:
+    """Create an empty coordinate-only :class:`xarray.Dataset` for *surface*.
+
+    Parameters
+    ----------
+    surface :
+        Surface specification with shape and horizontal resolution.
+
+    Returns
+    -------
+    xarray.Dataset
+
+    Examples
+    --------
+    >>> from nzcvm.geomodelgrid import Surface, empty_surface
+    >>> from nzcvm.coordinates import Coordinate
+    >>> s = Surface(shape=(4, 5), resolution_horiz=200.0, name="topo")
+    >>> ds = empty_surface(s)
+    >>> ds.sizes[Coordinate.I], ds.sizes[Coordinate.J]
+    (4, 5)
+    """
     (ni, nj) = surface.shape
     i = np.arange(ni) * surface.resolution_horiz
     j = np.arange(nj) * surface.resolution_horiz

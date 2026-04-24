@@ -31,6 +31,8 @@ def map_over_datasets_with_path(
     Returns
     -------
     xarray.DataTree
+        The datatree constructed from applying *func* at every node in the d
+        *data_tree*. 
     """
     results = {}
     kwargs = kwargs or dict()
@@ -64,6 +66,7 @@ def map_over_datasets_with_glob(
     Returns
     -------
     xarray.DataTree
+        A new datatree where *func* is applied at all nodes with a path matching *glob*.
     """
     expr = re.compile(glob.translate(pattern, recursive=True))
 
@@ -99,5 +102,6 @@ def block_map(
     Returns
     -------
     xarray.DataTree
+        A new datatree where *func* is applied at all nodes with a path matching *glob*.
     """
     return map_over_datasets_with_glob(velocity_model, "/block/*", func, kwargs)

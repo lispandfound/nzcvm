@@ -6,7 +6,6 @@ pub mod quality;
 pub mod query;
 mod real;
 mod simplex;
-mod size;
 mod tree_query;
 use pyo3::prelude::*;
 

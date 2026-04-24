@@ -194,3 +194,7 @@ Cargo.lock
 /.envrc
 *.h5
 /.env
+*.vtkhdf
+*.h5m
+*.vtk
+*.csv

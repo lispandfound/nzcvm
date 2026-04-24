@@ -1,23 +1,22 @@
-from nzcvm.coordinates import Coordinate, WGS84_CRS, NO_ORIGIN, CoordinateSystem
-from nzcvm.components import Component
 from dataclasses import dataclass, field
-from typing import Any, Self
-from pathlib import Path
 from enum import StrEnum, auto
+from pathlib import Path
+from typing import Any, Self
 
-import dataclasses
 import dask.array as da
-import xarray as xr
 import numpy as np
+import xarray as xr
+from mashumaro.codecs.json import JSONDecoder
+from mashumaro.codecs.toml import TOMLDecoder
+from mashumaro.codecs.yaml import YAMLDecoder
+from mashumaro.config import BaseConfig
 from mashumaro.mixins.dict import DataClassDictMixin
 from mashumaro.mixins.json import DataClassJSONMixin
-from mashumaro.mixins.yaml import DataClassYAMLMixin
 from mashumaro.mixins.toml import DataClassTOMLMixin
-from mashumaro.config import BaseConfig
+from mashumaro.mixins.yaml import DataClassYAMLMixin
 
-from mashumaro.codecs.json import JSONDecoder
-from mashumaro.codecs.yaml import YAMLDecoder
-from mashumaro.codecs.toml import TOMLDecoder
+from nzcvm.components import Component
+from nzcvm.coordinates import NO_ORIGIN, WGS84_CRS, Coordinate, CoordinateSystem
 
 
 class ConfigObject(
@@ -128,7 +127,7 @@ class GeoModelGridFormat(StrEnum):
 
 @dataclass
 class GeoModelGrid(ConfigObject):
-    metadata: ModelMetadata = field(default_factory=ModelMetadata)
+    metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
     surfaces: list[Surface] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
 

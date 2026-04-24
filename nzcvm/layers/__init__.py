@@ -1,7 +1,7 @@
 from .coordinates import CoordinateTransformLayer
+from .depth import DepthTransformLayer
 from .protocol import QueryLayer
 from .query import ModelLayer
-from .depth import DepthTransformLayer
 
 __all__ = [
     "QueryLayer",

@@ -1,26 +1,25 @@
 from dataclasses import dataclass, fields
 from pathlib import Path
-
+from typing import Any, Self, get_type_hints
 
 import numpy as np
-import xarray as xr
-
-from typing import Self, Any, get_type_hints
-from rich.tree import Tree
-from rich.console import Console, ConsoleOptions, RenderResult
+import pyvista as pv
 import rich
+import xarray as xr
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
 
+from nzcvm import nzcvm  # ty: ignore[unresolved-import]
+from nzcvm.mesh import read_vtkhdf
 
-from nzcvm import nzcvm, mesh
-
-from .nzcvm import PyModel
+from .nzcvm import PyModel  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 
 
 class RSBase:
     @classmethod
-    def _from_rs(cls, rs_obj: Any) -> Self:
+    def _from_rs(cls, rs_obj: Any) -> Self | None:
         """
         Automagically maps attributes from a Rust-backed object to this dataclass.
         Handles recursive deserialization for fields that inherit from RSBase.
@@ -102,7 +101,7 @@ class Explanation(RSBase):
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self:
         return cls(
-            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],
+            contributions=[ModelContribution._from_rs(c) for c in rs_obj.contributions],  # ty: ignore[invalid-argument-type]
             output=Quality._from_rs(rs_obj.output),
             termination=rs_obj.termination,
         )
@@ -127,9 +126,9 @@ class Explanation(RSBase):
 class Model:
     """A high-level wrapper for the Rust ModelTree."""
 
-    def __init__(self, internal_py_model: PyModel, model_map: dict):
+    def __init__(self, internal_py_model: PyModel, model_map: dict | None = None):
         self._raw = internal_py_model
-        self.model_map = model_map
+        self.model_map = model_map or {}
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
@@ -138,18 +137,18 @@ class Model:
         else:
             mesh_paths = [Path(p) for p in models]
 
-        mesh_models = [
-            _mesh_model_from_mesh(mesh.Mesh.read_vtkhdf(p)) for p in mesh_paths
-        ]
+        mesh_models = [_mesh_model_from_pyvista(read_vtkhdf(p)) for p in mesh_paths]
         model_map = {i: p.stem for i, p in enumerate(mesh_paths)}
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw, model_map)
 
     @classmethod
-    def from_mesh(cls, mesh_model: mesh.Mesh):
-        raw_mesh_model = _mesh_model_from_mesh(mesh_model)
+    def from_mesh(
+        cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None
+    ) -> Self:
+        raw_mesh_model = _mesh_model_from_pyvista(mesh_model)
         raw = nzcvm.model_tree([raw_mesh_model])
-        return cls(raw)
+        return cls(raw, model_map or {})
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
@@ -158,11 +157,11 @@ class Model:
         max = np.array([aabb.max.x, aabb.max.y, aabb.max.z])
         return min, max
 
-    def query(self, x, y, z) -> Quality:
+    def query(self, x, y, z) -> Quality | None:
         quality_rs = self._raw.query(x, y, z)
         return Quality._from_rs(quality_rs)
 
-    def query_stats(self, x, y, z) -> QueryStats:
+    def query_stats(self, x, y, z) -> QueryStats | None:
         quality_rs = self._raw.query_stats(x, y, z)
         return QueryStats._from_rs(quality_rs)
 
@@ -189,14 +188,13 @@ class Model:
     def query_many(self, x, y, z) -> xr.Dataset:
         x, y, z = np.broadcast_arrays(x, y, z)
 
-        original_shape = x.shape
         ndim = x.ndim
         dims = tuple(f"d{i}" for i in range(ndim))
         quality_array = self.query_many_raw(x, y, z)
         var_names = ["rho", "vp", "vs", "qp", "qs"]
         data_vars = {}
         for i, name in enumerate(var_names):
-            data_vars[name] = (dims, quality_array[:, i].reshape(original_shape))
+            data_vars[name] = (dims, quality_array[..., i])
 
         dset = xr.Dataset(
             data_vars=data_vars,
@@ -246,29 +244,44 @@ class Model:
         yield self.view()
 
 
-def _mesh_model_from_mesh(mesh_model: mesh.Mesh):
-    """Build a PyMeshModel from a Mesh object.
+def _mesh_model_from_pyvista(mesh_model: pv.UnstructuredGrid):
+    """Build a PyMeshModel from a pyvista UnstructuredGrid.
 
-    Priority is now a model-level scalar read from ``field_data["priority"]``.
+    Priority is a model-level scalar stored in ``field_data["priority"]``.
     """
-    types = mesh_model.cell_data["model_type"]
-    model_idx = mesh_model.cell_data["models"]
-    rho = mesh_model.field_data["rho"]
-    vp = mesh_model.field_data["vp"]
-    vs = mesh_model.field_data["vs"]
-    qp = mesh_model.field_data["qp"]
-    qs = mesh_model.field_data["qs"]
-    alpha = mesh_model.field_data["alpha"]
+    # Extract connectivity and wrap in asarray
+    connectivity = np.asarray(mesh_model.cells_dict[np.uint8(pv.CellType.TETRA)])
 
+    # Convert cell_data attributes
+    types = np.asarray(mesh_model.cell_data["model_type"])
+    model_idx = np.asarray(mesh_model.cell_data["models"]).ravel().astype(np.uint64)
+
+    # Convert field_data attributes
+    rho = np.asarray(mesh_model.field_data["rho"])
+    vp = np.asarray(mesh_model.field_data["vp"])
+    vs = np.asarray(mesh_model.field_data["vs"])
+    qp = np.asarray(mesh_model.field_data["qp"])
+    qs = np.asarray(mesh_model.field_data["qs"])
+    alpha = np.asarray(mesh_model.field_data["alpha"])
+
+    # Stack into qualities matrix
     qualities = np.c_[rho, vp, vs, qp, qs, alpha]
-    # field_data["priority"] is guaranteed to be a non-empty 1-element array by
-    # Mesh.read_vtkhdf (which either reads a scalar from FieldData or falls back
-    # to the first cell-level value from a legacy file).
-    priority = np.uint8(mesh_model.field_data["priority"][0])
+
+    # Handle priority scalar
+    if "priority" not in mesh_model.field_data:
+        priority = np.uint8(255)
+    else:
+        # field_data is often stored as a single-element array in PyVista
+        priority = np.uint8(np.asarray(mesh_model.field_data["priority"])[0])
+
+    # Handle transform if it exists
     transform = mesh_model.field_data.get("transform")
+    if transform is not None:
+        transform = np.asarray(transform)
+
     return nzcvm.mesh_model(
-        mesh_model.points.astype(np.float32),
-        mesh_model.connectivity.astype(np.uint64),
+        np.asarray(mesh_model.points).astype(np.float32),
+        connectivity.astype(np.uint64),
         types,
         model_idx,
         qualities.astype(np.float32),

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-from nzcvm.components import Component
-import numpy as np
 import dask.array as da
 import h5py
+import numpy as np
+
+from nzcvm.components import Component
 
 # Global attributes
 ATTENUATION_ATTR = "Attenuation"

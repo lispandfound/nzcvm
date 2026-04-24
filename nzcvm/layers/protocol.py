@@ -1,4 +1,5 @@
 from typing import Protocol
+
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 

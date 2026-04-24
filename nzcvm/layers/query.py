@@ -1,13 +1,13 @@
-from nzcvm.model import Model
-from nzcvm.layers import helpers
-from nzcvm.coordinates import Coordinate
-from nzcvm.components import Component
-from rich.tree import Tree
-import xarray as xr
 import numpy as np
-
+import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
 from xarray.core.treenode import NodePath
+
+from nzcvm.components import Component
+from nzcvm.coordinates import Coordinate
+from nzcvm.layers import helpers
+from nzcvm.model import Model
 
 
 class ModelLayer:
@@ -43,5 +43,5 @@ class ModelLayer:
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
         tree = Tree("[bold blue]Model Query[/bold blue]")
-        tree.add(self.model)
+        tree.add(self.model)  # ty: ignore[invalid-argument-type]
         yield tree

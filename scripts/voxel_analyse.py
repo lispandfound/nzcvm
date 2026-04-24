@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
 
 import argparse
-import numpy as np
-from numba import njit
-from pathlib import Path
 import time
+from pathlib import Path
+
+import numpy as np
+import pyvista as pv
+from numba import njit
+from rich import box
+from rich.columns import Columns
 
 # --- RICH IMPORTS ---
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 from rich.progress import (
+    BarColumn,
     Progress,
     SpinnerColumn,
-    TextColumn,
-    BarColumn,
     TaskProgressColumn,
+    TextColumn,
 )
-from rich.columns import Columns
-from rich import box
+from rich.table import Table
 
-# Mocking nzcvm.mesh for standalone execution if needed
-try:
-    from nzcvm.mesh import Mesh
-except ImportError:
-
-    class Mesh:
-        pass
-
+from nzcvm.mesh import read_vtkhdf
 
 console = Console()
 
@@ -202,8 +197,9 @@ def analyze_voxel_hashmap(mesh, resolution: float):
         task = progress.add_task("Building Voxel Map...", total=100)
 
         start = time.time()
+        connectivity = mesh.cells_dict[pv.CellType.TETRA]
         morton_keys, tet_indices, offset = build_voxel_pairs(
-            mesh.points, mesh.connectivity, resolution
+            mesh.points, connectivity, resolution
         )
         progress.update(task, completed=60, description="Sorting Morton Codes...")
 
@@ -219,7 +215,7 @@ def analyze_voxel_hashmap(mesh, resolution: float):
         progress.update(task, completed=100)
 
     # --- Statistics Rendering ---
-    n_tets = len(mesh.connectivity)
+    n_tets = len(connectivity)
     n_unique_voxels = len(unique_voxels)
     total_refs = len(morton_keys)
 
@@ -296,7 +292,7 @@ def main():
         console.print(f"[bold red]Error:[/bold red] File {args.mesh} not found.")
         return
 
-    mesh = Mesh.read_vtkhdf(args.mesh)
+    mesh = read_vtkhdf(args.mesh)
     analyze_voxel_hashmap(mesh, args.resolution)
 
 

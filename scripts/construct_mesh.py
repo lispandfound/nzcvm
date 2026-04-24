@@ -2,8 +2,6 @@
 
 
 import argparse
-import pandas as pd
-import numba
 import shutil
 import subprocess
 import tempfile
@@ -12,12 +10,16 @@ from pathlib import Path
 from typing import TextIO
 
 import h5py
+import numba
 import numpy as np
+import pandas as pd
 import pyproj
+import pyvista as pv
 import scipy as sp
 import shapely
 import shapely.ops
-from nzcvm import mesh
+
+from nzcvm.mesh import make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -80,18 +82,18 @@ def preprocess_polygon(poly: shapely.Polygon) -> shapely.Polygon:
 @dataclass
 class PolyData:
     vertices: np.ndarray[tuple[int, int], np.dtype[np.float64]]
-    segments: np.ndarray[tuple[int, int], np.dtype[np.uint64]]
+    segments: np.ndarray[tuple[int, int], np.dtype[np.int64]]
 
 
 @dataclass
 class Triangulation:
     vertices: np.ndarray[tuple[int, int], np.dtype[np.float64]]
-    triangles: np.ndarray[tuple[int, int], np.dtype[np.uint64]]
+    triangles: np.ndarray[tuple[int, int], np.dtype[np.int64]]
 
 
 def extract_poly_data(poly: shapely.Polygon) -> PolyData:
     vertices = np.array(poly.exterior.coords)[:-1]
-    idx = np.arange(len(vertices), dtype=np.uint64)
+    idx = np.arange(len(vertices), dtype=np.int64)
     segments = np.stack((idx, (idx + 1) % len(vertices)), axis=1) + 1
     return PolyData(vertices, segments)
 
@@ -116,10 +118,10 @@ def read_vertices(handle: TextIO | Path) -> np.ndarray:
         handle,
         skip_header=1,
         dtype=[
-            ("vertex", np.uint64),
+            ("vertex", np.int64),
             ("x", np.float64),
             ("y", np.float64),
-            ("boundary", np.uint64),
+            ("boundary", np.int64),
         ],
     )
 
@@ -129,10 +131,10 @@ def read_triangles(handle: TextIO | Path) -> np.ndarray:
         handle,
         skip_header=1,
         dtype=[
-            ("vertex", np.uint64),
-            ("i", np.uint64),
-            ("j", np.uint64),
-            ("k", np.uint64),
+            ("vertex", np.int64),
+            ("i", np.int64),
+            ("j", np.int64),
+            ("k", np.int64),
         ],
     )
 
@@ -143,10 +145,10 @@ def read_edges(handle: TextIO) -> np.ndarray:
         skip_header=2,
         skip_footer=1,
         dtype=[
-            ("vertex", np.uint64),
-            ("i", np.uint64),
-            ("j", np.uint64),
-            ("boundary", np.uint64),
+            ("vertex", np.int64),
+            ("i", np.int64),
+            ("j", np.int64),
+            ("boundary", np.int64),
         ],
     )
 
@@ -206,7 +208,9 @@ class Layer:
     alpha: float = 1.0
 
 
-def construct_volumetric_mesh(layers: list[Layer], priority: int) -> mesh.Mesh:
+def construct_volumetric_mesh(
+    layers: list[Layer], priority: int
+) -> pv.UnstructuredGrid:
 
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
@@ -223,7 +227,7 @@ def construct_volumetric_mesh(layers: list[Layer], priority: int) -> mesh.Mesh:
     )
     models = np.concatenate(
         [
-            np.full((len(layer.tetra),), i, dtype=np.uint64)
+            np.full((len(layer.tetra),), i, dtype=np.int64)
             for i, layer in enumerate(layers)
         ]
     )
@@ -232,10 +236,9 @@ def construct_volumetric_mesh(layers: list[Layer], priority: int) -> mesh.Mesh:
         vertex_offset += len(layer.vertices)
         tetra_offset += len(layer.tetra)
     priority_data = np.full((len(tetra),), np.uint8(priority))
-    return mesh.Mesh(
+    return make_mesh(
         points=mesh_vertices,
         connectivity=tetra,
-        cell_type=mesh.CellType.TETRA,
         cell_data=dict(model_type=model_type, models=models, priority=priority_data),
         field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
     )
@@ -253,7 +256,7 @@ def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
         triangle = shutil.which("triangle")
         opts = f"-qa{max_area:.5f}"  # Aim for a quality triangulation
         cmd = [triangle, opts, str(input_path)]
-        print(f"Calling triangle like so: ", " ".join(cmd))
+        print("Calling triangle like so: ", " ".join(cmd))
         subprocess.check_call(cmd)
         output_triangles = input_path.with_suffix(".1.ele")
         output_nodes = input_path.with_suffix(".1.node")
@@ -379,7 +382,7 @@ def cull_mesh(
                 has_vertex_neighbours[tet[j]] = True
     culled_tetra = tetra[has_non_zero_volume]
     vertex_map = np.zeros(len(vertices))
-    idx = np.uint64(0)
+    idx = np.int64(0)
 
     for i in range(len(vertices)):
         vertex_map[i] = idx
@@ -501,7 +504,7 @@ def main():
 
     print_mesh_stats(mesh)
 
-    mesh.write_vtkhdf(args.output)
+    mesh.save(str(args.output))
 
 
 if __name__ == "__main__":

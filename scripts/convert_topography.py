@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 
 import argparse
-from nzcvm import mesh
-import pyvista as pv
 from pathlib import Path
-import numpy as np
+
 import h5py
-import pyproj
 import numba
+import numpy as np
+import pyproj
+import pyvista as pv
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -61,8 +61,8 @@ def main():
     args = parser.parse_args()
     x, y, elevation = read_surface_file(args.topography)
 
-    mesh = construct_surface_mesh(x, y, elevation)
-    mesh.save(args.output)
+    surface_mesh = construct_surface_mesh(x, y, elevation)
+    surface_mesh.save(args.output)
 
 
 if __name__ == "__main__":

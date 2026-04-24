@@ -162,7 +162,7 @@ impl MeshModel {
             priority,
             id: 0,
             node_index: 0,
-            transform: transform,
+            transform,
         }
     }
 
@@ -222,7 +222,7 @@ impl MeshModel {
         ];
         MeshModelView {
             id: self.id,
-            bounds: bounds,
+            bounds,
             transform: self.transform,
             priority: self.priority,
             size: self.deep_size_of(),
@@ -401,5 +401,111 @@ mod tests {
         let q_in = mesh.query(p_in).expect("Should find interior");
 
         assert_relative_eq!(q_in.rho, 7.4, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_mesh_model_query_outside_returns_none() {
+        let v = unit_tetrahedron_universe();
+        let quality = mock_quality(1.0);
+        let faces = vec![Point4::new(0usize, 1, 2, 3)];
+        let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
+        let qualities = vec![quality; 4];
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None);
+        let q = mesh.query(Point3::new(5.0, 5.0, 5.0));
+        assert!(q.is_none());
+    }
+
+    #[test]
+    fn test_aabb_correct_for_simple_mesh() {
+        let ni = 3;
+        let nj = 3;
+        let nk = 3;
+        let vertices = generate_grid(ni, nj, nk);
+        let qualities: Vec<Quality> = vertices.iter().map(|_| mock_quality(1.0)).collect();
+        let chart = |i, j, k| i + j * ni + k * ni * nj;
+        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart);
+        let aabb = mesh.aabb3();
+        assert_relative_eq!(aabb.min.x, 0.0);
+        assert_relative_eq!(aabb.max.x, 2.0);
+        assert_relative_eq!(aabb.min.z, 0.0);
+        assert_relative_eq!(aabb.max.z, 2.0);
+    }
+
+    #[test]
+    fn test_mesh_model_interpolate_centroid() {
+        let v = unit_tetrahedron_universe();
+        let faces = vec![Point4::new(0usize, 1, 2, 3)];
+        let qualities: Vec<Quality> = (0..4).map(|i| mock_quality(i as Real)).collect();
+        let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None);
+        let q = mesh.query(Point3::new(0.25, 0.25, 0.25));
+        assert!(q.is_some());
+        // Centroid bary coords all equal 0.25; qualities are 0,1,2,3
+        // InterpolateModel uses: q0=qualities[w=3]=3, q1=qualities[x=0]=0, q2=qualities[y=1]=1, q3=qualities[z=2]=2
+        // result = 3*0.25 + 0*0.25 + 1*0.25 + 2*0.25 = 1.5
+        assert_relative_eq!(q.unwrap().rho, 1.5, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_constant_model_returns_fixed_quality() {
+        let v = unit_tetrahedron_universe();
+        let faces = vec![Point4::new(0usize, 1, 2, 3)];
+        let q_fixed = Quality { rho: 42.0, vp: 1.0, vs: 2.0, qp: 3.0, qs: 4.0, alpha: 1.0 };
+        let qualities = vec![q_fixed];
+        let models = vec![Model::from(ConstantModel { quality: 0usize })];
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None);
+        let result = mesh.query(Point3::new(0.2, 0.1, 0.1));
+        assert!(result.is_some());
+        let q_result = result.unwrap();
+        assert_relative_eq!(q_result.rho, 42.0, epsilon = 1e-4);
+        assert_relative_eq!(q_result.vp, 1.0, epsilon = 1e-4);
+    }
+
+    /// A world-to-local translation by (-5, 0, 0) places the unit tetrahedron at
+    /// world position [5, 6] × [0, 1] × [0, 1].  Queries must use world coords.
+    #[test]
+    fn test_transform_translates_queries() {
+        use nalgebra::{Affine3, Translation3};
+        let v = unit_tetrahedron_universe();
+        let faces = vec![Point4::new(0usize, 1, 2, 3)];
+        let models = vec![Model::from(ConstantModel { quality: 0usize })];
+        let qualities = vec![mock_quality(5.0)];
+
+        // World-to-local: subtract 5 from x-coordinate.
+        let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
+            Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
+        );
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff));
+
+        // (5.1, 0.1, 0.1) in world → (0.1, 0.1, 0.1) in local → inside
+        let q = mesh.query(Point3::new(5.1, 0.1, 0.1));
+        assert!(q.is_some());
+        assert_relative_eq!(q.unwrap().rho, 5.0, epsilon = 1e-4);
+
+        // (0.1, 0.1, 0.1) in world → (-4.9, 0.1, 0.1) in local → outside
+        let q_outside = mesh.query(Point3::new(0.1, 0.1, 0.1));
+        assert!(q_outside.is_none());
+    }
+
+    /// After the translation, the AABB must reflect the tetrahedron's world position.
+    #[test]
+    fn test_transform_aabb_in_world_space() {
+        use nalgebra::{Affine3, Translation3};
+        let v = unit_tetrahedron_universe();
+        let faces = vec![Point4::new(0usize, 1, 2, 3)];
+        let models = vec![Model::from(ConstantModel { quality: 0usize })];
+        let qualities = vec![mock_quality(1.0)];
+
+        let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
+            Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
+        );
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff));
+        let aabb = mesh.aabb3();
+
+        // Tetrahedron spans [5,6] × [0,1] × [0,1] in world space.
+        assert_relative_eq!(aabb.min.x, 5.0, epsilon = 1e-4);
+        assert_relative_eq!(aabb.max.x, 6.0, epsilon = 1e-4);
+        assert_relative_eq!(aabb.min.y, 0.0, epsilon = 1e-4);
+        assert_relative_eq!(aabb.min.z, 0.0, epsilon = 1e-4);
     }
 }

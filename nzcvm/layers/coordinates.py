@@ -1,11 +1,10 @@
-from nzcvm.coordinates import Coordinate, CoordinateSystem
-from nzcvm.layers.protocol import QueryLayer
-from nzcvm.layers import helpers
-from rich.tree import Tree
 import xarray as xr
-
-
 from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
+
+from nzcvm.coordinates import Coordinate, CoordinateSystem
+from nzcvm.layers import helpers
+from nzcvm.layers.protocol import QueryLayer
 
 NO_ORIGIN = 0
 
@@ -36,7 +35,7 @@ class CoordinateTransformLayer:
     ) -> RenderResult:
 
         tree = Tree("[bold blue]Change in Coordinates[/]")
-        tree.add(self.coordinate_system)
+        tree.add(self.coordinate_system)  # ty: ignore[invalid-argument-type]
         tree.add(self.next_layer)
 
         yield tree

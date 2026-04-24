@@ -1,19 +1,18 @@
-import pyproj
-from typing import Any
-import numpy as np
-
 from dataclasses import dataclass
 from enum import StrEnum, auto
-from rich.tree import Tree
+from typing import Any
 
+import numpy as np
+import pyproj
 from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
 
 
 class Coordinate(StrEnum):
     X = auto()
     Y = auto()
     Z = auto()
-    I = auto()
+    I = auto()  # noqa: E741
     J = auto()
     K = auto()
 

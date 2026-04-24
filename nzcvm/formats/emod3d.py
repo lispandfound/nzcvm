@@ -1,12 +1,12 @@
+import os
+from pathlib import Path
+
+import dask.array as da
+import numpy as np
 import xarray as xr
 
-import os
-from nzcvm.coordinates import Coordinate
 from nzcvm.components import Component
-
-import numpy as np
-import dask.array as da
-from pathlib import Path
+from nzcvm.coordinates import Coordinate
 
 RHOFILE = "rho3dfile.d"
 VPFILE = "vp3dfile.p"

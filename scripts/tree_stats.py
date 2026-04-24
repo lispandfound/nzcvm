@@ -1,20 +1,19 @@
 import argparse
-import numpy as np
 from pathlib import Path
-from rich.console import Console
-import pandas as pd
-import scipy as sp
-from rich.panel import Panel
-from rich.table import Table
-from rich.progress import Progress
-
 
 import geopandas as gpd
+import numpy as np
+import pandas as pd
+import scipy as sp
 import shapely
+from joblib import Memory
 from pyproj import Transformer
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import Progress
+from rich.table import Table
 
 from nzcvm.model import Model
-from joblib import Memory
 
 # Define a directory to store the cached data
 memory = Memory("/tmp/nz_cache", verbose=0)
@@ -93,7 +92,6 @@ def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
     mesh_model = Model.load_models(*model_paths)
 
     min_bounds, max_bounds = mesh_model.aabb
-    breakpoint()
     nz_land = get_nz_land_polygon()
 
     console.print("[yellow]Generating land-constrained points...[/yellow]")

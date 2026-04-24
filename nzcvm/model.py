@@ -1,3 +1,16 @@
+"""High-level Python wrappers around the compiled Rust velocity-model backend.
+
+The primary public interface is :class:`Model`, which loads one or more
+tetrahedral mesh files and exposes spatial quality queries.
+:class:`Quality` and the other dataclasses mirror their Rust counterparts
+and are returned from query methods.
+
+See Also
+--------
+nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
+nzcvm.mesh : Mesh I/O utilities used by :meth:`Model.load_models`.
+"""
+
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Self, get_type_hints
@@ -18,6 +31,13 @@ MB = 1 / (1024 * 1024)
 
 
 class RSBase:
+    """Mixin that deserialises a corresponding Rust-backed PyO3 object.
+
+    Subclasses that are also dataclasses gain :meth:`_from_rs`, which
+    maps attributes from a PyO3 object into the Python dataclass by
+    matching field names. Fields whose type is itself an ``RSBase``
+    subclass are converted recursively.
+    """
     @classmethod
     def _from_rs(cls, rs_obj: Any) -> Self | None:
         """
@@ -50,6 +70,31 @@ class RSBase:
 
 @dataclass
 class Quality(RSBase):
+    """Seismic material properties at a single point in the velocity model.
+
+    Parameters
+    ----------
+    rho :
+        Density in kg m⁻³.
+    vp :
+        P-wave velocity in m s⁻¹.
+    vs :
+        S-wave velocity in m s⁻¹.
+    qp :
+        P-wave quality factor (attenuation).
+    qs :
+        S-wave quality factor (attenuation).
+    alpha :
+        Opacity weight in [0, 1] used for alpha blending when multiple
+        models overlap.  A value of 1.0 means the model is fully opaque
+        and no lower-priority models contribute.
+
+    Examples
+    --------
+    >>> q = Quality(rho=2700.0, vp=6000.0, vs=3500.0, qp=200.0, qs=100.0, alpha=1.0)
+    >>> str(q)
+    '(ρ=2700.00, Vp=6000.00, Vs=3500.00, Qp=200.00, Qs=100.00, ɑ=1.00)'
+    """
     rho: float
     vp: float
     vs: float
@@ -66,6 +111,14 @@ class Quality(RSBase):
 
 @dataclass
 class Point(RSBase):
+    """A 3-D point returned by some query methods.
+
+    Examples
+    --------
+    >>> p = Point(x=1.5, y=2.5, z=-100.0)
+    >>> str(p)
+    '(1.5, 2.5, -100)'
+    """
     x: float
     y: float
     z: float
@@ -76,6 +129,24 @@ class Point(RSBase):
 
 @dataclass
 class QueryStats(RSBase):
+    """Diagnostic counters for a single model query.
+
+    Useful for profiling BVH traversal efficiency. Returned by
+    :meth:`Model.query_stats`.
+
+    Parameters
+    ----------
+    aabb_tests :
+        Number of axis-aligned bounding-box intersection tests performed.
+    simplex_tests :
+        Number of simplex (tetrahedron) containment tests performed.
+    hit_count :
+        Number of simplices that contained the query point.
+    output :
+        Final blended quality, or ``None`` if the point is outside the model.
+    elapsed :
+        Wall-clock time for the query in nanoseconds.
+    """
     aabb_tests: int
     simplex_tests: int
     hit_count: int
@@ -85,6 +156,15 @@ class QueryStats(RSBase):
 
 @dataclass
 class ModelContribution(RSBase):
+    """A single model's contribution to a blended quality result.
+
+    Parameters
+    ----------
+    priority :
+        Integer priority of this model (lower number = higher priority).
+    quality :
+        Raw (un-blended) quality returned by this model for the query point.
+    """
     priority: int
     quality: Quality
 
@@ -94,6 +174,27 @@ class ModelContribution(RSBase):
 
 @dataclass
 class Explanation(RSBase):
+    """Full audit trail for how a query result was produced.
+
+    Returned by :meth:`Model.get_explanation`. Each element in
+    ``contributions`` shows the raw quality from one model; ``output`` is
+    the final blended result.
+
+    Parameters
+    ----------
+    contributions :
+        Per-model contributions in priority order.
+    output :
+        Final blended quality, or ``None`` if no model covered the point.
+    termination :
+        Index into ``contributions`` at which alpha saturation was reached.
+        All contributions at or after this index were ignored.
+
+    Notes
+    -----
+    If ``termination`` is ``None`` all contributions were used.
+    """
+    output: Quality | None
     contributions: list[ModelContribution]
     output: Quality | None
     termination: int | None
@@ -124,7 +225,25 @@ class Explanation(RSBase):
 
 
 class Model:
-    """A high-level wrapper for the Rust ModelTree."""
+    """A velocity model backed by a Rust BVH tree of tetrahedral meshes.
+
+    Wraps one or more VTKHDF mesh files into a priority-ordered spatial
+    index. Queries return blended :class:`Quality` values at arbitrary
+    3-D coordinates.
+
+    Notes
+    -----
+    Lower priority numbers take precedence. When multiple models cover the
+    same point their qualities are alpha-composited until the cumulative
+    alpha reaches 1.0.
+
+    See Also
+    --------
+    Model.load_models : Load from VTKHDF files or a directory.
+    Model.from_mesh : Build from an in-memory PyVista mesh.
+    Model.query : Single-point quality query.
+    Model.query_many : Vectorised multi-point query returning an xarray Dataset.
+    """
 
     def __init__(self, internal_py_model: PyModel, model_map: dict | None = None):
         self._raw = internal_py_model
@@ -132,6 +251,26 @@ class Model:
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
+        """Load a velocity model from one or more VTKHDF files or a directory.
+
+        Parameters
+        ----------
+        *models :
+            Paths to individual ``.vtkhdf`` files, or a single directory
+            path.  When a directory is given every ``*.vtkhdf`` file it
+            contains is loaded.
+
+        Returns
+        -------
+        Model
+
+        Examples
+        --------
+        Load all mesh files in a directory (requires data files to exist):
+
+        >>> from pathlib import Path
+        >>> # Model.load_models(Path("/path/to/models"))  # doctest: +SKIP
+        """
         if len(models) == 1 and Path(models[0]).is_dir():
             mesh_paths = list(Path(models[0]).glob("*.vtkhdf"))
         else:
@@ -146,30 +285,120 @@ class Model:
     def from_mesh(
         cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None
     ) -> Self:
+        """Build a :class:`Model` from a single in-memory PyVista mesh.
+
+        Parameters
+        ----------
+        mesh_model :
+            An ``UnstructuredGrid`` with the NZCVM cell and field data
+            layout (see :func:`nzcvm.mesh.make_mesh`).
+        model_map :
+            Optional mapping from integer model ID to a display name.
+
+        Returns
+        -------
+        Model
+
+        See Also
+        --------
+        Model.load_models : Load from VTKHDF files on disk.
+        nzcvm.mesh.make_mesh : Create a compatible ``UnstructuredGrid``.
+        """
         raw_mesh_model = _mesh_model_from_pyvista(mesh_model)
         raw = nzcvm.model_tree([raw_mesh_model])
         return cls(raw, model_map or {})
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
+        """Axis-aligned bounding box of all meshes in the model.
+
+        Returns
+        -------
+        tuple[numpy.ndarray, numpy.ndarray]
+            A pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays
+            in the model's coordinate system.
+        """
         aabb = self._raw.aabb()
         min = np.array([aabb.min.x, aabb.min.y, aabb.min.z])
         max = np.array([aabb.max.x, aabb.max.y, aabb.max.z])
         return min, max
 
     def query(self, x, y, z) -> Quality | None:
+        """Query material properties at a single point.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        Returns
+        -------
+        Quality or None
+            Blended quality, or ``None`` if the point lies outside all
+            mesh models.
+
+        See Also
+        --------
+        Model.query_many : Vectorised query for arrays of coordinates.
+        Model.query_stats : Query with BVH traversal diagnostics.
+        Model.get_explanation : Query with per-model contribution details.
+        """
         quality_rs = self._raw.query(x, y, z)
         return Quality._from_rs(quality_rs)
 
     def query_stats(self, x, y, z) -> QueryStats | None:
+        """Query a single point and return traversal diagnostics.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        Returns
+        -------
+        QueryStats
+
+        See Also
+        --------
+        Model.query : Query without diagnostics.
+        """
         quality_rs = self._raw.query_stats(x, y, z)
         return QueryStats._from_rs(quality_rs)
 
     def get_explanation(self, x, y, z) -> Explanation:
+        """Return a full :class:`Explanation` for a single-point query.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        Returns
+        -------
+        Explanation
+
+        See Also
+        --------
+        Model.explain : Pretty-print the explanation to the terminal.
+        """
         explanation_rs = self._raw.explain(x, y, z)
         return Explanation._from_rs(explanation_rs)
 
     def explain(self, x: float, y: float, z: float) -> None:
+        """Pretty-print the blending explanation for a query point.
+
+        Prints a rich-formatted tree to stdout showing each model's
+        contribution and whether it was included in the final blend.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        See Also
+        --------
+        Model.get_explanation : Return the explanation as a Python object.
+        """
         explanation = self.get_explanation(x, y, z)
         rich.print(explanation)
         if len(explanation.contributions) > 1:
@@ -179,6 +408,23 @@ class Model:
             )
 
     def query_many_raw(self, x, y, z) -> np.ndarray:
+        """Vectorised query returning a raw float32 array.
+
+        Parameters
+        ----------
+        x, y, z :
+            Arrays of coordinates; must be broadcastable to the same shape.
+
+        Returns
+        -------
+        numpy.ndarray
+            Float32 array of shape ``(*x.shape, 6)`` with columns ordered
+            as ``[rho, vp, vs, qp, qs, alpha]``.
+
+        See Also
+        --------
+        Model.query_many : Same query returning a labelled xarray Dataset.
+        """
         return self._raw.query_many(
             x.astype(np.float32, copy=False).ravel(),
             y.astype(np.float32, copy=False).ravel(),
@@ -186,6 +432,23 @@ class Model:
         ).reshape(x.shape + (6,))
 
     def query_many(self, x, y, z) -> xr.Dataset:
+        """Vectorised query returning a labelled :class:`xarray.Dataset`.
+
+        Parameters
+        ----------
+        x, y, z :
+            Arrays of coordinates; broadcastable to a common shape.
+
+        Returns
+        -------
+        xarray.Dataset
+            Dataset with variables ``rho``, ``vp``, ``vs``, ``qp``, ``qs``
+            and coordinates ``x``, ``y``, ``z``.
+
+        See Also
+        --------
+        Model.query_many_raw : Same query as an unlabelled float32 array.
+        """
         x, y, z = np.broadcast_arrays(x, y, z)
 
         ndim = x.ndim

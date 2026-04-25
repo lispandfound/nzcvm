@@ -35,6 +35,11 @@ dependencies = [
 
 [project.scripts]
 nzcvm = "nzcvm.scripts.nzcvm:main"
+nzcvm-construct-mesh = "nzcvm.scripts.construct_mesh:main"
+nzcvm-convert-tomography = "nzcvm.scripts.convert_tomography:main"
+nzcvm-convert-topography = "nzcvm.scripts.convert_topography:main"
+nzcvm-tree-stats = "nzcvm.scripts.tree_stats:main"
+nzcvm-view-basin = "nzcvm.scripts.view_basin:main"
 
 [tool.uv]
 cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]

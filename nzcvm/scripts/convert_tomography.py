@@ -27,18 +27,37 @@ def _project_origin(lon: float, lat: float, from_crs: CRS, to_crs: CRS) -> tuple
     return tr.transform(lon, lat)
 
 
-def _ep_affine(origin_crs: CRS) -> Affine:
-    """Build the EP2010/EP2020 forward affine (local km → NZTM m)."""
+def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
+    """Build the EP2010/EP2020 forward affine and its explicit inverse (local km → NZTM m).
+
+    The inverse is constructed analytically from the component inverses to avoid
+    numerical errors from matrix inversion::
+
+        forward = translate(ox, oy) @ scale(1000, 1000, 1000) @ reflect_x() @ rotate(140°)
+        inverse = rotate(140°) @ reflect_x() @ scale(1/1000, 1/1000, 1/1000) @ translate(-ox, -oy)
+
+    Notes
+    -----
+    ``rotate(angle, ccw=False)`` is its own inverse (the matrix is symmetric and
+    involutory). ``reflect_x()`` is also self-inverse.
+    """
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
-    return translate(ox, oy) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x() @ rotate(140.0, ccw=False)
+    fwd = translate(ox, oy) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x() @ rotate(140.0, ccw=False)
+    inv = rotate(140.0, ccw=False) @ reflect_x() @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0) @ translate(-ox, -oy)
+    return fwd, inv
 
 
-EP2010_AFFINE: Affine = _ep_affine(CRS_NZGD49)
-EP2020_AFFINE: Affine = _ep_affine(CRS_NZGD2000)
+_EP2010_FWD, _EP2010_INV = _ep_affine(CRS_NZGD49)
+_EP2020_FWD, _EP2020_INV = _ep_affine(CRS_NZGD2000)
+EP2010_AFFINE: Affine = _EP2010_FWD
+EP2020_AFFINE: Affine = _EP2020_FWD
 
 _db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
 DB2025_AFFINE: Affine = (
     translate(_db2025_ox, _db2025_oy) @ scale(1000.0, 1000.0, 1000.0) @ rotate(35.0, ccw=False)
+)
+DB2025_INV_AFFINE: Affine = (
+    rotate(35.0, ccw=False) @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0) @ translate(-_db2025_ox, -_db2025_oy)
 )
 DB2025_CRS_TRANSFORMER = Transformer.from_crs(CRS_UTM60S, CRS_NZTM, always_xy=True)
 
@@ -54,6 +73,9 @@ class TomographyModel:
     vp: str
     vs: str
     affine: Affine
+    #: Explicit analytical inverse of ``affine``; avoids numerical errors from
+    #: ``np.linalg.inv``.  Used to populate the ``transform`` field of the mesh.
+    affine_inverse: Affine
     # Some models don't contain a qp/qs column, so we prefill where that makes sense.
     qp: str = "qp"
     qs: str = "qs"
@@ -163,7 +185,7 @@ def data_frame_to_mesh(
 
     points = points[morton_sorter]
     connectivity = inverse_map[naive_idx]
-    transform = np.linalg.inv(tomography_model.affine).T.astype(np.float32)
+    transform = tomography_model.affine_inverse.T.astype(np.float32)
 
     field_data = {
         "rho": rho[morton_sorter].values.astype(np.float32),
@@ -207,6 +229,7 @@ MODEL_COLUMNS = {
         vp="Vp",
         vs="Vs",
         affine=EP2020_AFFINE,
+        affine_inverse=_EP2020_INV,
     )
 }
 

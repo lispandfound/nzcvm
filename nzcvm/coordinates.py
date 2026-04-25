@@ -27,14 +27,13 @@ nzcvm.geomodelgrid.ModelMetadata : Stores coordinate-system parameters alongside
 from enum import StrEnum, auto
 
 import numpy as np
-import numpy.typing as npt
 import xarray as xr
 from pyproj import Transformer
 
 #: 4×4 homogeneous affine matrix operating on (x, y, z, 1) column vectors.
 #: Compose transforms left-to-right with ``@``; the leftmost matrix is
 #: applied last (i.e. ``A @ B`` applies *B* first, then *A*).
-Affine = npt.NDArray[np.float64]
+Affine = np.ndarray[tuple[int, int], np.dtype[np.float32]]
 
 
 class Coordinate(StrEnum):
@@ -75,7 +74,7 @@ def identity() -> Affine:
     Affine
         4×4 identity matrix.
     """
-    return np.eye(4, dtype=np.float64)
+    return np.eye(4, dtype=np.float32)
 
 
 def translate(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> Affine:
@@ -97,7 +96,7 @@ def translate(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> Affine:
     >>> (T @ np.array([0.0, 0.0, 0.0, 1.0]))[:3]
     array([100., 200.,   0.])
     """
-    m = np.eye(4, dtype=np.float64)
+    m = np.eye(4, dtype=np.float32)
     m[0, 3] = x
     m[1, 3] = y
     m[2, 3] = z
@@ -144,7 +143,7 @@ def rotate(
              [st,  ct, 0.0, 0.0],
              [0.0, 0.0, 1.0, 0.0],
              [0.0, 0.0, 0.0, 1.0]],
-            dtype=np.float64,
+            dtype=np.float32,
         )
     else:
         # CW azimuth from north:
@@ -155,7 +154,7 @@ def rotate(
              [ct, -st, 0.0, 0.0],
              [0.0, 0.0, 1.0, 0.0],
              [0.0, 0.0, 0.0, 1.0]],
-            dtype=np.float64,
+            dtype=np.float32,
         )
     ox, oy = origin
     if ox == 0.0 and oy == 0.0:
@@ -182,7 +181,7 @@ def scale(sx: float = 1.0, sy: float = 1.0, sz: float = 1.0) -> Affine:
     >>> (S @ np.array([1.0, 1.0, 1.0, 1.0]))[:3]
     array([2., 3., 1.])
     """
-    m = np.eye(4, dtype=np.float64)
+    m = np.eye(4, dtype=np.float32)
     m[0, 0] = sx
     m[1, 1] = sy
     m[2, 2] = sz
@@ -223,7 +222,7 @@ def transpose_xy() -> Affine:
     >>> (T @ np.array([1.0, 2.0, 3.0, 1.0]))[:3]
     array([2., 1., 3.])
     """
-    m = np.eye(4, dtype=np.float64)
+    m = np.eye(4, dtype=np.float32)
     m[0, 0] = 0.0
     m[1, 1] = 0.0
     m[0, 1] = 1.0
@@ -275,10 +274,10 @@ def crs_transform(x, y, *, transformer: Transformer):
             return np.asarray(yo)
 
         x_out = xr.apply_ufunc(
-            _extract_x, x, y, dask="parallelized", output_dtypes=[float]
+            _extract_x, x, y, dask="parallelized", output_dtypes=[np.float32]
         )
         y_out = xr.apply_ufunc(
-            _extract_y, x, y, dask="parallelized", output_dtypes=[float]
+            _extract_y, x, y, dask="parallelized", output_dtypes=[np.float32]
         )
         return x_out, y_out
     return transformer.transform(np.asarray(x), np.asarray(y))

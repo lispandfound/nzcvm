@@ -1,5 +1,6 @@
 """Pipeline layer for applying a 4x4 affine transform to model coordinates."""
 
+import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
@@ -12,10 +13,10 @@ from nzcvm.layers.protocol import QueryLayer
 class AffineTransformLayer:
     """Pipeline layer that applies a 4x4 affine transform to (x, y, z) coordinates.
 
-    The transform is applied element-wise to the ``x``, ``y``, and ``z``
-    variables of every ``/block/*`` node, then passes the result to
-    *next_layer*.  Because the operation is element-wise it is fully
-    compatible with dask-backed :class:`xarray.DataArray` inputs.
+    The transform is applied to the ``x``, ``y``, and ``z`` variables of every
+    ``/block/*`` node via :func:`xarray.apply_ufunc`, which allows NumPy to use
+    BLAS-accelerated matrix multiplication and keeps the computation dask-lazy.
+    The result is then passed to *next_layer*.
 
     Parameters
     ----------
@@ -63,16 +64,39 @@ class AffineTransformLayer:
         -------
         xarray.DataTree
         """
-        a = self.affine
+        a = self.affine.astype(np.float32)
+
+        def _transform(
+            x_arr: np.ndarray, y_arr: np.ndarray, z_arr: np.ndarray
+        ) -> np.ndarray:
+            """Stack coords, apply affine via BLAS matmul, return (..., 3)."""
+            shape = x_arr.shape
+            n = x_arr.size
+            pts = np.column_stack([
+                x_arr.ravel(),
+                y_arr.ravel(),
+                z_arr.ravel(),
+                np.ones(n, dtype=np.float32),
+            ])  # (N, 4)
+            out = (pts @ a.T)[:, :3]  # (N, 3)
+            return out.reshape(shape + (3,)).astype(np.float32)
 
         def _apply_affine(_path, block: xr.Dataset) -> xr.Dataset:
             block = block.copy()
-            x = block[Coordinate.X]
-            y = block[Coordinate.Y]
-            z = block[Coordinate.Z]
-            block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2] * z + a[0, 3]
-            block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2] * z + a[1, 3]
-            block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
+            xyz = xr.apply_ufunc(
+                _transform,
+                block[Coordinate.X],
+                block[Coordinate.Y],
+                block[Coordinate.Z],
+                input_core_dims=[[], [], []],
+                output_core_dims=[["coord"]],
+                dask="parallelized",
+                output_dtypes=[np.float32],
+                dask_gufunc_kwargs={"output_sizes": {"coord": 3}},
+            )
+            block[Coordinate.X] = xyz.isel(coord=0)
+            block[Coordinate.Y] = xyz.isel(coord=1)
+            block[Coordinate.Z] = xyz.isel(coord=2)
             return block
 
         return self.next_layer(helpers.block_map(velocity_model, _apply_affine))

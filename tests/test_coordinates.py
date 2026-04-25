@@ -135,9 +135,9 @@ class TestComposition:
         assert result[:2] == pytest.approx([2.0, 0.0])
 
     def test_inverse_roundtrip(self):
-        """An affine composed with its inverse should recover the identity."""
+        """An affine composed with its inverse should recover the identity (float32 precision)."""
         A = translate(100.0, 200.0) @ scale(1000.0) @ reflect_x() @ rotate(140.0, ccw=False)
-        np.testing.assert_allclose(np.linalg.inv(A) @ A, np.eye(4), atol=1e-8)
+        np.testing.assert_allclose(np.linalg.inv(A) @ A, np.eye(4), atol=1e-3)
 
 
 class TestCrsTransform:

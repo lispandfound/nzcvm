@@ -1,13 +1,14 @@
 use crate::real::Real;
 use deepsize::DeepSizeOf;
 use ndarray::{Array1, ArrayView1};
+use serde::Serialize;
 use std::ops::{Add, Mul};
 
 /// Seismic material properties at a single point.
 ///
 /// `alpha` is the opacity weight used when blending overlapping models;
 /// it follows the Porter-Duff "over" compositing rule in [`Quality::blend`].
-#[derive(Clone, Debug, Copy, PartialEq, DeepSizeOf, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Copy, PartialEq, DeepSizeOf, Serialize)]
 pub struct Quality {
     pub rho: Real,
     pub vp: Real,

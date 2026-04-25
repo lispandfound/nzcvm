@@ -270,6 +270,6 @@ class TestAffineTransformLayerDimensions:
         result_transposed = layer_transposed(tree)
         result_normal_swapped = layer_normal(tree_swapped)
 
-        xt = result_transposed["/block/test"].dataset[Coordinate.X].values
-        xn = result_normal_swapped["/block/test"].dataset[Coordinate.X].values
-        np.testing.assert_allclose(xt, xn, rtol=1e-6)
+        xt = result_transposed["/block/test"].dataset[Coordinate.X]
+        xn = result_normal_swapped["/block/test"].dataset[Coordinate.X]
+        xr.testing.assert_allclose(xt, xn, rtol=1e-6)

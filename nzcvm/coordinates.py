@@ -74,20 +74,24 @@ def crs_transform(x, y, *, transformer: Transformer):
     >>> x_out, y_out = crs_transform(np.array([172.0]), np.array([-41.0]), transformer=tr)
     """
     if isinstance(x, xr.DataArray) or isinstance(y, xr.DataArray):
-        x_out = xr.apply_ufunc(
-            lambda xi, yi: transformer.transform(xi, yi)[0],
+        # Single apply_ufunc call returns both components stacked on a new
+        # leading 'component' dimension; split afterwards so transform() is
+        # called exactly once per dask block.
+        def _transform_stacked(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
+            xo, yo = transformer.transform(xi, yi)
+            return np.stack([np.asarray(xo), np.asarray(yo)])
+
+        result = xr.apply_ufunc(
+            _transform_stacked,
             x,
             y,
+            output_core_dims=[["component"]],
             dask="parallelized",
             output_dtypes=[float],
+            dask_gufunc_kwargs={"output_sizes": {"component": 2}, "allow_rechunk": True},
         )
-        y_out = xr.apply_ufunc(
-            lambda xi, yi: transformer.transform(xi, yi)[1],
-            x,
-            y,
-            dask="parallelized",
-            output_dtypes=[float],
-        )
+        x_out = result.isel(component=0).drop_vars("component")
+        y_out = result.isel(component=1).drop_vars("component")
         return x_out, y_out
     return transformer.transform(np.asarray(x), np.asarray(y))
 

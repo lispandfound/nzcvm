@@ -368,21 +368,21 @@ def mask_surface(
 
 @app.command()
 def main(
-    bounds: Annotated[Path, typer.Argument(help="GeoJSON file defining the basin boundary.")],
-    topography: Annotated[Path, typer.Argument(help="Topography surface file (HDF5).")],
-    top_surface: Annotated[Path, typer.Argument(help="Top surface file (HDF5).")],
-    bottom_surface: Annotated[Path, typer.Argument(help="Bottom surface file (HDF5).")],
+    bounds: Annotated[Path, typer.Argument(help="GeoJSON file defining the basin boundary.", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    topography: Annotated[Path, typer.Argument(help="Topography surface file (HDF5).", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    top_surface: Annotated[Path, typer.Argument(help="Top surface file (HDF5).", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    bottom_surface: Annotated[Path, typer.Argument(help="Bottom surface file (HDF5).", exists=True, file_okay=True, dir_okay=False, readable=True)],
     output: Annotated[Path, typer.Argument(help="Output VTKHDF file path.")],
-    simplification: Annotated[float, typer.Option("-s", "--simplification", help="Polygon simplification parameter (higher = simpler).")] = 10.0,
-    culling_volume: Annotated[float, typer.Option("-v", "--culling-volume", help="Tetrahedron volume cull threshold (lower = finer).")] = 1e-3,
-    triangulation_radius: Annotated[float, typer.Option("-r", "--triangulation-radius", help="Max triangulation radius in metres.")] = 1000.0,
-    neighbours: Annotated[int, typer.Option("-n", "--neighbours", help="Nearest neighbours for RBF surface interpolation.")] = 5,
-    smoothing: Annotated[float, typer.Option("-S", "--smoothing", help="RBF smoothing parameter (0 = exact interpolation).")] = 0.0,
-    vm_1d: Annotated[Optional[Path], typer.Option(help="Path to 1-D velocity model CSV.")] = None,
-    rho: Annotated[Optional[float], typer.Option(help="Constant density (kg/m³).")] = None,
-    vp: Annotated[Optional[float], typer.Option(help="Constant P-wave velocity (m/s).")] = None,
-    vs: Annotated[Optional[float], typer.Option(help="Constant S-wave velocity (m/s).")] = None,
-    priority: Annotated[int, typer.Option(help="Basin mesh priority (lower = higher priority).")] = 0,
+    simplification: Annotated[float, typer.Option("-s", "--simplification", help="Polygon simplification parameter (higher = simpler).", min=0.0)] = 10.0,
+    culling_volume: Annotated[float, typer.Option("-v", "--culling-volume", help="Tetrahedron volume cull threshold (lower = finer).", min=0.0)] = 1e-3,
+    triangulation_radius: Annotated[float, typer.Option("-r", "--triangulation-radius", help="Max triangulation radius in metres.", min=0.0)] = 1000.0,
+    neighbours: Annotated[int, typer.Option("-n", "--neighbours", help="Nearest neighbours for RBF surface interpolation.", min=1)] = 5,
+    smoothing: Annotated[float, typer.Option("-S", "--smoothing", help="RBF smoothing parameter (0 = exact interpolation).", min=0.0)] = 0.0,
+    vm_1d: Annotated[Optional[Path], typer.Option(help="Path to 1-D velocity model CSV.", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    rho: Annotated[Optional[float], typer.Option(help="Constant density (kg/m³).", min=0.0)] = None,
+    vp: Annotated[Optional[float], typer.Option(help="Constant P-wave velocity (m/s).", min=0.0)] = None,
+    vs: Annotated[Optional[float], typer.Option(help="Constant S-wave velocity (m/s).", min=0.0)] = None,
+    priority: Annotated[int, typer.Option(help="Basin mesh priority (lower = higher priority).", min=0)] = 0,
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
     collection = shapely.from_geojson(bounds.read_text())

@@ -57,15 +57,15 @@ app.add_typer(view_basin.app, name="view-basin")
 
 @app.command()
 def generate(
-    config: Annotated[Path, typer.Argument(help="Config path to read model grid from.")],
+    config: Annotated[Path, typer.Argument(help="Config path to read model grid from.", exists=True, file_okay=True, dir_okay=False, readable=True)],
     output: Annotated[Path, typer.Argument(help="Output path to write velocity model to.")],
-    topography: Annotated[Path, typer.Option(help="Topography surface file.")],
-    n_threads: Annotated[Optional[int], typer.Option(help="Number of threads to spawn to query the model.")] = None,
+    topography: Annotated[Path, typer.Option(help="Topography surface file.", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    n_threads: Annotated[Optional[int], typer.Option(help="Number of threads to spawn to query the model.", min=1)] = None,
     profile: Annotated[bool, typer.Option(help="If set, profile this run.")] = False,
     progress: Annotated[bool, typer.Option(help="If set, show progress.")] = True,
-    dt: Annotated[float, typer.Option(help="Resource profiler sample rate (seconds).")] = 0.25,
+    dt: Annotated[float, typer.Option(help="Resource profiler sample rate (seconds).", min=0.0)] = 0.25,
     profile_output: Annotated[Path, typer.Option(help="Profile report output path.")] = Path("dask_profile.html"),
-    model_path: Annotated[Optional[Path], typer.Option(help="Path containing models.")] = None,
+    model_path: Annotated[Optional[Path], typer.Option(help="Path containing models.", exists=True, file_okay=False, dir_okay=True)] = None,
     model_glob: Annotated[str, typer.Option(help="Glob for models, set this to load only a subset of models.")] = "*.vtkhdf",
     output_format: Annotated[formats.Format, typer.Option("--format", help="Output format. You can usually leave this as inferred.")] = formats.Format.INFERRED,
     config_format: Annotated[GeoModelGridFormat, typer.Option(help="Config format to read. You can usually leave this as inferred.")] = GeoModelGridFormat.INFERRED,

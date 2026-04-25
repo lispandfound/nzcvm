@@ -239,7 +239,7 @@ app = typer.Typer(help="Convert a CSV-like tomography model to a VTKHDF tetrahed
 
 @app.command()
 def main(
-    model: Annotated[Path, typer.Argument(help="CSV-like readable tomography model.")],
+    model: Annotated[Path, typer.Argument(help="CSV-like readable tomography model.", exists=True, file_okay=True, dir_okay=False, readable=True)],
     output: Annotated[Path, typer.Argument(help="Output path for the converted model.")],
     model_type: Annotated[ModelType, typer.Argument(help="Model type to read.")] = ModelType.EP2020,
 ) -> None:

@@ -161,8 +161,8 @@ def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
 
 @app.command()
 def main(
-    models: Annotated[list[Path], typer.Argument(help="One or more VTKHDF model files to load.")],
-    n_samples: Annotated[int, typer.Option("-n", "--n-samples", help="Number of random sample points to query.")] = 1000,
+    models: Annotated[list[Path], typer.Argument(help="One or more VTKHDF model files to load.", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    n_samples: Annotated[int, typer.Option("-n", "--n-samples", help="Number of random sample points to query.", min=1)] = 1000,
     output: Annotated[Path, typer.Option(help="Output Parquet path.")] = Path("nzcvm_benchmark.parquet"),
 ) -> None:
     """Entry point for the ``nzcvm tree-stats`` command."""

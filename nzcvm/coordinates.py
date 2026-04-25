@@ -79,7 +79,7 @@ def crs_transform(x, y, *, transformer: Transformer):
         # called exactly once per dask block.
         def _transform_stacked(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
             xo, yo = transformer.transform(xi, yi)
-            return np.stack([np.asarray(xo), np.asarray(yo)])
+            return np.stack([np.asarray(xo), np.asarray(yo)], axis=-1)
 
         result = xr.apply_ufunc(
             _transform_stacked,
@@ -90,8 +90,8 @@ def crs_transform(x, y, *, transformer: Transformer):
             output_dtypes=[float],
             dask_gufunc_kwargs={"output_sizes": {"component": 2}, "allow_rechunk": True},
         )
-        x_out = result.isel(component=0).drop_vars("component")
-        y_out = result.isel(component=1).drop_vars("component")
+        x_out = result.isel(component=0)
+        y_out = result.isel(component=1)
         return x_out, y_out
     return transformer.transform(np.asarray(x), np.asarray(y))
 

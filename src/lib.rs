@@ -15,32 +15,14 @@ mod nzcvm {
     use crate::model_tree::ModelTree;
     use crate::query::Query;
     use crate::real::Real;
-    use bvh::aabb::Aabb;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
-    use ndarray::{azip, Array2, Axis};
-    use numpy::{IntoPyArray, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+    use ndarray::{array, azip, Array2, Axis};
+    use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
-    use serde::Serialize;
 
     use std::sync::Arc;
-
-    /// Serialisable view of a 3-D axis-aligned bounding box.
-    #[derive(Serialize)]
-    struct AabbView {
-        min: [Real; 3],
-        max: [Real; 3],
-    }
-
-    impl From<Aabb<Real, 3>> for AabbView {
-        fn from(item: Aabb<Real, 3>) -> Self {
-            Self {
-                min: [item.min.x, item.min.y, item.min.z],
-                max: [item.max.x, item.max.y, item.max.z],
-            }
-        }
-    }
 
     /// Python-facing single tetrahedral mesh model (consumed by [`model_tree`]).
     #[pyclass]
@@ -181,10 +163,15 @@ mod nzcvm {
 
         /// Return the combined 3-D axis-aligned bounding box of all mesh models.
         ///
-        /// Returns a dict with keys `min` and `max`, each a list of three floats.
-        pub fn aabb<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-            let view: AabbView = self.inner.aabb().into();
-            pythonize(py, &view).map_err(|e| e.into())
+        /// Returns a pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays.
+        pub fn aabb<'py>(
+            &self,
+            py: Python<'py>,
+        ) -> (Bound<'py, PyArray1<Real>>, Bound<'py, PyArray1<Real>>) {
+            let b = self.inner.aabb();
+            let min = array![b.min.x, b.min.y, b.min.z];
+            let max = array![b.max.x, b.max.y, b.max.z];
+            (min.into_pyarray(py), max.into_pyarray(py))
         }
 
         /// Query with BVH traversal statistics (AABB tests, simplex tests, etc.).

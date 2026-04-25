@@ -285,8 +285,7 @@ class Model:
             A pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays
             in the model's coordinate system.
         """
-        aabb = self._raw.aabb()
-        return np.array(aabb["min"]), np.array(aabb["max"])
+        return self._raw.aabb()
 
     def query(self, x: Any, y: Any, z: Any) -> Quality | None:
         """Query material properties at a single point.

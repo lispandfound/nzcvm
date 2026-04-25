@@ -41,16 +41,22 @@ class TestCoordinateSystemTransform:
         assert float(z_out[0]) == pytest.approx(-500.0, rel=1e-5)
 
     def test_flip_ew_negates_x(self):
-        """Enabling flip_ew should negate the x component relative to the origin."""
+        """Enabling flip_ew should negate the first local axis relative to the origin.
+
+        With ``ccw=False`` and ``rotation=0`` the local *y*-axis maps to CRS
+        easting, so a non-zero ``y`` offset is required to exercise the flip.
+        """
         cs_normal = self._cs(flip_ew=False)
         cs_flipped = self._cs(flip_ew=True)
-        x = np.array([1000.0], dtype=np.float64)
-        y = np.array([0.0], dtype=np.float64)
+        # Use a pure local-y offset (easting direction at azimuth=0).
+        x = np.array([0.0], dtype=np.float64)
+        y = np.array([1000.0], dtype=np.float64)
         z = np.array([0.0], dtype=np.float64)
         x_norm, y_norm, _ = cs_normal.transform(x, y, z)
         x_flip, y_flip, _ = cs_flipped.transform(x, y, z)
 
-        # With flip_ew, x_flip should be on the opposite side of the origin from x_norm.
+        # With flip_ew, the easting output should be on the opposite side of
+        # the origin from the un-flipped result.
         x_origin, _, _ = cs_normal.transform(np.array([0.0]), np.array([0.0]), z)
         assert float(x_flip[0]) == pytest.approx(2 * float(x_origin[0]) - float(x_norm[0]), rel=1e-4)
 

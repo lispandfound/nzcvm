@@ -201,7 +201,7 @@ class ModelType(StrEnum):
     EP2020 = auto()
 
 
-MODEL_KWARGS = {ModelType.EP2020: dict(header=1, sep=r"\s+")}
+MODEL_KWARGS: dict[ModelType, dict[str, int | str]] = {ModelType.EP2020: dict(header=1, sep=r"\s+")}
 
 MODEL_COLUMNS = {
     ModelType.EP2020: TomographyModel(
@@ -229,7 +229,7 @@ class Options(Tap):
 def main():
     """Entry point for the ``nzcvm-convert-tomography`` command."""
     args = Options().parse_args()
-    df = pd.read_csv(args.model, **MODEL_KWARGS[args.type])
+    df = pd.read_csv(args.model, **MODEL_KWARGS[args.type])  # ty: ignore[no-matching-overload]
 
     column_keys = MODEL_COLUMNS[args.type]
 

@@ -198,6 +198,11 @@ def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
         with open(input_path, "w") as f:
             write_poly_file(poly_data, f)
         triangle = shutil.which("triangle")
+        if triangle is None:
+            raise RuntimeError(
+                "The 'triangle' binary was not found on PATH. "
+                "Install it (e.g. `apt install triangle-bin`) and try again."
+            )
         opts = f"-qa{max_area:.5f}"
         cmd = [triangle, opts, str(input_path)]
         print("Calling triangle like so: ", " ".join(cmd))
@@ -292,7 +297,7 @@ def tetra_volume(vertices: np.ndarray, tetra: np.ndarray) -> np.ndarray:
 @numba.njit(cache=True)
 def cull_mesh(
     vertices: np.ndarray, tetra: np.ndarray, culling_volume: float
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, int, int]:
     mat = np.ones((4, 4), dtype=np.float64)
     f = 1 / 6
     has_vertex_neighbours = np.zeros(len(vertices), dtype=np.bool_)

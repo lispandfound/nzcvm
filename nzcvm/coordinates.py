@@ -13,6 +13,7 @@ from enum import StrEnum, auto
 from typing import Any
 
 import numpy as np
+import xarray as xr
 from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
@@ -43,12 +44,72 @@ NO_ORIGIN = 0
 WGS84_CRS = 4326
 
 
+def crs_transform(x, y, *, transformer: Transformer):
+    """Apply a pyproj CRS transform, dispatching for xarray DataArrays.
+
+    When *x* or *y* is an :class:`xarray.DataArray` (potentially dask-backed),
+    the transform is applied via :func:`xarray.apply_ufunc` with
+    ``dask='parallelized'`` so that no Dask graph is triggered prematurely.
+    Plain NumPy arrays and scalars are passed directly to
+    :meth:`pyproj.Transformer.transform`.
+
+    Parameters
+    ----------
+    x, y :
+        Coordinates to transform.  May be scalars, NumPy arrays, or
+        dask-backed :class:`xarray.DataArray` objects.
+    transformer :
+        A :class:`pyproj.Transformer` built with ``always_xy=True``.
+
+    Returns
+    -------
+    tuple[array-like, array-like]
+        ``(x_out, y_out)`` in the target CRS, matching the type of the inputs.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> from pyproj import Transformer
+    >>> tr = Transformer.from_crs(4326, 2193, always_xy=True)
+    >>> x_out, y_out = crs_transform(np.array([172.0]), np.array([-41.0]), transformer=tr)
+    """
+    if isinstance(x, xr.DataArray) or isinstance(y, xr.DataArray):
+        x_out = xr.apply_ufunc(
+            lambda xi, yi: transformer.transform(xi, yi)[0],
+            x,
+            y,
+            dask="parallelized",
+            output_dtypes=[float],
+        )
+        y_out = xr.apply_ufunc(
+            lambda xi, yi: transformer.transform(xi, yi)[1],
+            x,
+            y,
+            dask="parallelized",
+            output_dtypes=[float],
+        )
+        return x_out, y_out
+    return transformer.transform(np.asarray(x), np.asarray(y))
+
+
 class CoordinateSystem:
     """A general-purpose coordinate transformation from local model space to a target CRS.
 
     Applies rotation, optional scaling and axis flips, and maps between
     coordinate reference systems using ``pyproj``. The local-space origin
     is supplied in ``origin_crs`` and converted to ``from_crs`` internally.
+
+    Rotation convention
+    -------------------
+    When ``ccw=False`` (the default for NZ CVM grids), *rotation* is a
+    **clockwise azimuth from north** and the axes follow the geographic
+    convention: at azimuth 0° the local *x*-axis points **north** (+CRS y)
+    and the local *y*-axis points **east** (+CRS x).  The rotation matrix is
+    built directly from ``sin``/``cos`` of the azimuth rather than converting
+    to a mathematical CCW angle.
+
+    When ``ccw=True``, *rotation* is a standard counter-clockwise angle
+    measured from the +x (east) axis.
 
     Parameters
     ----------
@@ -57,18 +118,21 @@ class CoordinateSystem:
     to_crs :
         Target CRS for the output (e.g. EPSG:2193 for NZTM).
     rotation :
-        Rotation angle in degrees. Counter-clockwise by default unless
-        ``ccw=False``, in which case it is interpreted as clockwise.
+        Rotation angle in degrees.  Clockwise azimuth from north when
+        ``ccw=False`` (default for NZ CVM use); counter-clockwise from east
+        when ``ccw=True``.
     scale :
         Scaling factor applied to local coordinates before the CRS
         transform (e.g. ``1000.0`` to convert km → m).
     ccw :
-        If ``False``, interprets *rotation* as a clockwise angle.
-        Default is ``True`` (counter-clockwise).
+        If ``False`` (default), interprets *rotation* as a clockwise
+        azimuth from north (geographic convention).
+        If ``True``, interprets *rotation* as a CCW angle from east
+        (mathematical convention).
     flip_ew :
-        If ``True``, negate the east-west (x) axis. Default is ``False``.
+        If ``True``, negate the first local axis (*x*). Default is ``False``.
     flip_ns :
-        If ``True``, negate the north-south (y) axis. Default is ``False``.
+        If ``True``, negate the second local axis (*y*). Default is ``False``.
     origin :
         Origin of the transformation expressed as ``(x, y)`` in
         *origin_crs*. If ``None``, the origin is ``(0, 0)`` in *from_crs*.
@@ -79,6 +143,7 @@ class CoordinateSystem:
     See Also
     --------
     nzcvm.geomodelgrid.ModelMetadata.coordinate_system : Builds a ``CoordinateSystem`` from model metadata.
+    crs_transform : Dask/xarray-aware helper used internally by :meth:`transform`.
     """
 
     def __init__(
@@ -108,12 +173,19 @@ class CoordinateSystem:
             to_crs, from_crs, always_xy=True
         )
 
-        if not ccw:
-            rotation = 360 - rotation
         theta = np.radians(rotation)
         ct = np.cos(theta)
         st = np.sin(theta)
-        rotation_matrix = np.array([[ct, -st], [st, ct]])
+        if not ccw:
+            # CW azimuth from north: local x points in direction `rotation`° CW
+            # from north.  In (easting, northing) space the column vectors are:
+            #   local x → (sin(az), cos(az))   e.g. az=0 → north (+y_crs)
+            #   local y → (cos(az), -sin(az))  e.g. az=0 → east  (+x_crs)
+            rotation_matrix = np.array([[st, ct], [ct, -st]])
+        else:
+            # CCW angle from east (standard mathematical convention):
+            #   local x → (cos(θ), sin(θ))  e.g. θ=0 → east
+            rotation_matrix = np.array([[ct, -st], [st, ct]])
 
         axis_matrix = (
             np.array(
@@ -131,18 +203,16 @@ class CoordinateSystem:
 
         self.transform_matrix = rotation_matrix @ axis_matrix
         self._inv_transform_matrix = np.linalg.inv(self.transform_matrix)
-        # Pre-project the origin into to_crs for use in transform().
-        # When from_crs == to_crs this is simply the origin in the shared CRS.
-        self._projected_origin = np.array(
-            self.coordinate_transform.transform(*self.origin)
-        )
 
     def transform(self, x, y, z):
         """Map local model coordinates to the target projected CRS.
 
-        Applies the inverse rotation matrix element-wise, then offsets by the
-        pre-projected origin. This is exact when ``from_crs == to_crs`` and a
-        good local approximation when they differ.
+        Applies the affine part of the transform (inverse rotation + scale +
+        flip) element-wise to obtain coordinates in *from_crs*, offsets by the
+        origin, then calls :func:`crs_transform` for the final CRS conversion.
+        This is exact (not a linear approximation) for any pair of CRS values
+        and is fully compatible with dask-backed :class:`xarray.DataArray`
+        inputs.
 
         Parameters
         ----------
@@ -158,8 +228,9 @@ class CoordinateSystem:
             ``(x_out, y_out, z_out)`` in the target CRS.
         """
         m = self._inv_transform_matrix
-        x_out = m[0, 0] * x + m[0, 1] * y + self._projected_origin[0]
-        y_out = m[1, 0] * x + m[1, 1] * y + self._projected_origin[1]
+        x_from = m[0, 0] * x + m[0, 1] * y + self.origin[0]
+        y_from = m[1, 0] * x + m[1, 1] * y + self.origin[1]
+        x_out, y_out = crs_transform(x_from, y_from, transformer=self.coordinate_transform)
         return x_out, y_out, z
 
     def inverse(self, x, y, z):
@@ -177,7 +248,7 @@ class CoordinateSystem:
         tuple[array-like, array-like, array-like]
             ``(x_model, y_model, z)`` in local model space.
         """
-        up_x, up_y = self.inv_coordinate_transform.transform(x, y)
+        up_x, up_y = crs_transform(x, y, transformer=self.inv_coordinate_transform)
         up_x = up_x - self.origin[0]
         up_y = up_y - self.origin[1]
         m = self.transform_matrix

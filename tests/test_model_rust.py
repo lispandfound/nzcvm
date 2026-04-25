@@ -1,4 +1,4 @@
-"""Tests for Python-specific behaviour of the nzcvm Model wrapper.
+"""Tests for Python-specific behavior of the nzcvm Model wrapper.
 
 These tests focus on the Python API layer (xarray metadata, types, Python
 dataclasses) rather than duplicating the Rust BVH logic already covered by

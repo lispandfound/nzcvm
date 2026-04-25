@@ -1,4 +1,4 @@
-"""Pipeline layer for applying a 4×4 affine transform to model coordinates."""
+"""Pipeline layer for applying a 4x4 affine transform to model coordinates."""
 
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
@@ -10,7 +10,7 @@ from nzcvm.layers.protocol import QueryLayer
 
 
 class AffineTransformLayer:
-    """Pipeline layer that applies a 4×4 affine transform to (x, y, z) coordinates.
+    """Pipeline layer that applies a 4x4 affine transform to (x, y, z) coordinates.
 
     The transform is applied element-wise to the ``x``, ``y``, and ``z``
     variables of every ``/block/*`` node, then passes the result to
@@ -20,7 +20,7 @@ class AffineTransformLayer:
     Parameters
     ----------
     affine :
-        4×4 homogeneous affine matrix (see :func:`~nzcvm.coordinates.translate`,
+        4x4 homogeneous affine matrix (see :func:`~nzcvm.coordinates.translate`,
         :func:`~nzcvm.coordinates.rotate`, :func:`~nzcvm.coordinates.scale`, etc.)
         mapping local model coordinates to the desired output space.
     next_layer :

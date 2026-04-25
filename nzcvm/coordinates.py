@@ -15,7 +15,7 @@ A typical pipeline maps local model coordinates to a projected CRS::
     origin_tr = Transformer.from_crs(4326, 2193, always_xy=True)
     ox, oy = origin_tr.transform(172.0, -43.5)
     affine = translate(ox, oy) @ rotate(30.0, ccw=False)
-    transformer = Transformer.from_crs(2193, 2193, always_xy=True)
+    crs_transformer = Transformer.from_crs(2193, 4326, always_xy=True)
 
 See Also
 --------

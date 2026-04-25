@@ -1,22 +1,18 @@
 """Convert an HDF5 topography file to a VTK surface mesh."""
 
 from pathlib import Path
+from typing import Annotated
 
 import h5py
 import numba
 import numpy as np
 import pyproj
 import pyvista as pv
-from tap import Positional, Tap
+import typer
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
-
-class Options(Tap):
-    """Convert an HDF5 topography surface to a VTK structured grid."""
-
-    topography: Positional[Path]  # Input HDF5 topography file.
-    output: Positional[Path]  # Output VTK surface mesh path.
+app = typer.Typer(help="Convert an HDF5 topography surface to a VTK structured grid.")
 
 
 def read_surface_file(
@@ -61,13 +57,16 @@ def construct_surface_mesh(
     )
 
 
-def main():
-    """Entry point for the ``nzcvm-convert-topography`` command."""
-    args = Options().parse_args()
-    x, y, elevation = read_surface_file(args.topography)
+@app.command()
+def main(
+    topography: Annotated[Path, typer.Argument(help="Input HDF5 topography file.")],
+    output: Annotated[Path, typer.Argument(help="Output VTK surface mesh path.")],
+) -> None:
+    """Entry point for the ``nzcvm convert-topography`` command."""
+    x, y, elevation = read_surface_file(topography)
     surface_mesh = construct_surface_mesh(x, y, elevation)
-    surface_mesh.save(args.output)
+    surface_mesh.save(output)
 
 
 if __name__ == "__main__":
-    main()
+    app()

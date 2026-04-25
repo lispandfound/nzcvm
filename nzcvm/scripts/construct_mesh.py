@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TextIO
+from typing import Annotated, Optional, TextIO
 
 import h5py
 import numba
@@ -16,38 +16,13 @@ import pyvista as pv
 import scipy as sp
 import shapely
 import shapely.ops
-from tap import Positional, Tap
+import typer
 
 from nzcvm.mesh import make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
-
-class Options(Tap):
-    """Construct a volumetric tetrahedral mesh for a basin model."""
-
-    bounds: Positional[Path]  # GeoJSON file defining the basin boundary.
-    topography: Positional[Path]  # Topography surface file (HDF5).
-    top_surface: Positional[Path]  # Top surface file (HDF5).
-    bottom_surface: Positional[Path]  # Bottom surface file (HDF5).
-    output: Positional[Path]  # Output VTKHDF file path.
-    simplification: float = 10.0  # Polygon simplification parameter (higher = simpler).
-    culling_volume: float = 1e-3  # Tetrahedron volume cull threshold (lower = finer).
-    triangulation_radius: float = 1000.0  # Max triangulation radius in metres.
-    neighbours: int = 5  # Nearest neighbours for RBF surface interpolation.
-    smoothing: float = 0.0  # RBF smoothing parameter (0 = exact interpolation).
-    vm_1d: Optional[Path] = None  # Path to 1-D velocity model CSV.
-    rho: Optional[float] = None  # Constant density (kg/m³).
-    vp: Optional[float] = None  # Constant P-wave velocity (m/s).
-    vs: Optional[float] = None  # Constant S-wave velocity (m/s).
-    priority: int = 0  # Basin mesh priority (lower = higher priority).
-
-    def configure(self):
-        self.add_argument("-s", dest="simplification")
-        self.add_argument("-v", dest="culling_volume")
-        self.add_argument("-r", dest="triangulation_radius")
-        self.add_argument("-n", dest="neighbours")
-        self.add_argument("-S", dest="smoothing")
+app = typer.Typer(help="Construct a volumetric tetrahedral mesh for a basin model.")
 
 
 def preprocess_polygon(poly: shapely.Polygon) -> shapely.Polygon:
@@ -391,36 +366,47 @@ def mask_surface(
     return surface_points[mask]
 
 
-def main():
-    """Entry point for the ``nzcvm-construct-mesh`` command."""
-    args = Options().parse_args()
+@app.command()
+def main(
+    bounds: Annotated[Path, typer.Argument(help="GeoJSON file defining the basin boundary.")],
+    topography: Annotated[Path, typer.Argument(help="Topography surface file (HDF5).")],
+    top_surface: Annotated[Path, typer.Argument(help="Top surface file (HDF5).")],
+    bottom_surface: Annotated[Path, typer.Argument(help="Bottom surface file (HDF5).")],
+    output: Annotated[Path, typer.Argument(help="Output VTKHDF file path.")],
+    simplification: Annotated[float, typer.Option("-s", "--simplification", help="Polygon simplification parameter (higher = simpler).")] = 10.0,
+    culling_volume: Annotated[float, typer.Option("-v", "--culling-volume", help="Tetrahedron volume cull threshold (lower = finer).")] = 1e-3,
+    triangulation_radius: Annotated[float, typer.Option("-r", "--triangulation-radius", help="Max triangulation radius in metres.")] = 1000.0,
+    neighbours: Annotated[int, typer.Option("-n", "--neighbours", help="Nearest neighbours for RBF surface interpolation.")] = 5,
+    smoothing: Annotated[float, typer.Option("-S", "--smoothing", help="RBF smoothing parameter (0 = exact interpolation).")] = 0.0,
+    vm_1d: Annotated[Optional[Path], typer.Option(help="Path to 1-D velocity model CSV.")] = None,
+    rho: Annotated[Optional[float], typer.Option(help="Constant density (kg/m³).")] = None,
+    vp: Annotated[Optional[float], typer.Option(help="Constant P-wave velocity (m/s).")] = None,
+    vs: Annotated[Optional[float], typer.Option(help="Constant S-wave velocity (m/s).")] = None,
+    priority: Annotated[int, typer.Option(help="Basin mesh priority (lower = higher priority).")] = 0,
+) -> None:
+    """Entry point for the ``nzcvm construct-mesh`` command."""
+    collection = shapely.from_geojson(bounds.read_text())
+    poly = preprocess_polygon(collection.geoms[0]).simplify(simplification)
 
-    collection = shapely.from_geojson(args.bounds.read_text())
-    poly = preprocess_polygon(collection.geoms[0]).simplify(args.simplification)
-
-    triangulation = triangulate_polygon(poly, args.triangulation_radius)
-    top_surface = read_surface_file(args.top_surface)
-    if top_surface.size > 1e6:
+    triangulation = triangulate_polygon(poly, triangulation_radius)
+    top_surface_data = read_surface_file(top_surface)
+    if top_surface_data.size > 1e6:
         print("Massive top surface detected, trimming to bounds")
-        top_surface = mask_surface(poly, top_surface, buffer=10000)
+        top_surface_data = mask_surface(poly, top_surface_data, buffer=10000)
 
-    bottom_surface = read_surface_file(args.bottom_surface)
-    topography = read_surface_file(args.topography)
-    topography = mask_surface(poly, topography, buffer=10000)
+    bottom_surface_data = read_surface_file(bottom_surface)
+    topography_data = read_surface_file(topography)
+    topography_data = mask_surface(poly, topography_data, buffer=10000)
 
-    mesh_top = interpolate_surface(top_surface, triangulation.vertices, args.neighbours)
-    mesh_bottom = interpolate_surface(
-        bottom_surface, triangulation.vertices, args.neighbours
-    )
+    mesh_top = interpolate_surface(top_surface_data, triangulation.vertices, neighbours)
+    mesh_bottom = interpolate_surface(bottom_surface_data, triangulation.vertices, neighbours)
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
-    mesh_topography = interpolate_surface(
-        topography, triangulation.vertices, args.neighbours
-    )
+    mesh_topography = interpolate_surface(topography_data, triangulation.vertices, neighbours)
 
-    if args.vm_1d is None and (args.rho and args.vp and args.vs):
-        model = uniform_model(args.rho, args.vp, args.vs)
-    elif args.vm_1d is not None:
-        model = read_layered_model(args.vm_1d)
+    if vm_1d is None and (rho and vp and vs):
+        model = uniform_model(rho, vp, vs)
+    elif vm_1d is not None:
+        model = read_layered_model(vm_1d)
     print("Slicing model into volumetric mesh")
     layers = slice_with_model(
         triangulation,
@@ -428,13 +414,13 @@ def main():
         mesh_top,
         mesh_bottom,
         model,
-        args.culling_volume,
+        culling_volume,
     )
-    mesh = construct_volumetric_mesh(layers, args.priority)
+    mesh_data = construct_volumetric_mesh(layers, priority)
     print("Constructed mesh:")
-    print(mesh)
-    mesh.save(str(args.output))
+    print(mesh_data)
+    mesh_data.save(str(output))
 
 
 if __name__ == "__main__":
-    main()
+    app()

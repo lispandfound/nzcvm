@@ -2,22 +2,24 @@
 import os
 from contextlib import nullcontext
 from pathlib import Path
+from typing import Annotated, Optional
 
 import dask
 import psutil
 import rich
 import rich.box
+import typer
 from dask.diagnostics import Profiler, ResourceProfiler, visualize
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from tap import Positional, Tap
 from tqdm.dask import TqdmCallback
 
 from nzcvm import formats, surface
 from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
 from nzcvm.layers import AffineTransformLayer, DepthTransformLayer, ModelLayer
 from nzcvm.model import Model
+from nzcvm.scripts import construct_mesh, convert_tomography, convert_topography, tree_stats, view_basin
 
 console = Console()
 
@@ -45,73 +47,48 @@ def determine_model_path() -> Path:
     return Path(env) if env else default_root
 
 
-class Options(Tap):
-    """Command-line options for the NZCVM velocity-model generator."""
-    config: Positional[Path]  # Config path to read model grid from.
-    output: Positional[Path]  # Output path to write velocity model to.
-    n_threads: int = num_cores()  # Number of threads to spawn to query the model.
-    profile: bool = False  # If set, profile this run
-    progress: bool = True  # If set, show progress
-    dt: float = 0.25  # Resource profiler sample rate (seconds)
-    profile_output: Path = Path("dask_profile.html")
-    topography: Path
-
-    # Added in configure():
-    model_path: Path
-    model_glob: str
-    config_format: GeoModelGridFormat
-
-    def configure(self):
-        """Register additional argument-parser options."""
-        self.add_argument(
-            "--model-path",
-            type=Path,
-            default=determine_model_path(),
-            help="Path containing models.",
-        )
-        self.add_argument(
-            "--model-glob",
-            type=str,
-            default="*.vtkhdf",
-            help="Glob for models, set this to load only a subset of models.",
-        )
-
-        self.add_argument(
-            "--format",
-            type=formats.Format,
-            default=formats.Format.INFERRED,
-            choices=list(formats.Format),
-            help="Config format to write. You can usually leave this as inferred.",
-        )
-
-        self.add_argument(
-            "--config-format",
-            type=GeoModelGridFormat,
-            choices=list(GeoModelGridFormat),
-            default=GeoModelGridFormat.INFERRED,
-            help="Config format to read. You can usually leave this as inferred.",
-        )
+app = typer.Typer(help="NZCVM velocity model toolkit.")
+app.add_typer(construct_mesh.app, name="construct-mesh")
+app.add_typer(convert_tomography.app, name="convert-tomography")
+app.add_typer(convert_topography.app, name="convert-topography")
+app.add_typer(tree_stats.app, name="tree-stats")
+app.add_typer(view_basin.app, name="view-basin")
 
 
-def main():
-    """Entry point for the ``nzcvm`` command-line tool."""
-    args = Options().parse_args()
+@app.command()
+def generate(
+    config: Annotated[Path, typer.Argument(help="Config path to read model grid from.")],
+    output: Annotated[Path, typer.Argument(help="Output path to write velocity model to.")],
+    topography: Annotated[Path, typer.Option(help="Topography surface file.")],
+    n_threads: Annotated[Optional[int], typer.Option(help="Number of threads to spawn to query the model.")] = None,
+    profile: Annotated[bool, typer.Option(help="If set, profile this run.")] = False,
+    progress: Annotated[bool, typer.Option(help="If set, show progress.")] = True,
+    dt: Annotated[float, typer.Option(help="Resource profiler sample rate (seconds).")] = 0.25,
+    profile_output: Annotated[Path, typer.Option(help="Profile report output path.")] = Path("dask_profile.html"),
+    model_path: Annotated[Optional[Path], typer.Option(help="Path containing models.")] = None,
+    model_glob: Annotated[str, typer.Option(help="Glob for models, set this to load only a subset of models.")] = "*.vtkhdf",
+    output_format: Annotated[formats.Format, typer.Option("--format", help="Output format. You can usually leave this as inferred.")] = formats.Format.INFERRED,
+    config_format: Annotated[GeoModelGridFormat, typer.Option(help="Config format to read. You can usually leave this as inferred.")] = GeoModelGridFormat.INFERRED,
+) -> None:
+    """Generate a NZCVM velocity model from a config file."""
+    resolved_n_threads = n_threads if n_threads is not None else num_cores()
+    resolved_model_path = model_path if model_path is not None else determine_model_path()
 
     console.print(
         Panel.fit(
             f"[highlight]NZCVM[/highlight] | Velocity Model Generator\n"
-            f"[info]Threads:[/info] {args.n_threads}",
+            f"[info]Threads:[/info] {resolved_n_threads}",
             border_style="cyan",
         )
     )
 
-    if not args.model_path.exists():
+    if not resolved_model_path.exists():
         console.print(
-            f"[error]Error:[/error] Model path [path]{args.model_path}[/path] not found."
+            f"[error]Error:[/error] Model path [path]{resolved_model_path}[/path] not found."
         )
         return
 
-    geo_model_grid = GeoModelGrid.read_config(args.config, args.config_format)
+    geo_model_grid = GeoModelGrid.read_config(config, config_format)
     affine = geo_model_grid.metadata.affine
     velocity_model = geo_model_grid.to_datatree()
 
@@ -124,42 +101,47 @@ def main():
 
     console.print(summary)
 
-    models = list(args.model_path.rglob(args.model_glob))
+    models = list(resolved_model_path.rglob(model_glob))
     console.print(f"[info]Found {len(models)} model components in search path.[/info]")
 
     with console.status("Loading basin models"):
         model = Model.load_models(*models)
 
     with console.status("Reading surface topography"):
-        topography = surface.read_surface_from_path(args.topography)
+        topo = surface.read_surface_from_path(topography)
 
     model_pipeline = AffineTransformLayer(
         affine,
-        DepthTransformLayer(topography, ModelLayer(model)),  # ty: ignore[invalid-argument-type]
+        DepthTransformLayer(topo, ModelLayer(model)),  # ty: ignore[invalid-argument-type]
     )
     rich.print(model_pipeline)
     breakpoint()
 
     velocity_model = model_pipeline(velocity_model)
 
-    dask.config.set(scheduler="threads", num_workers=args.n_threads)
+    dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
 
-    progress = TqdmCallback(desc="Generating Model") if args.progress else nullcontext()
-    profiler = Profiler() if args.profile else nullcontext()
-    res_prof = ResourceProfiler(dt=args.dt) if args.profile else nullcontext()
+    progress_ctx = TqdmCallback(desc="Generating Model") if progress else nullcontext()
+    profiler = Profiler() if profile else nullcontext()
+    res_prof = ResourceProfiler(dt=dt) if profile else nullcontext()
 
-    with profiler as prof, res_prof as rprof, progress:
+    with profiler as prof, res_prof as rprof, progress_ctx:
         formats.write_velocity_model(
             velocity_model,
-            args.output,
-            formats.from_path(args.output),
+            output,
+            formats.from_path(output),
         )
 
-    if args.profile and prof and rprof:
-        visualize([rprof, prof], filename=args.profile_output)
+    if profile and prof and rprof:
+        visualize([rprof, prof], filename=profile_output)
         console.print(
-            f"[info]Profile report generated:[/info] [path]{args.profile_output}[/path]"
+            f"[info]Profile report generated:[/info] [path]{profile_output}[/path]"
         )
+
+
+def main() -> None:
+    """Entry point for the ``nzcvm`` command-line tool."""
+    app()
 
 
 if __name__ == "__main__":

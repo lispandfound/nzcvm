@@ -12,12 +12,13 @@ import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
+from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.coordinates import Coordinate, CoordinateSystem
+from nzcvm.coordinates import Coordinate, rotate, translate
 from nzcvm.geomodelgrid import Block, empty_block
-from nzcvm.layers.coordinates import CoordinateTransformLayer
+from nzcvm.layers.affine import AffineTransformLayer
 from nzcvm.layers.query import ModelLayer
 from nzcvm.model import Model
 
@@ -193,25 +194,18 @@ class _PassThroughLayer:
         return iter([])
 
 
-class TestCoordinateTransformLayerDimensions:
-    """CoordinateTransformLayer must preserve (i, j, k) dims while updating x/y/z."""
+class TestAffineTransformLayerDimensions:
+    """AffineTransformLayer must preserve (i, j, k) dims while updating x/y/z."""
 
-    def _make_cs(
-        self, azimuth: float = 0.0, transpose: bool = False
-    ) -> CoordinateSystem:
-        import numpy as np
-        return CoordinateSystem(
-            from_crs=2193,
-            to_crs=2193,
-            rotation=azimuth,
-            ccw=False,
-            origin=np.array([172.0, -43.5]),
-            origin_crs=4326,
-        )
+    def _make_affine(self, azimuth: float = 0.0):
+        """Build a rotation+translation affine for NZTM origin at [172°, -43.5°]."""
+        tr = Transformer.from_crs(4326, 2193, always_xy=True)
+        ox, oy = tr.transform(172.0, -43.5)
+        return translate(ox, oy) @ rotate(azimuth, ccw=False)
 
     def test_dims_preserved_after_transform(self):
-        cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        affine = self._make_affine()
+        layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=3, nj=2, nk=2)
         result = layer(tree)
         block_ds = result["/block/test"].dataset
@@ -223,8 +217,8 @@ class TestCoordinateTransformLayerDimensions:
 
     def test_shape_preserved_after_transform(self):
         ni, nj, nk = 3, 2, 2
-        cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        affine = self._make_affine()
+        layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=ni, nj=nj, nk=nk)
         result = layer(tree)
         block_ds = result["/block/test"].dataset
@@ -234,8 +228,8 @@ class TestCoordinateTransformLayerDimensions:
 
     def test_x_y_z_remain_dask_backed(self):
         """Coordinate values must stay lazy (dask-backed) after the transform."""
-        cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        affine = self._make_affine()
+        layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=3, nj=2, nk=2)
         result = layer(tree)
         block_ds = result["/block/test"].dataset
@@ -243,29 +237,31 @@ class TestCoordinateTransformLayerDimensions:
         assert isinstance(block_ds[Coordinate.Y].data, da.Array)
 
     def test_z_passthrough_after_transform(self):
-        """Z must not be altered by CoordinateTransformLayer (only x/y are rotated)."""
-        cs = self._make_cs()
-        layer = CoordinateTransformLayer(cs, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        """Z must not be altered by AffineTransformLayer when z row is [0,0,1,0]."""
+        affine = self._make_affine()
+        layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_block_datatree(ni=2, nj=2, nk=3, size=6.0)
         original_z = tree["/block/test"].dataset[Coordinate.Z].values.copy()
         result = layer(tree)
         transformed_z = result["/block/test"].dataset[Coordinate.Z].values
         assert transformed_z == pytest.approx(original_z, rel=1e-5)
 
-    def test_transpose_swaps_x_and_y(self):
-        """With transpose=True, applying to (x0, y0) should equal applying
-        the non-transposed version to (y0, x0)."""
-        cs_normal = self._make_cs(transpose=False)
-        cs_transposed = self._make_cs(transpose=True)
-        layer_normal = CoordinateTransformLayer(cs_normal, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        layer_transposed = CoordinateTransformLayer(cs_transposed, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+    def test_transpose_xy_swaps_x_and_y_outputs(self):
+        """Prepending transpose_xy() should swap the x and y outputs."""
+        from nzcvm.coordinates import transpose_xy
+
+        affine = self._make_affine()
+        affine_transposed = affine @ transpose_xy()
+
+        layer_normal = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        layer_transposed = AffineTransformLayer(affine_transposed, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
         tree = _make_block_datatree(ni=3, nj=2, nk=2, size=5.0)
         block_ds = tree["/block/test"].dataset
         x0 = block_ds[Coordinate.X].values
         y0 = block_ds[Coordinate.Y].values
 
-        # Build a second tree with x and y swapped to simulate the non-transposed equivalent
+        # Build a tree with x and y swapped
         ds_swapped = block_ds.copy()
         ds_swapped[Coordinate.X] = (block_ds[Coordinate.X].dims, y0)
         ds_swapped[Coordinate.Y] = (block_ds[Coordinate.Y].dims, x0)
@@ -276,4 +272,4 @@ class TestCoordinateTransformLayerDimensions:
 
         xt = result_transposed["/block/test"].dataset[Coordinate.X].values
         xn = result_normal_swapped["/block/test"].dataset[Coordinate.X].values
-        assert xt == pytest.approx(xn, rel=1e-4)
+        np.testing.assert_allclose(xt, xn, rtol=1e-6)

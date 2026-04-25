@@ -1,22 +1,40 @@
 """Coordinate systems and spatial transformations for the velocity model.
 
-The central class is :class:`CoordinateSystem`, which maps a local
-rotated grid into a projected CRS such as NZTM2000 using a general
-affine coordinate transformation.
+The core building blocks are composable 4×4 affine matrices (type alias
+:data:`Affine`) plus a :func:`crs_transform` helper for pyproj CRS
+conversions.  Affine transforms are created by the factory functions
+:func:`identity`, :func:`translate`, :func:`rotate`, :func:`scale`,
+:func:`reflect_x`, :func:`reflect_y`, and :func:`transpose_xy` and
+composed with standard NumPy matrix multiplication (``@``).
+
+A typical pipeline maps local model coordinates to a projected CRS::
+
+    from pyproj import Transformer
+    from nzcvm.coordinates import translate, rotate, scale
+
+    origin_tr = Transformer.from_crs(4326, 2193, always_xy=True)
+    ox, oy = origin_tr.transform(172.0, -43.5)
+    affine = translate(ox, oy) @ rotate(30.0, ccw=False)
+    transformer = Transformer.from_crs(2193, 2193, always_xy=True)
 
 See Also
 --------
+nzcvm.layers.affine.AffineTransformLayer : Pipeline layer that applies an affine.
+nzcvm.layers.crs.CrsTransformLayer : Pipeline layer that applies a CRS transform.
 nzcvm.geomodelgrid.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
 """
 
 from enum import StrEnum, auto
-from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import xarray as xr
 from pyproj import Transformer
-from rich.console import Console, ConsoleOptions, RenderResult
-from rich.tree import Tree
+
+#: 4×4 homogeneous affine matrix operating on (x, y, z, 1) column vectors.
+#: Compose transforms left-to-right with ``@``; the leftmost matrix is
+#: applied last (i.e. ``A @ B`` applies *B* first, then *A*).
+Affine = npt.NDArray[np.float64]
 
 
 class Coordinate(StrEnum):
@@ -44,14 +62,188 @@ NO_ORIGIN = 0
 WGS84_CRS = 4326
 
 
+# ---------------------------------------------------------------------------
+# Affine factory functions
+# ---------------------------------------------------------------------------
+
+
+def identity() -> Affine:
+    """Return the 4×4 identity affine matrix.
+
+    Returns
+    -------
+    Affine
+        4×4 identity matrix.
+    """
+    return np.eye(4, dtype=np.float64)
+
+
+def translate(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> Affine:
+    """Return a 4×4 translation matrix.
+
+    Parameters
+    ----------
+    x, y, z :
+        Translation offsets along each axis.
+
+    Returns
+    -------
+    Affine
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> T = translate(100.0, 200.0)
+    >>> (T @ np.array([0.0, 0.0, 0.0, 1.0]))[:3]
+    array([100., 200.,   0.])
+    """
+    m = np.eye(4, dtype=np.float64)
+    m[0, 3] = x
+    m[1, 3] = y
+    m[2, 3] = z
+    return m
+
+
+def rotate(
+    angle_deg: float,
+    origin: tuple[float, float] = (0.0, 0.0),
+    ccw: bool = True,
+) -> Affine:
+    """Return a 4×4 rotation matrix for a rotation in the x-y plane.
+
+    Parameters
+    ----------
+    angle_deg :
+        Rotation angle in degrees.  When ``ccw=True`` (default) this is a
+        counter-clockwise angle measured from the +x (east) axis.  When
+        ``ccw=False`` this is a **clockwise azimuth from north** (geographic
+        convention used by NZ CVM grids): at azimuth 0° the local x-axis
+        points north (+y_CRS) and the local y-axis points east (+x_CRS).
+    origin :
+        Centre of rotation as ``(x, y)``.  Defaults to ``(0, 0)``.
+    ccw :
+        If ``True`` (default), counter-clockwise from east (mathematical).
+        If ``False``, clockwise azimuth from north (geographic).
+
+    Returns
+    -------
+    Affine
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> R = rotate(90.0)   # 90° CCW: (1, 0) → (0, 1)
+    >>> np.allclose((R @ [1.0, 0.0, 0.0, 1.0])[:2], [0.0, 1.0], atol=1e-10)
+    True
+    """
+    theta = np.radians(angle_deg)
+    st, ct = np.sin(theta), np.cos(theta)
+    if ccw:
+        r: Affine = np.array(
+            [[ct, -st, 0.0, 0.0],
+             [st,  ct, 0.0, 0.0],
+             [0.0, 0.0, 1.0, 0.0],
+             [0.0, 0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+    else:
+        # CW azimuth from north:
+        #   column 0 → (sin(az), cos(az))   local x points toward azimuth
+        #   column 1 → (cos(az), -sin(az))  local y is 90° CCW from x
+        r = np.array(
+            [[st,  ct, 0.0, 0.0],
+             [ct, -st, 0.0, 0.0],
+             [0.0, 0.0, 1.0, 0.0],
+             [0.0, 0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+    ox, oy = origin
+    if ox == 0.0 and oy == 0.0:
+        return r
+    return translate(ox, oy) @ r @ translate(-ox, -oy)
+
+
+def scale(sx: float = 1.0, sy: float = 1.0, sz: float = 1.0) -> Affine:
+    """Return a 4×4 anisotropic scale matrix.
+
+    Parameters
+    ----------
+    sx, sy, sz :
+        Scale factors along each axis.
+
+    Returns
+    -------
+    Affine
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> S = scale(2.0, 3.0)
+    >>> (S @ np.array([1.0, 1.0, 1.0, 1.0]))[:3]
+    array([2., 3., 1.])
+    """
+    m = np.eye(4, dtype=np.float64)
+    m[0, 0] = sx
+    m[1, 1] = sy
+    m[2, 2] = sz
+    return m
+
+
+def reflect_x() -> Affine:
+    """Return a 4×4 matrix that negates the x axis.
+
+    Returns
+    -------
+    Affine
+    """
+    return scale(sx=-1.0)
+
+
+def reflect_y() -> Affine:
+    """Return a 4×4 matrix that negates the y axis.
+
+    Returns
+    -------
+    Affine
+    """
+    return scale(sy=-1.0)
+
+
+def transpose_xy() -> Affine:
+    """Return a 4×4 matrix that swaps the x and y axes.
+
+    Returns
+    -------
+    Affine
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> T = transpose_xy()
+    >>> (T @ np.array([1.0, 2.0, 3.0, 1.0]))[:3]
+    array([2., 1., 3.])
+    """
+    m = np.eye(4, dtype=np.float64)
+    m[0, 0] = 0.0
+    m[1, 1] = 0.0
+    m[0, 1] = 1.0
+    m[1, 0] = 1.0
+    return m
+
+
+# ---------------------------------------------------------------------------
+# CRS transform helper
+# ---------------------------------------------------------------------------
+
+
 def crs_transform(x, y, *, transformer: Transformer):
     """Apply a pyproj CRS transform, dispatching for xarray DataArrays.
 
     When *x* or *y* is an :class:`xarray.DataArray` (potentially dask-backed),
-    the transform is applied via :func:`xarray.apply_ufunc` with
-    ``dask='parallelized'`` so that no Dask graph is triggered prematurely.
-    Plain NumPy arrays and scalars are passed directly to
-    :meth:`pyproj.Transformer.transform`.
+    the transform is applied via two :func:`xarray.apply_ufunc` calls with
+    ``dask='parallelized'`` so that no Dask graph is triggered prematurely and
+    no rechunking is required.  Plain NumPy arrays and scalars are passed
+    directly to :meth:`pyproj.Transformer.transform`.
 
     Parameters
     ----------
@@ -74,223 +266,19 @@ def crs_transform(x, y, *, transformer: Transformer):
     >>> x_out, y_out = crs_transform(np.array([172.0]), np.array([-41.0]), transformer=tr)
     """
     if isinstance(x, xr.DataArray) or isinstance(y, xr.DataArray):
-        # Single apply_ufunc call returns both components stacked on a new
-        # leading 'component' dimension; split afterwards so transform() is
-        # called exactly once per dask block.
-        def _transform_stacked(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
-            xo, yo = transformer.transform(xi, yi)
-            return np.stack([np.asarray(xo), np.asarray(yo)], axis=-1)
+        def _extract_x(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
+            xo, _ = transformer.transform(xi, yi)
+            return np.asarray(xo)
 
-        result = xr.apply_ufunc(
-            _transform_stacked,
-            x,
-            y,
-            output_core_dims=[["component"]],
-            dask="parallelized",
-            output_dtypes=[float],
-            dask_gufunc_kwargs={"output_sizes": {"component": 2}, "allow_rechunk": True},
+        def _extract_y(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
+            _, yo = transformer.transform(xi, yi)
+            return np.asarray(yo)
+
+        x_out = xr.apply_ufunc(
+            _extract_x, x, y, dask="parallelized", output_dtypes=[float]
         )
-        x_out = result.isel(component=0)
-        y_out = result.isel(component=1)
+        y_out = xr.apply_ufunc(
+            _extract_y, x, y, dask="parallelized", output_dtypes=[float]
+        )
         return x_out, y_out
     return transformer.transform(np.asarray(x), np.asarray(y))
-
-
-class CoordinateSystem:
-    """A general-purpose coordinate transformation from local model space to a target CRS.
-
-    Applies rotation, optional scaling and axis flips, and maps between
-    coordinate reference systems using ``pyproj``. The local-space origin
-    is supplied in ``origin_crs`` and converted to ``from_crs`` internally.
-
-    Rotation convention
-    -------------------
-    When ``ccw=False`` (the default for NZ CVM grids), *rotation* is a
-    **clockwise azimuth from north** and the axes follow the geographic
-    convention: at azimuth 0° the local *x*-axis points **north** (+CRS y)
-    and the local *y*-axis points **east** (+CRS x).  The rotation matrix is
-    built directly from ``sin``/``cos`` of the azimuth rather than converting
-    to a mathematical CCW angle.
-
-    When ``ccw=True``, *rotation* is a standard counter-clockwise angle
-    measured from the +x (east) axis.
-
-    Parameters
-    ----------
-    from_crs :
-        Source CRS for intermediate local coordinates (e.g. EPSG:2193 for NZTM).
-    to_crs :
-        Target CRS for the output (e.g. EPSG:2193 for NZTM).
-    rotation :
-        Rotation angle in degrees.  Clockwise azimuth from north when
-        ``ccw=False`` (default for NZ CVM use); counter-clockwise from east
-        when ``ccw=True``.
-    scale :
-        Scaling factor applied to local coordinates before the CRS
-        transform (e.g. ``1000.0`` to convert km → m).
-    ccw :
-        If ``False`` (default), interprets *rotation* as a clockwise
-        azimuth from north (geographic convention).
-        If ``True``, interprets *rotation* as a CCW angle from east
-        (mathematical convention).
-    flip_ew :
-        If ``True``, negate the first local axis (*x*). Default is ``False``.
-    flip_ns :
-        If ``True``, negate the second local axis (*y*). Default is ``False``.
-    origin :
-        Origin of the transformation expressed as ``(x, y)`` in
-        *origin_crs*. If ``None``, the origin is ``(0, 0)`` in *from_crs*.
-    origin_crs :
-        CRS in which *origin* coordinates are defined. Required when
-        *origin* is not ``None``.
-
-    See Also
-    --------
-    nzcvm.geomodelgrid.ModelMetadata.coordinate_system : Builds a ``CoordinateSystem`` from model metadata.
-    crs_transform : Dask/xarray-aware helper used internally by :meth:`transform`.
-    """
-
-    def __init__(
-        self,
-        from_crs: Any,
-        to_crs: Any,
-        rotation: float,
-        scale: float = 1.0,
-        ccw: bool = True,
-        flip_ew: bool = False,
-        flip_ns: bool = False,
-        origin: np.ndarray | None = None,
-        origin_crs: Any = None,
-    ):
-        self._from_crs = from_crs
-        self._to_crs = to_crs
-        self._rotation = rotation
-        self._scale = scale
-        self._ccw = ccw
-        self._flip_ew = flip_ew
-        self._flip_ns = flip_ns
-
-        self.coordinate_transform = Transformer.from_crs(
-            from_crs, to_crs, always_xy=True
-        )
-        self.inv_coordinate_transform = Transformer.from_crs(
-            to_crs, from_crs, always_xy=True
-        )
-
-        theta = np.radians(rotation)
-        ct = np.cos(theta)
-        st = np.sin(theta)
-        if not ccw:
-            # CW azimuth from north: local x points in direction `rotation`° CW
-            # from north.  In (easting, northing) space the column vectors are:
-            #   local x → (sin(az), cos(az))   e.g. az=0 → north (+y_crs)
-            #   local y → (cos(az), -sin(az))  e.g. az=0 → east  (+x_crs)
-            rotation_matrix = np.array([[st, ct], [ct, -st]])
-        else:
-            # CCW angle from east (standard mathematical convention):
-            #   local x → (cos(θ), sin(θ))  e.g. θ=0 → east
-            rotation_matrix = np.array([[ct, -st], [st, ct]])
-
-        axis_matrix = (
-            np.array(
-                [[(-1.0 if flip_ew else 1.0), 0.0], [0.0, (-1.0 if flip_ns else 1.0)]]
-            )
-            / scale
-        )
-        if (origin is not None) and origin_crs:
-            origin_transform = Transformer.from_crs(
-                origin_crs, from_crs, always_xy=True
-            )
-            self.origin = np.array(origin_transform.transform(*origin))
-        else:
-            self.origin = origin if origin is not None else np.zeros((2,), dtype=float)
-
-        self.transform_matrix = rotation_matrix @ axis_matrix
-        self._inv_transform_matrix = np.linalg.inv(self.transform_matrix)
-
-    def transform(self, x, y, z):
-        """Map local model coordinates to the target projected CRS.
-
-        Applies the affine part of the transform (inverse rotation + scale +
-        flip) element-wise to obtain coordinates in *from_crs*, offsets by the
-        origin, then calls :func:`crs_transform` for the final CRS conversion.
-        This is exact (not a linear approximation) for any pair of CRS values
-        and is fully compatible with dask-backed :class:`xarray.DataArray`
-        inputs.
-
-        Parameters
-        ----------
-        x, y :
-            Local model coordinates to transform.  May be scalars, NumPy
-            arrays, or dask-backed xarray DataArrays.
-        z :
-            Vertical coordinate; passed through unchanged.
-
-        Returns
-        -------
-        tuple[array-like, array-like, array-like]
-            ``(x_out, y_out, z_out)`` in the target CRS.
-        """
-        m = self._inv_transform_matrix
-        x_from = m[0, 0] * x + m[0, 1] * y + self.origin[0]
-        y_from = m[1, 0] * x + m[1, 1] * y + self.origin[1]
-        x_out, y_out = crs_transform(x_from, y_from, transformer=self.coordinate_transform)
-        return x_out, y_out, z
-
-    def inverse(self, x, y, z):
-        """Map target CRS coordinates back to local model space.
-
-        Parameters
-        ----------
-        x, y :
-            Coordinates in the target CRS.
-        z :
-            Vertical coordinate; passed through unchanged.
-
-        Returns
-        -------
-        tuple[array-like, array-like, array-like]
-            ``(x_model, y_model, z)`` in local model space.
-        """
-        up_x, up_y = crs_transform(x, y, transformer=self.inv_coordinate_transform)
-        up_x = up_x - self.origin[0]
-        up_y = up_y - self.origin[1]
-        m = self.transform_matrix
-        x_out = m[0, 0] * up_x + m[0, 1] * up_y
-        y_out = m[1, 0] * up_x + m[1, 1] * up_y
-        return x_out, y_out, z
-
-    @property
-    def affine(self) -> np.ndarray:
-        """4×4 affine matrix mapping model space to the source CRS."""
-        return np.linalg.inv(self.inverse_affine)
-
-    @property
-    def inverse_affine(self) -> np.ndarray:
-        """4×4 affine matrix mapping source CRS to model space."""
-        affine_matrix = np.zeros((4, 4), dtype=float)
-        affine_matrix[2, 2] = 1 / self._scale
-        affine_matrix[-1, -1] = 1.0
-        affine_matrix[0:2, 0:2] = self.transform_matrix
-
-        translation_matrix = np.eye(4, dtype=float)
-        translation_matrix[0:2, -1] = -self.origin
-        return affine_matrix @ translation_matrix
-
-    def __rich_console__(
-        self, _console: Console, _options: ConsoleOptions
-    ) -> RenderResult:
-        """Render coordinate-system parameters as a rich tree."""
-        tree = Tree("Parameters")
-
-        tree.add(f"Origin: {self.origin}")
-        tree.add(f"Rotation: {self._rotation}° ({'CCW' if self._ccw else 'CW'})")
-        tree.add(f"Scale: {self._scale}")
-        tree.add(f"Flip EW: {'Enabled' if self._flip_ew else 'Disabled'}")
-        tree.add(f"Flip NS: {'Enabled' if self._flip_ns else 'Disabled'}")
-
-        crs = tree.add("CRS Settings")
-        crs.add(f"From: {getattr(self._from_crs, 'name', self._from_crs)}")
-        crs.add(f"To: {getattr(self._to_crs, 'name', self._to_crs)}")
-
-        yield tree

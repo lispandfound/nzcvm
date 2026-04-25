@@ -1,9 +1,10 @@
 use crate::quality::Quality;
 use crate::real::Real;
 use nalgebra::Point3;
+use serde::Deserialize;
 
 /// Performance counters collected during a single model query.
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, Deserialize)]
 pub struct QueryStats {
     /// Number of axis-aligned bounding-box intersection tests performed.
     pub aabb_tests: usize,
@@ -18,7 +19,7 @@ pub struct QueryStats {
 }
 
 /// One model's contribution to a blended query result.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Deserialize)]
 pub struct ModelContribution {
     /// Priority of the contributing model (lower = higher priority).
     pub priority: u8,
@@ -27,7 +28,7 @@ pub struct ModelContribution {
 }
 
 /// Diagnostic breakdown of a query, listing every model that contributed.
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Deserialize)]
 pub struct Explanation {
     /// Ordered list of contributions, from highest priority to lowest.
     pub contributions: Vec<ModelContribution>,

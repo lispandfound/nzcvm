@@ -8,10 +8,10 @@ import numba
 import numpy as np
 import pandas as pd
 import pyvista as pv
-from pyproj import CRS
+from pyproj import CRS, Transformer
 from tap import Positional, Tap
 
-from nzcvm.coordinates import CoordinateSystem
+from nzcvm.coordinates import Affine, reflect_x, rotate, scale, translate
 from nzcvm.mesh import make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
@@ -20,34 +20,27 @@ CRS_NZGD49 = CRS.from_epsg(4272)
 CRS_UTM60S = CRS.from_epsg(32760)
 CRS_NZGD2000 = CRS.from_epsg(4167)
 
-EP2010_TRANSFORM = CoordinateSystem(
-    from_crs=CRS_NZTM,
-    to_crs=CRS_NZTM,
-    rotation=140.0,
-    scale=1000.0,
-    flip_ew=True,
-    origin=np.array([172.9037, -41.7638]),
-    origin_crs=CRS_NZGD49,
-)
 
-EP2020_TRANSFORM = CoordinateSystem(
-    from_crs=CRS_NZTM,
-    to_crs=CRS_NZTM,
-    rotation=140.0,
-    scale=1000.0,
-    flip_ew=True,
-    origin=np.array([172.9037, -41.7638]),
-    origin_crs=CRS_NZGD2000,
-)
+def _project_origin(lon: float, lat: float, from_crs: CRS, to_crs: CRS) -> tuple[float, float]:
+    """Project a lon/lat origin into *to_crs* using ``always_xy=True``."""
+    tr = Transformer.from_crs(from_crs, to_crs, always_xy=True)
+    return tr.transform(lon, lat)
 
-DB2025_TRANSFORM = CoordinateSystem(
-    from_crs=CRS_UTM60S,
-    to_crs=CRS_NZTM,
-    rotation=35.0,
-    scale=1000.0,
-    origin=np.array([177.0, -39.7499]),
-    origin_crs=CRS_WGS,
+
+def _ep_affine(origin_crs: CRS) -> Affine:
+    """Build the EP2010/EP2020 forward affine (local km → NZTM m)."""
+    ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
+    return translate(ox, oy) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x() @ rotate(140.0, ccw=False)
+
+
+EP2010_AFFINE: Affine = _ep_affine(CRS_NZGD49)
+EP2020_AFFINE: Affine = _ep_affine(CRS_NZGD2000)
+
+_db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
+DB2025_AFFINE: Affine = (
+    translate(_db2025_ox, _db2025_oy) @ scale(1000.0, 1000.0, 1000.0) @ rotate(35.0, ccw=False)
 )
+DB2025_CRS_TRANSFORMER = Transformer.from_crs(CRS_UTM60S, CRS_NZTM, always_xy=True)
 
 
 @dataclass
@@ -60,7 +53,7 @@ class TomographyModel:
     rho: str
     vp: str
     vs: str
-    transform: CoordinateSystem
+    affine: Affine
     # Some models don't contain a qp/qs column, so we prefill where that makes sense.
     qp: str = "qp"
     qs: str = "qs"
@@ -170,7 +163,7 @@ def data_frame_to_mesh(
 
     points = points[morton_sorter]
     connectivity = inverse_map[naive_idx]
-    transform = tomography_model.transform.inverse_affine.T.astype(np.float32)
+    transform = np.linalg.inv(tomography_model.affine).T.astype(np.float32)
 
     field_data = {
         "rho": rho[morton_sorter].values.astype(np.float32),
@@ -213,7 +206,7 @@ MODEL_COLUMNS = {
         rho="Density",
         vp="Vp",
         vs="Vs",
-        transform=EP2020_TRANSFORM,
+        affine=EP2020_AFFINE,
     )
 }
 

@@ -7,7 +7,7 @@ use std::ops::{Add, Mul};
 ///
 /// `alpha` is the opacity weight used when blending overlapping models;
 /// it follows the Porter-Duff "over" compositing rule in [`Quality::blend`].
-#[derive(Clone, Debug, Copy, PartialEq, DeepSizeOf, serde::Serialize)]
+#[derive(Clone, Debug, Copy, PartialEq, DeepSizeOf, serde::Serialize, serde::Deserialize)]
 pub struct Quality {
     pub rho: Real,
     pub vp: Real,

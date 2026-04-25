@@ -28,7 +28,7 @@ from mashumaro.mixins.toml import DataClassTOMLMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 
 from nzcvm.components import Component
-from nzcvm.coordinates import NO_ORIGIN, WGS84_CRS, Coordinate, CoordinateSystem
+from nzcvm.coordinates import NO_ORIGIN, WGS84_CRS, Affine, Coordinate, rotate, translate
 
 
 class ConfigObject(
@@ -105,16 +105,29 @@ class ModelMetadata(ConfigObject):
     repository_url: str | None = None
 
     @property
-    def coordinate_system(self) -> CoordinateSystem:
-        """Build a :class:`~nzcvm.coordinates.CoordinateSystem` from this metadata."""
-        return CoordinateSystem(
-            from_crs=self.target_crs,
-            to_crs=self.target_crs,
-            rotation=self.azimuth,
-            ccw=False,
-            origin=np.array([self.origin_lon, self.origin_lat]),
-            origin_crs=self.origin_crs,
-        )
+    def affine(self) -> Affine:
+        """Build a 4×4 affine matrix mapping local model space to *target_crs*.
+
+        The origin is projected from *origin_crs* to *target_crs* to obtain
+        the translation component.  The rotation uses the clockwise-from-north
+        convention (``ccw=False``) to match NZ CVM grid conventions.
+
+        Returns
+        -------
+        Affine
+            4×4 homogeneous affine matrix.  Compose with
+            :class:`~nzcvm.layers.affine.AffineTransformLayer` to apply in a
+            pipeline.
+
+        See Also
+        --------
+        nzcvm.layers.affine.AffineTransformLayer : Apply this affine in a pipeline.
+        nzcvm.layers.crs.CrsTransformLayer : Follow with a CRS layer when needed.
+        """
+        from pyproj import Transformer
+        origin_tr = Transformer.from_crs(self.origin_crs, self.target_crs, always_xy=True)
+        ox, oy = origin_tr.transform(self.origin_lon, self.origin_lat)
+        return translate(ox, oy) @ rotate(self.azimuth, ccw=False)
 
 
 @dataclass

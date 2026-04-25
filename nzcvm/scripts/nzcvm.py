@@ -16,7 +16,7 @@ from tqdm.dask import TqdmCallback
 
 from nzcvm import formats, surface
 from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
-from nzcvm.layers import CoordinateTransformLayer, DepthTransformLayer, ModelLayer
+from nzcvm.layers import AffineTransformLayer, DepthTransformLayer, ModelLayer
 from nzcvm.model import Model
 
 console = Console()
@@ -112,7 +112,7 @@ def main():
         return
 
     geo_model_grid = GeoModelGrid.read_config(args.config, args.config_format)
-    coordinate_system = geo_model_grid.metadata.coordinate_system
+    affine = geo_model_grid.metadata.affine
     velocity_model = geo_model_grid.to_datatree()
 
     summary = Table(show_header=False, box=rich.box.SIMPLE)
@@ -133,8 +133,8 @@ def main():
     with console.status("Reading surface topography"):
         topography = surface.read_surface_from_path(args.topography)
 
-    model_pipeline = CoordinateTransformLayer(
-        coordinate_system,
+    model_pipeline = AffineTransformLayer(
+        affine,
         DepthTransformLayer(topography, ModelLayer(model)),  # ty: ignore[invalid-argument-type]
     )
     rich.print(model_pipeline)

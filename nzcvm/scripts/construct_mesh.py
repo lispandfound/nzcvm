@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated, Optional, TextIO
+from typing import Annotated, TextIO
 
 import h5py
 import numba
@@ -378,11 +378,11 @@ def main(
     triangulation_radius: Annotated[float, typer.Option("-r", "--triangulation-radius", help="Max triangulation radius in metres.", min=0.0)] = 1000.0,
     neighbours: Annotated[int, typer.Option("-n", "--neighbours", help="Nearest neighbours for RBF surface interpolation.", min=1)] = 5,
     smoothing: Annotated[float, typer.Option("-S", "--smoothing", help="RBF smoothing parameter (0 = exact interpolation).", min=0.0)] = 0.0,
-    vm_1d: Annotated[Optional[Path], typer.Option(help="Path to 1-D velocity model CSV.", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
-    rho: Annotated[Optional[float], typer.Option(help="Constant density (kg/m³).", min=0.0)] = None,
-    vp: Annotated[Optional[float], typer.Option(help="Constant P-wave velocity (m/s).", min=0.0)] = None,
-    vs: Annotated[Optional[float], typer.Option(help="Constant S-wave velocity (m/s).", min=0.0)] = None,
-    priority: Annotated[int, typer.Option(help="Basin mesh priority (lower = higher priority).", min=0)] = 0,
+    vm_1d: Annotated[Path | None, typer.Option(help="Path to 1-D velocity model CSV.", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
+    rho: Annotated[float | None, typer.Option(help="Constant density (kg/m³).", min=0.0)] = None,
+    vp: Annotated[float | None, typer.Option(help="Constant P-wave velocity (m/s).", min=0.0)] = None,
+    vs: Annotated[float | None, typer.Option(help="Constant S-wave velocity (m/s).", min=0.0)] = None,
+    priority: Annotated[int, typer.Option(help="Basin mesh priority (lower = higher priority).", min=0, max=255)] = 0,
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
     collection = shapely.from_geojson(bounds.read_text())

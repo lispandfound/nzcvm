@@ -1,0 +1,25 @@
+"""Tests that each CLI subcommand can be invoked with --help."""
+
+import pytest
+from typer.testing import CliRunner
+
+from nzcvm.scripts.nzcvm import app
+
+runner = CliRunner()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        [],
+        ["generate"],
+        ["construct-mesh"],
+        ["convert-tomography"],
+        ["convert-topography"],
+        ["tree-stats"],
+        ["view-basin"],
+    ],
+)
+def test_help(args: list[str]):
+    result = runner.invoke(app, args + ["--help"])
+    assert result.exit_code == 0

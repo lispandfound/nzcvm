@@ -3,13 +3,14 @@
 from dataclasses import dataclass
 from enum import StrEnum, auto
 from pathlib import Path
+from typing import Annotated
 
 import numba
 import numpy as np
 import pandas as pd
 import pyvista as pv
+import typer
 from pyproj import CRS, Transformer
-from tap import Positional, Tap
 
 from nzcvm.coordinates import Affine, reflect_x, rotate, scale, translate
 from nzcvm.mesh import make_mesh
@@ -233,21 +234,19 @@ MODEL_COLUMNS = {
     )
 }
 
-
-class Options(Tap):
-    """Convert a CSV-like tomography model to a VTKHDF tetrahedral mesh."""
-
-    model: Positional[Path]  # CSV-like readable tomography model.
-    output: Positional[Path]  # Output path for the converted model.
-    type: Positional[ModelType]  # Model type to read.
+app = typer.Typer(help="Convert a CSV-like tomography model to a VTKHDF tetrahedral mesh.")
 
 
-def main():
-    """Entry point for the ``nzcvm-convert-tomography`` command."""
-    args = Options().parse_args()
-    df = pd.read_csv(args.model, **MODEL_KWARGS[args.type])  # ty: ignore[no-matching-overload]
+@app.command()
+def main(
+    model: Annotated[Path, typer.Argument(help="CSV-like readable tomography model.", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    output: Annotated[Path, typer.Argument(help="Output path for the converted model.")],
+    model_type: Annotated[ModelType, typer.Argument(help="Model type to read.")] = ModelType.EP2020,
+) -> None:
+    """Entry point for the ``nzcvm convert-tomography`` command."""
+    df = pd.read_csv(model, **MODEL_KWARGS[model_type])  # ty: ignore[no-matching-overload]
 
-    column_keys = MODEL_COLUMNS[args.type]
+    column_keys = MODEL_COLUMNS[model_type]
 
     if column_keys.qp not in df:
         df[column_keys.qp] = 100.0
@@ -256,8 +255,6 @@ def main():
         df[column_keys.qs] = 50.0
 
     mesh = data_frame_to_mesh(df, column_keys)
-    mesh.save(str(args.output))
+    mesh.save(str(output))
 
 
-if __name__ == "__main__":
-    main()

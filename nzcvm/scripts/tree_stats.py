@@ -1,37 +1,29 @@
 """Benchmark NZCVM BVH performance with realistic land-sampled query points."""
 
 from pathlib import Path
+from typing import Annotated
 
 import geopandas as gpd
+import platformdirs
 import numpy as np
 import pandas as pd
 import scipy as sp
 import shapely
+import typer
 from joblib import Memory
 from pyproj import Transformer
 from rich.console import Console
 from rich.panel import Panel
 from rich.progress import Progress
 from rich.table import Table
-from tap import Tap
 
 from nzcvm.model import Model
 
-memory = Memory("/tmp/nz_cache", verbose=0)
+memory = Memory(platformdirs.user_cache_dir("nzcvm"), verbose=0)
 
 console = Console()
 
-
-class Options(Tap):
-    """Benchmark BVH performance with realistic NZ land-sampled queries."""
-
-    models: list[Path]  # One or more VTKHDF model files to load.
-    n_samples: int = 1000  # Number of random sample points to query.
-    output: Path = Path("nzcvm_benchmark.parquet")  # Output Parquet path.
-
-    def configure(self):
-        self.add_argument("models", nargs="+", type=Path)
-        self.add_argument("-n", "--n-samples")
+app = typer.Typer(help="Benchmark BVH performance with realistic NZ land-sampled queries.")
 
 
 @memory.cache
@@ -168,11 +160,13 @@ def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
     console.print(Panel(hist_table, title="Query Time Distribution", expand=False))
 
 
-def main():
-    """Entry point for the ``nzcvm-tree-stats`` command."""
-    args = Options().parse_args()
-    run_benchmark(args.models, args.n_samples, args.output)
+@app.command()
+def main(
+    models: Annotated[list[Path], typer.Argument(help="One or more VTKHDF model files to load.", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    n_samples: Annotated[int, typer.Option("-n", "--n-samples", help="Number of random sample points to query.", min=1)] = 1000,
+    output: Annotated[Path, typer.Option(help="Output Parquet path.")] = Path("nzcvm_benchmark.parquet"),
+) -> None:
+    """Entry point for the ``nzcvm tree-stats`` command."""
+    run_benchmark(models, n_samples, output)
 
 
-if __name__ == "__main__":
-    main()

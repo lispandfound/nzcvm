@@ -20,6 +20,7 @@ dependencies = [
     "numba>=0.65.0",
     "numpy>=2.4.4",
     "pandas[parquet]>=3.0.2",
+    "platformdirs>=4.9.6",
     "psutil>=7.2.2",
     "pyproj>=3.7.2",
     "pyvista>=0.47.2",
@@ -28,18 +29,13 @@ dependencies = [
     "scipy>=1.17.1",
     "shapely>=2.1.2",
     "tqdm>=4.67.3",
-    "typed-argument-parser>=1.12.0",
+    "typer>=0.24.2",
     "xarray[io]>=2026.2.0",
     "zarr>=3.1.6",
 ]
 
 [project.scripts]
-nzcvm = "nzcvm.scripts.nzcvm:main"
-nzcvm-construct-mesh = "nzcvm.scripts.construct_mesh:main"
-nzcvm-convert-tomography = "nzcvm.scripts.convert_tomography:main"
-nzcvm-convert-topography = "nzcvm.scripts.convert_topography:main"
-nzcvm-tree-stats = "nzcvm.scripts.tree_stats:main"
-nzcvm-view-basin = "nzcvm.scripts.view_basin:main"
+nzcvm = "nzcvm.scripts.nzcvm:app"
 
 [tool.uv]
 cache-keys = [{file = "pyproject.toml"}, {file = "Cargo.toml"}, {file = "**/*.rs"}]

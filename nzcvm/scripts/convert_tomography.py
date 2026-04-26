@@ -258,5 +258,3 @@ def main(
     mesh.save(str(output))
 
 
-if __name__ == "__main__":
-    app()

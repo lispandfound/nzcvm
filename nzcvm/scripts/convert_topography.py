@@ -68,5 +68,3 @@ def main(
     surface_mesh.save(output)
 
 
-if __name__ == "__main__":
-    app()

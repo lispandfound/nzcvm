@@ -170,5 +170,3 @@ def main(
     run_benchmark(models, n_samples, output)
 
 
-if __name__ == "__main__":
-    app()

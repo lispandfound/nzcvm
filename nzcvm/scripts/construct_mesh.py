@@ -422,5 +422,3 @@ def main(
     mesh_data.save(str(output))
 
 
-if __name__ == "__main__":
-    app()

@@ -9,6 +9,7 @@ use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::{Bvh, BvhNode};
 use nalgebra::{Affine3, Point, Point3, Point4};
+use ndarray::Array2;
 use serde::Serialize;
 
 /// Default priority for models that do not specify one explicitly.
@@ -24,6 +25,7 @@ const PRIORITY_AABB_EXTENT: Real = 0.5;
 #[derive(Serialize)]
 pub struct MeshModelView {
     pub id: usize,
+    pub name: String,
     pub bounds: [f32; 6],
     pub transform: Option<Affine3<Real>>,
     pub priority: u8,
@@ -41,10 +43,14 @@ pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
     model_map: Vec<Model>,
-    qualities: Vec<Quality>,
+    /// Quality data laid out as an `(N, 6)` row-major array.
+    /// Columns: `[rho, vp, vs, qp, qs, alpha]`.
+    qualities: Array2<Real>,
     aabb: Aabb<Real, 3>,
     transform: Option<Affine3<Real>>,
     pub priority: u8,
+    /// Human-readable name for this mesh model.
+    pub name: String,
 
     // BVH bookkeeping for the model tree
     pub id: usize,
@@ -55,8 +61,9 @@ impl DeepSizeOf for MeshModel {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
         self.simplices.deep_size_of_children(context)
             + self.model_map.deep_size_of_children(context)
-            + self.qualities.deep_size_of_children(context)
+            + self.qualities.len() * size_of::<Real>()
             + self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
+            + self.name.len()
     }
 }
 
@@ -121,7 +128,16 @@ impl MeshModel {
             .map(|q| Model::from(InterpolateModel { qualities: *q }))
             .collect();
 
-        Self::new(vertices, faces, models, qualities, DEFAULT_PRIORITY, None)
+        let qualities_array = Quality::from_slice(&qualities);
+        Self::new(
+            vertices,
+            faces,
+            models,
+            qualities_array,
+            DEFAULT_PRIORITY,
+            None,
+            String::new(),
+        )
     }
 
     /// Create a mesh model from raw geometry data.
@@ -131,13 +147,17 @@ impl MeshModel {
     /// are transformed into local space before the BVH is consulted, and
     /// the AABB is computed in world space by transforming vertices with the
     /// inverse.
+    ///
+    /// `qualities` must be an `(N, 6)` array with columns
+    /// `[rho, vp, vs, qp, qs, alpha]`.
     pub fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
         models: Vec<Model>,
-        qualities: Vec<Quality>,
+        qualities: Array2<Real>,
         priority: u8,
         transform: Option<Affine3<Real>>,
+        name: String,
     ) -> Self {
         let local_to_global_map = |p| transform.map_or(p, |aff| aff.inverse_transform_point(&p));
         let min_point =
@@ -187,6 +207,7 @@ impl MeshModel {
             aabb,
             model_map: models,
             priority,
+            name,
             id: 0,
             node_index: 0,
             transform,
@@ -195,11 +216,11 @@ impl MeshModel {
 
     /// Number of vertex-quality entries in this mesh.
     pub fn points(&self) -> usize {
-        self.qualities.len()
+        self.qualities.nrows()
     }
 
     fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
-        self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
+        self.model_map[simplex.id].quality_at(self.qualities.view(), simplex, point)
     }
 
     /// Transform a point from world space into the mesh's local space.
@@ -233,9 +254,15 @@ impl MeshModel {
         }
 
         let depth = max_depth(&self.bvh_tree.nodes, 0);
+        let name_display = if self.name.is_empty() {
+            format!("(id={})", self.id)
+        } else {
+            format!("{:?}", self.name)
+        };
         println!(
-            "Mesh model with {} vertices and {} simplices, tree depth = {}, priority = {}.",
-            self.qualities.len(),
+            "Mesh model {} with {} vertices and {} simplices, tree depth = {}, priority = {}.",
+            name_display,
+            self.qualities.nrows(),
             self.simplices.len(),
             depth,
             self.priority,
@@ -253,6 +280,7 @@ impl MeshModel {
         ];
         MeshModelView {
             id: self.id,
+            name: self.name.clone(),
             bounds,
             transform: self.transform,
             priority: self.priority,
@@ -440,8 +468,8 @@ mod tests {
         let quality = mock_quality(1.0);
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
-        let qualities = vec![quality; 4];
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, None);
+        let qualities = Quality::from_slice(&[quality; 4]);
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
         let q = mesh.query(Point3::new(5.0, 5.0, 5.0));
         assert!(q.is_none());
     }
@@ -466,9 +494,10 @@ mod tests {
     fn test_mesh_model_interpolate_centroid() {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let qualities: Vec<Quality> = (0..4).map(|i| mock_quality(i as Real)).collect();
+        let qualities_vec: Vec<Quality> = (0..4).map(|i| mock_quality(i as Real)).collect();
         let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, None);
+        let qualities = Quality::from_slice(&qualities_vec);
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
         let q = mesh.query(Point3::new(0.25, 0.25, 0.25));
         assert!(q.is_some());
         // Centroid bary coords all equal 0.25; qualities are 0,1,2,3
@@ -482,9 +511,9 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let q_fixed = Quality { rho: 42.0, vp: 1.0, vs: 2.0, qp: 3.0, qs: 4.0, alpha: 1.0 };
-        let qualities = vec![q_fixed];
+        let qualities = Quality::from_slice(&[q_fixed]);
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, None);
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
         let result = mesh.query(Point3::new(0.2, 0.1, 0.1));
         assert!(result.is_some());
         let q_result = result.unwrap();
@@ -500,13 +529,13 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let qualities = vec![mock_quality(5.0)];
+        let qualities = Quality::from_slice(&[mock_quality(5.0)]);
 
         // World-to-local: subtract 5 from x-coordinate.
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
             Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
         );
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff));
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new());
 
         // (5.1, 0.1, 0.1) in world → (0.1, 0.1, 0.1) in local → inside
         let q = mesh.query(Point3::new(5.1, 0.1, 0.1));
@@ -525,12 +554,12 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let qualities = vec![mock_quality(1.0)];
+        let qualities = Quality::from_slice(&[mock_quality(1.0)]);
 
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
             Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
         );
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff));
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new());
         let aabb = mesh.aabb3();
 
         // Tetrahedron spans [5,6] × [0,1] × [0,1] in world space.

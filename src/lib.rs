@@ -24,7 +24,10 @@ mod nzcvm {
 
     use std::sync::Arc;
 
-    /// Python-facing single tetrahedral mesh model (consumed by [`model_tree`]).
+    /// Python-facing single tetrahedral mesh model.
+    ///
+    /// Wraps a [`MeshModel`] and exposes query, AABB, name and priority.
+    /// Consumed (moved into a [`ModelTree`]) when passed to [`model_tree`].
     #[pyclass]
     pub struct PyMeshModel {
         inner: Option<MeshModel>,
@@ -32,7 +35,7 @@ mod nzcvm {
 
     /// Python-facing velocity model (a compiled [`ModelTree`]).
     #[pyclass]
-    pub struct PyModel {
+    pub struct PyModelTree {
         pub inner: Arc<ModelTree>,
     }
 
@@ -47,7 +50,10 @@ mod nzcvm {
     /// * `qualities_py`  – `(Q, 6)` array of quality values indexed by `models_py`.
     /// * `priority`      – model priority (lower number = higher priority).
     /// * `transform_py`  – optional 4×4 world-to-local affine transform.
+    /// * `name`          – optional human-readable name for the model.
     #[pyfunction]
+    #[pyo3(signature = (vertices_py, faces_py, types_py, models_py, qualities_py, priority, transform_py, name=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn mesh_model(
         vertices_py: PyReadonlyArray2<Real>,
         faces_py: PyReadonlyArray2<usize>,
@@ -56,6 +62,7 @@ mod nzcvm {
         qualities_py: PyReadonlyArray2<Real>,
         priority: u8,
         transform_py: Option<PyReadonlyArray2<Real>>,
+        name: Option<String>,
     ) -> PyResult<PyMeshModel> {
         let vertices = vertices_py
             .as_array()
@@ -67,11 +74,9 @@ mod nzcvm {
             .axis_iter(Axis(0))
             .map(|a| Point4::new(a[0], a[1], a[2], a[3]))
             .collect();
-        let qualities = qualities_py
-            .as_array()
-            .axis_iter(Axis(0))
-            .map(|a| a.into())
-            .collect();
+
+        // Reuse the numpy buffer directly — avoids a separate Vec<Quality> allocation.
+        let qualities: Array2<Real> = qualities_py.as_array().to_owned();
 
         let types = types_py.as_array();
         let mut models_vec = Vec::with_capacity(types.len());
@@ -111,12 +116,18 @@ mod nzcvm {
 
         Ok(PyMeshModel {
             inner: Some(MeshModel::new(
-                vertices, faces, models_vec, qualities, priority, transform,
+                vertices,
+                faces,
+                models_vec,
+                qualities,
+                priority,
+                transform,
+                name.unwrap_or_default(),
             )),
         })
     }
 
-    /// Combine one or more [`PyMeshModel`]s into a queryable [`PyModel`].
+    /// Combine one or more [`PyMeshModel`]s into a queryable [`PyModelTree`].
     ///
     /// Each `PyMeshModel` is consumed (its inner data is moved out) so it
     /// cannot be reused after this call.
@@ -125,7 +136,7 @@ mod nzcvm {
     ///
     /// Returns `ValueError` if a `PyMeshModel` has already been consumed.
     #[pyfunction]
-    pub fn model_tree(py: Python<'_>, mesh_models: Vec<Py<PyMeshModel>>) -> PyResult<PyModel> {
+    pub fn model_tree(py: Python<'_>, mesh_models: Vec<Py<PyMeshModel>>) -> PyResult<PyModelTree> {
         let mut models = Vec::with_capacity(mesh_models.len());
         for m_py in mesh_models {
             let mut m = m_py.borrow_mut(py);
@@ -136,13 +147,100 @@ mod nzcvm {
             })?;
             models.push(model);
         }
-        Ok(PyModel {
+        Ok(PyModelTree {
             inner: Arc::new(ModelTree::new(models)),
         })
     }
 
     #[pymethods]
-    impl PyModel {
+    impl PyMeshModel {
+        /// Query the mesh model at a single point.
+        ///
+        /// Returns a dict with keys `rho`, `vp`, `vs`, `qp`, `qs`, `alpha`,
+        /// or `None` if the point lies outside this model's region.
+        ///
+        /// # Errors
+        ///
+        /// Returns `ValueError` if the model has been consumed by `model_tree()`.
+        pub fn query<'py>(
+            &self,
+            py: Python<'py>,
+            x: Real,
+            y: Real,
+            z: Real,
+        ) -> PyResult<Option<Bound<'py, PyAny>>> {
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                PyValueError::new_err("MeshModel has been consumed by model_tree()")
+            })?;
+            let pt = Point3::new(x, y, z);
+            inner
+                .query(pt)
+                .map(|q| pythonize(py, &q).map_err(|e| e.into()))
+                .transpose()
+        }
+
+        /// Return the 3-D axis-aligned bounding box of this mesh model.
+        ///
+        /// Returns a pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays.
+        ///
+        /// # Errors
+        ///
+        /// Returns `ValueError` if the model has been consumed by `model_tree()`.
+        #[allow(clippy::type_complexity)]
+        pub fn aabb<'py>(
+            &self,
+            py: Python<'py>,
+        ) -> PyResult<(Bound<'py, PyArray1<Real>>, Bound<'py, PyArray1<Real>>)> {
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                PyValueError::new_err("MeshModel has been consumed by model_tree()")
+            })?;
+            let b = inner.aabb3();
+            let min = array![b.min.x, b.min.y, b.min.z];
+            let max = array![b.max.x, b.max.y, b.max.z];
+            Ok((min.into_pyarray(py), max.into_pyarray(py)))
+        }
+
+        /// Human-readable name assigned at construction time.
+        ///
+        /// # Errors
+        ///
+        /// Returns `ValueError` if the model has been consumed by `model_tree()`.
+        #[getter]
+        pub fn name(&self) -> PyResult<String> {
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                PyValueError::new_err("MeshModel has been consumed by model_tree()")
+            })?;
+            Ok(inner.name.clone())
+        }
+
+        /// Model priority (lower number = higher priority in the tree).
+        ///
+        /// # Errors
+        ///
+        /// Returns `ValueError` if the model has been consumed by `model_tree()`.
+        #[getter]
+        pub fn priority(&self) -> PyResult<u8> {
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                PyValueError::new_err("MeshModel has been consumed by model_tree()")
+            })?;
+            Ok(inner.priority)
+        }
+
+        /// Return a serialisable Python dict describing this mesh model.
+        ///
+        /// # Errors
+        ///
+        /// Returns `ValueError` if the model has been consumed by `model_tree()`.
+        pub fn view<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+            let inner = self.inner.as_ref().ok_or_else(|| {
+                PyValueError::new_err("MeshModel has been consumed by model_tree()")
+            })?;
+            pythonize(py, &inner.view()).map_err(|e| e.into())
+        }
+    }
+
+    #[pymethods]
+    impl PyModelTree {
         /// Query the velocity model at a single point.
         ///
         /// Returns a dict with keys `rho`, `vp`, `vs`, `qp`, `qs`, `alpha`,
@@ -263,7 +361,7 @@ mod nzcvm {
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyMeshModel>()?;
-        m.add_class::<PyModel>()?;
+        m.add_class::<PyModelTree>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;
 

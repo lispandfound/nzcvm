@@ -20,6 +20,7 @@ dependencies = [
     "numba>=0.65.0",
     "numpy>=2.4.4",
     "pandas[parquet]>=3.0.2",
+    "platformdirs>=4.9.6",
     "psutil>=7.2.2",
     "pyproj>=3.7.2",
     "pyvista>=0.47.2",

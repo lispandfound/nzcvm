@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Annotated
 
 import geopandas as gpd
+import platformdirs
 import numpy as np
 import pandas as pd
 import scipy as sp
@@ -18,7 +19,7 @@ from rich.table import Table
 
 from nzcvm.model import Model
 
-memory = Memory("/tmp/nz_cache", verbose=0)
+memory = Memory(platformdirs.user_cache_dir("nzcvm"), verbose=0)
 
 console = Console()
 

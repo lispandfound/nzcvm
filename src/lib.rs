@@ -13,6 +13,7 @@ mod nzcvm {
     use crate::mesh::MeshModel;
     use crate::model::{ConstantModel, InterpolateModel, Model};
     use crate::model_tree::ModelTree;
+    use crate::quality::Quality;
     use crate::query::Query;
     use crate::real::Real;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
@@ -73,8 +74,12 @@ mod nzcvm {
             .map(|a| Point4::new(a[0], a[1], a[2], a[3]))
             .collect();
 
-        // Reuse the numpy buffer directly — avoids a separate Vec<Quality> allocation.
-        let qualities: Array2<Real> = qualities_py.as_array().to_owned();
+        // Build Vec<Quality> from the (N, 6) numpy array.
+        let qualities: Vec<Quality> = qualities_py
+            .as_array()
+            .axis_iter(Axis(0))
+            .map(Quality::from)
+            .collect();
 
         let types = types_py.as_array();
         let mut models_vec = Vec::with_capacity(types.len());

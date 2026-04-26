@@ -9,7 +9,6 @@ use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use bvh::bvh::{Bvh, BvhNode};
 use nalgebra::{Affine3, Point, Point3, Point4};
-use ndarray::Array2;
 use serde::Serialize;
 
 /// Default priority for models that do not specify one explicitly.
@@ -43,9 +42,7 @@ pub struct MeshModel {
     bvh_tree: Bvh<Real, 3>,
     simplices: Vec<Simplex>,
     model_map: Vec<Model>,
-    /// Quality data laid out as an `(N, 6)` row-major array.
-    /// Columns: `[rho, vp, vs, qp, qs, alpha]`.
-    qualities: Array2<Real>,
+    qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
     transform: Option<Affine3<Real>>,
     pub priority: u8,
@@ -61,7 +58,7 @@ impl DeepSizeOf for MeshModel {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
         self.simplices.deep_size_of_children(context)
             + self.model_map.deep_size_of_children(context)
-            + self.qualities.len() * size_of::<Real>()
+            + self.qualities.deep_size_of_children(context)
             + self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
             + self.name.deep_size_of_children(context)
     }
@@ -128,12 +125,11 @@ impl MeshModel {
             .map(|q| Model::from(InterpolateModel { qualities: *q }))
             .collect();
 
-        let qualities_array = Quality::from_slice(&qualities);
         Self::new(
             vertices,
             faces,
             models,
-            qualities_array,
+            qualities,
             DEFAULT_PRIORITY,
             None,
             String::new(),
@@ -147,14 +143,11 @@ impl MeshModel {
     /// are transformed into local space before the BVH is consulted, and
     /// the AABB is computed in world space by transforming vertices with the
     /// inverse.
-    ///
-    /// `qualities` must be an `(N, 6)` array with columns
-    /// `[rho, vp, vs, qp, qs, alpha]`.
     pub fn new(
         vertices: Vec<Point3<Real>>,
         faces: Vec<Point4<usize>>,
         models: Vec<Model>,
-        qualities: Array2<Real>,
+        qualities: Vec<Quality>,
         priority: u8,
         transform: Option<Affine3<Real>>,
         name: String,
@@ -216,11 +209,11 @@ impl MeshModel {
 
     /// Number of vertex-quality entries in this mesh.
     pub fn points(&self) -> usize {
-        self.qualities.nrows()
+        self.qualities.len()
     }
 
     fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
-        self.model_map[simplex.id].quality_at(self.qualities.view(), simplex, point)
+        self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
     /// Transform a point from world space into the mesh's local space.
@@ -262,7 +255,7 @@ impl MeshModel {
         println!(
             "Mesh model {} with {} vertices and {} simplices, tree depth = {}, priority = {}.",
             name_display,
-            self.qualities.nrows(),
+            self.qualities.len(),
             self.simplices.len(),
             depth,
             self.priority,

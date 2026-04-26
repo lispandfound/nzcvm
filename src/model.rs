@@ -5,7 +5,6 @@ use deepsize::{Context, DeepSizeOf};
 use enum_dispatch::enum_dispatch;
 use nalgebra::Scalar;
 use nalgebra::{Point3, Point4};
-use ndarray::ArrayView2;
 
 /// Diagnostic output from a model query, carrying the per-vertex qualities
 /// used in the computation.
@@ -18,15 +17,15 @@ pub enum ModelExplanation {
 #[enum_dispatch]
 pub trait Queryable {
     /// Return the quality at `point` inside `simplex`, looking up vertex
-    /// properties from the `(N, 6)` qualities array.
+    /// properties from the qualities slice.
     fn quality_at(
         &self,
-        qualities: ArrayView2<'_, Real>,
+        qualities: &[Quality],
         simplex: &Simplex,
         point: &Point3<Real>,
     ) -> Quality;
     /// Return a diagnostic description of this model's contribution.
-    fn explanation(&self, qualities: ArrayView2<'_, Real>) -> ModelExplanation;
+    fn explanation(&self, qualities: &[Quality]) -> ModelExplanation;
 }
 
 /// Per-simplex model variant: either constant or barycentric interpolation.
@@ -51,16 +50,16 @@ pub struct ConstantModel<T> {
 impl Queryable for ConstantModel<usize> {
     fn quality_at(
         &self,
-        qualities: ArrayView2<'_, Real>,
+        qualities: &[Quality],
         _simplex: &Simplex,
         _point: &Point3<Real>,
     ) -> Quality {
-        Quality::from(qualities.row(self.quality))
+        qualities[self.quality]
     }
 
-    fn explanation(&self, qualities: ArrayView2<'_, Real>) -> ModelExplanation {
+    fn explanation(&self, qualities: &[Quality]) -> ModelExplanation {
         ModelExplanation::Constant(ConstantModel {
-            quality: Quality::from(qualities.row(self.quality)),
+            quality: qualities[self.quality],
         })
     }
 }
@@ -76,21 +75,21 @@ pub struct InterpolateModel<T: Scalar> {
 impl Queryable for InterpolateModel<usize> {
     fn quality_at(
         &self,
-        qualities: ArrayView2<'_, Real>,
+        qualities: &[Quality],
         simplex: &Simplex,
         point: &Point3<Real>,
     ) -> Quality {
         let bary = simplex.barycentric_coordinates(*point);
-        let q0 = Quality::from(qualities.row(self.qualities.w));
-        let q1 = Quality::from(qualities.row(self.qualities.x));
-        let q2 = Quality::from(qualities.row(self.qualities.y));
-        let q3 = Quality::from(qualities.row(self.qualities.z));
+        let q0 = qualities[self.qualities.w];
+        let q1 = qualities[self.qualities.x];
+        let q2 = qualities[self.qualities.y];
+        let q3 = qualities[self.qualities.z];
         q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z
     }
 
-    fn explanation(&self, qualities: ArrayView2<'_, Real>) -> ModelExplanation {
+    fn explanation(&self, qualities: &[Quality]) -> ModelExplanation {
         ModelExplanation::Interpolate(InterpolateModel {
-            qualities: self.qualities.map(|x| Quality::from(qualities.row(x))),
+            qualities: self.qualities.map(|x| qualities[x]),
         })
     }
 }

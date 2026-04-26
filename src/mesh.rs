@@ -63,7 +63,7 @@ impl DeepSizeOf for MeshModel {
             + self.model_map.deep_size_of_children(context)
             + self.qualities.len() * size_of::<Real>()
             + self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
-            + self.name.len()
+            + self.name.deep_size_of_children(context)
     }
 }
 

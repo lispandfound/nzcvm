@@ -22,8 +22,6 @@ mod nzcvm {
     use pyo3::prelude::*;
     use pythonize::pythonize;
 
-    use std::sync::Arc;
-
     /// Python-facing single tetrahedral mesh model.
     ///
     /// Wraps a [`MeshModel`] and exposes query, AABB, name and priority.
@@ -36,7 +34,7 @@ mod nzcvm {
     /// Python-facing velocity model (a compiled [`ModelTree`]).
     #[pyclass]
     pub struct PyModelTree {
-        pub inner: Arc<ModelTree>,
+        pub inner: ModelTree,
     }
 
     /// Create a [`PyMeshModel`] from raw NumPy arrays.
@@ -148,7 +146,7 @@ mod nzcvm {
             models.push(model);
         }
         Ok(PyModelTree {
-            inner: Arc::new(ModelTree::new(models)),
+            inner: ModelTree::new(models),
         })
     }
 

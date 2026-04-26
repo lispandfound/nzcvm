@@ -231,6 +231,34 @@ class MeshModel:
         """
         self._raw = raw
 
+    @classmethod
+    def from_mesh(
+        cls,
+        mesh: pv.UnstructuredGrid,
+        name: str | None = None,
+    ) -> "MeshModel":
+        """Build a :class:`MeshModel` from a PyVista ``UnstructuredGrid``.
+
+        Parameters
+        ----------
+        mesh :
+            An ``UnstructuredGrid`` with the NZCVM cell and field data
+            layout (see :func:`nzcvm.mesh.make_mesh`).
+        name :
+            Optional human-readable name.  Takes precedence over any name
+            stored in ``mesh.field_data["name"]``.
+
+        Returns
+        -------
+        MeshModel
+
+        See Also
+        --------
+        nzcvm.mesh.make_mesh : Create a compatible ``UnstructuredGrid``.
+        ModelTree : Combine multiple ``MeshModel`` instances for priority-blended queries.
+        """
+        return cls(_mesh_model_from_pyvista(mesh, name=name))
+
     @property
     def name(self) -> str:
         """Human-readable name assigned at construction time."""

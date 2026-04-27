@@ -17,9 +17,13 @@ pub enum ModelExplanation {
 #[enum_dispatch]
 pub trait Queryable {
     /// Return the quality at `point` inside `simplex`, looking up vertex
-    /// properties from `qualities`.
-    fn quality_at(&self, qualities: &[Quality], simplex: &Simplex, point: &Point3<Real>)
-        -> Quality;
+    /// properties from the qualities slice.
+    fn quality_at(
+        &self,
+        qualities: &[Quality],
+        simplex: &Simplex,
+        point: &Point3<Real>,
+    ) -> Quality;
     /// Return a diagnostic description of this model's contribution.
     fn explanation(&self, qualities: &[Quality]) -> ModelExplanation;
 }

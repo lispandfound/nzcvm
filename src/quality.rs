@@ -1,6 +1,6 @@
 use crate::real::Real;
 use deepsize::DeepSizeOf;
-use ndarray::{Array1, ArrayView1};
+use ndarray::{Array1, Array2, ArrayView1};
 use serde::Serialize;
 use std::ops::{Add, Mul};
 
@@ -50,6 +50,20 @@ impl Quality {
             qs: a0 * self.qs + a1 * rhs.qs,
             alpha,
         }
+    }
+}
+
+impl Quality {
+    /// Build an owned `(N, 6)` row-major float array from a slice of qualities.
+    ///
+    /// Column order: `[rho, vp, vs, qp, qs, alpha]`.
+    pub fn from_slice(qualities: &[Quality]) -> Array2<Real> {
+        let n = qualities.len();
+        let flat: Vec<Real> = qualities
+            .iter()
+            .flat_map(|q| [q.rho, q.vp, q.vs, q.qp, q.qs, q.alpha])
+            .collect();
+        Array2::from_shape_vec((n, 6), flat).expect("internal error: quality array shape mismatch")
     }
 }
 

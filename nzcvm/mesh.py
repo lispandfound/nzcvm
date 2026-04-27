@@ -45,6 +45,7 @@ def make_mesh(
     connectivity: np.ndarray,
     cell_data: dict[str, np.ndarray],
     field_data: dict[str, np.ndarray],
+    name: str | None = None,
 ) -> pv.UnstructuredGrid:
     """Create a tetrahedral :class:`pyvista.UnstructuredGrid`.
 
@@ -59,6 +60,10 @@ def make_mesh(
     field_data:
         Per-model arrays (e.g. ``rho``, ``vp``, ``vs``, ``qp``, ``qs``,
         ``alpha``, ``priority``).
+    name:
+        Optional human-readable name for the model.  Stored in
+        ``field_data["name"]`` when provided so it survives VTKHDF
+        round-trips and is picked up by :func:`~nzcvm.model.MeshModel`.
 
     Returns
     -------
@@ -72,4 +77,6 @@ def make_mesh(
         mesh.cell_data[k] = v
     for k, v in field_data.items():
         mesh.field_data[k] = v
+    if name is not None:
+        mesh.field_data["name"] = np.array([name])
     return mesh

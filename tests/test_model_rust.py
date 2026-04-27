@@ -6,10 +6,11 @@ dataclasses) rather than duplicating the Rust BVH logic already covered by
 """
 
 import numpy as np
+import pytest
 import xarray as xr
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.model import Explanation, Model, Quality, QueryStats
+from nzcvm.model import Explanation, Model, ModelRange, Quality, QueryStats
 
 
 def _make_constant_model(
@@ -30,6 +31,28 @@ def _make_constant_model(
     )
     raw = _nzcvm.model_tree([raw_mesh])
     return Model(raw, {0: "test_model"})
+
+
+def _make_two_priority_model() -> Model:
+    """Helper: two overlapping unit-tetrahedra at priorities 10 and 200."""
+    vertices = np.array(
+        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        dtype=np.float32,
+    )
+    faces = np.array([[0, 1, 2, 3]], dtype=np.uint64)
+    types = np.array([0], dtype=np.uint8)
+
+    def _make_mesh(priority: int, vs: float) -> object:
+        qi = np.array([[2700.0, 6000.0, vs, 200.0, 100.0, 1.0]], dtype=np.float32)
+        idx = np.array([0], dtype=np.uint64)
+        return _nzcvm.mesh_model(
+            vertices, faces, types, idx, qi, np.uint8(priority), None
+        )
+
+    mesh_tomo = _make_mesh(10, 3500.0)
+    mesh_basin = _make_mesh(200, 1200.0)
+    raw = _nzcvm.model_tree([mesh_tomo, mesh_basin])
+    return Model(raw)
 
 
 class TestModelQueryPythonTypes:
@@ -170,3 +193,149 @@ class TestModelMap:
         raw = _nzcvm.model_tree([raw_mesh])
         model = Model(raw)
         assert model.model_map == {}
+
+
+class TestModelRange:
+    """ModelRange enum values match the documented priority convention."""
+
+    def test_tomography_range(self):
+        assert ModelRange.TOMOGRAPHY.value == (0, 127)
+
+    def test_basins_range(self):
+        assert ModelRange.BASINS.value == (129, 255)
+
+    def test_all_range(self):
+        assert ModelRange.ALL.value == (0, 255)
+
+
+class TestQueryBounded:
+    """query_bounded filters models by priority range."""
+
+    def test_returns_tomo_model_only(self):
+        model = _make_two_priority_model()
+        result = model.query_bounded(0.1, 0.1, 0.1, ModelRange.TOMOGRAPHY)
+        assert result is not None
+        assert abs(result.vs - 3500.0) < 1.0
+
+    def test_returns_basin_model_only(self):
+        model = _make_two_priority_model()
+        result = model.query_bounded(0.1, 0.1, 0.1, ModelRange.BASINS)
+        # Basin model has priority 200 which is in BASINS range (129-255)
+        assert result is not None
+        assert abs(result.vs - 1200.0) < 1.0
+
+    def test_out_of_range_returns_none(self):
+        model = _make_constant_model(priority=10)
+        # Priority 10 is not in BASINS range (129-255)
+        result = model.query_bounded(0.1, 0.1, 0.1, ModelRange.BASINS)
+        assert result is None
+
+    def test_all_returns_highest_priority(self):
+        model = _make_two_priority_model()
+        result = model.query_bounded(0.1, 0.1, 0.1, ModelRange.ALL)
+        assert result is not None
+        # Priority 10 (tomo) wins over priority 200 (basin)
+        assert abs(result.vs - 3500.0) < 1.0
+
+
+class TestQueryManyBounded:
+    """query_many_bounded returns an xarray Dataset filtered by priority."""
+
+    def test_returns_dataset(self):
+        model = _make_two_priority_model()
+        x = np.array([0.1], dtype=np.float32)
+        y = np.array([0.1], dtype=np.float32)
+        z = np.array([0.1], dtype=np.float32)
+        result = model.query_many_bounded(x, y, z, ModelRange.TOMOGRAPHY)
+        assert isinstance(result, xr.Dataset)
+
+    def test_has_expected_variables(self):
+        model = _make_two_priority_model()
+        x = np.array([0.1], dtype=np.float32)
+        y = np.array([0.1], dtype=np.float32)
+        z = np.array([0.1], dtype=np.float32)
+        result = model.query_many_bounded(x, y, z, ModelRange.TOMOGRAPHY)
+        for var in ("rho", "vp", "vs", "qp", "qs"):
+            assert var in result.data_vars
+
+    def test_tomo_vs_value(self):
+        model = _make_two_priority_model()
+        x = np.array([0.1], dtype=np.float32)
+        y = np.array([0.1], dtype=np.float32)
+        z = np.array([0.1], dtype=np.float32)
+        result = model.query_many_bounded(x, y, z, ModelRange.TOMOGRAPHY)
+        assert abs(float(result["vs"].values[0]) - 3500.0) < 1.0
+
+    def test_out_of_range_returns_zeros(self):
+        model = _make_constant_model(priority=10)
+        x = np.array([0.1], dtype=np.float32)
+        y = np.array([0.1], dtype=np.float32)
+        z = np.array([0.1], dtype=np.float32)
+        result = model.query_many_bounded(x, y, z, ModelRange.BASINS)
+        # Nothing in BASINS range → zeros
+        assert float(result["rho"].values[0]) == 0.0
+
+
+class TestQueryManyBoundedDask:
+    """query_many_bounded must be compatible with dask-backed xarray arrays."""
+
+    pytest.importorskip("dask")
+
+    def test_query_many_bounded_dask(self):
+        dask = pytest.importorskip("dask.array")
+        model = _make_two_priority_model()
+        x = dask.from_array(np.array([0.1, 0.2], dtype=np.float32), chunks=1)
+        y = dask.from_array(np.array([0.1, 0.1], dtype=np.float32), chunks=1)
+        z = dask.from_array(np.array([0.1, 0.1], dtype=np.float32), chunks=1)
+
+        x_xr = xr.DataArray(x, dims=["d0"])
+        y_xr = xr.DataArray(y, dims=["d0"])
+        z_xr = xr.DataArray(z, dims=["d0"])
+
+        # Use apply_ufunc to simulate the pipeline pattern used in ModelLayer
+        import numpy as _np
+
+        raw = xr.apply_ufunc(
+            lambda xi, yi, zi: model.query_many_raw_bounded(xi, yi, zi, ModelRange.TOMOGRAPHY),
+            x_xr,
+            y_xr,
+            z_xr,
+            input_core_dims=[[], [], []],
+            output_core_dims=[["quality_dim"]],
+            dask="parallelized",
+            output_dtypes=[_np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"quality_dim": 6}},
+        )
+        # Compute triggers the dask graph
+        result = raw.compute()
+        assert result.shape == (2, 6)
+        # Tomography model has vs=3500 at priority 10 which is in TOMOGRAPHY range
+        assert abs(float(result.isel(d0=0, quality_dim=2).values) - 3500.0) < 1.0
+
+    def test_query_many_all_dask(self):
+        dask = pytest.importorskip("dask.array")
+        model = _make_constant_model()
+        x = dask.from_array(np.array([0.1, 0.2], dtype=np.float32), chunks=1)
+        y = dask.from_array(np.array([0.1, 0.1], dtype=np.float32), chunks=1)
+        z = dask.from_array(np.array([0.1, 0.1], dtype=np.float32), chunks=1)
+
+        x_xr = xr.DataArray(x, dims=["d0"])
+        y_xr = xr.DataArray(y, dims=["d0"])
+        z_xr = xr.DataArray(z, dims=["d0"])
+
+        import numpy as _np
+
+        raw = xr.apply_ufunc(
+            model.query_many_raw,
+            x_xr,
+            y_xr,
+            z_xr,
+            input_core_dims=[[], [], []],
+            output_core_dims=[["quality_dim"]],
+            dask="parallelized",
+            output_dtypes=[_np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"quality_dim": 6}},
+        )
+        result = raw.compute()
+        assert result.shape == (2, 6)
+        assert abs(float(result.isel(d0=0, quality_dim=0).values) - 2700.0) < 1.0

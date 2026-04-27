@@ -16,6 +16,10 @@ use nalgebra::Point3;
 const ALPHA_SATURATED: Real = 1.0;
 const ALPHA_EPS: Real = 1e-4;
 
+/// Priority value that represents the lowest possible priority (include all models).
+const PRIORITY_MIN: u8 = 0;
+const PRIORITY_MAX: u8 = 255;
+
 /// Serialisable top-level summary of a [`ModelTree`] for diagnostics.
 #[derive(Serialize)]
 pub struct ModelTreeView {
@@ -78,51 +82,126 @@ impl ModelTree {
     }
 }
 
+/// Accumulate quality contributions from an iterator into an optional starting value.
+///
+/// This is the shared core used by [`Query::query`], [`Query::query_bounded`],
+/// [`Query::query_into`], and [`Query::query_bounded_into`] to avoid duplicating
+/// the Porter-Duff compositing loop.
+fn blend_accumulate(
+    mut quality: Option<Quality>,
+    iter: impl Iterator<Item = (u8, Quality)>,
+) -> Option<Quality> {
+    for (_, q) in iter {
+        quality = Some(match quality {
+            None => q,
+            Some(current) => {
+                if abs_diff_eq!(current.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS) {
+                    return Some(current);
+                }
+                current.blend(&q)
+            }
+        });
+    }
+    quality
+}
+
 impl Query for ModelTree {
     type Explanation = Explanation;
 
     fn query(&self, point: Point3<Real>) -> Option<Quality> {
-        let mut quality: Option<Quality> = None;
+        blend_accumulate(
+            None,
+            priority_ray_iterator(
+                &self.bvh_tree,
+                &self.models,
+                point,
+                PRIORITY_MIN as Real,
+                PRIORITY_MAX as Real,
+            ),
+        )
+    }
 
-        for (_, q) in priority_ray_iterator(&self.bvh_tree, &self.models, point) {
-            quality = Some(match quality {
-                None => q,
-                Some(current) => {
-                    if abs_diff_eq!(current.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS) {
-                        return Some(current);
-                    }
-                    current.blend(&q)
-                }
-            });
-        }
+    fn query_bounded(
+        &self,
+        point: Point3<Real>,
+        priority_lo: u8,
+        priority_hi: u8,
+    ) -> Option<Quality> {
+        blend_accumulate(
+            None,
+            priority_ray_iterator(
+                &self.bvh_tree,
+                &self.models,
+                point,
+                priority_lo as Real,
+                priority_hi as Real,
+            ),
+        )
+    }
 
-        quality
+    fn query_into(
+        &self,
+        point: Point3<Real>,
+        existing: Option<Quality>,
+    ) -> Option<Quality> {
+        blend_accumulate(
+            existing,
+            priority_ray_iterator(
+                &self.bvh_tree,
+                &self.models,
+                point,
+                PRIORITY_MIN as Real,
+                PRIORITY_MAX as Real,
+            ),
+        )
+    }
+
+    fn query_bounded_into(
+        &self,
+        point: Point3<Real>,
+        existing: Option<Quality>,
+        priority_lo: u8,
+        priority_hi: u8,
+    ) -> Option<Quality> {
+        blend_accumulate(
+            existing,
+            priority_ray_iterator(
+                &self.bvh_tree,
+                &self.models,
+                point,
+                priority_lo as Real,
+                priority_hi as Real,
+            ),
+        )
     }
 
     fn query_stats(&self, point: Point3<Real>) -> QueryStats {
         let now = Instant::now();
 
-        let mut iter = priority_ray_stats_iterator(&self.bvh_tree, &self.models, point);
+        let mut iter = priority_ray_stats_iterator(
+            &self.bvh_tree,
+            &self.models,
+            point,
+            PRIORITY_MIN as Real,
+            PRIORITY_MAX as Real,
+        );
         let mut hits: Vec<(u8, Quality)> = Vec::new();
         for hit in iter.by_ref() {
             hits.push(hit);
         }
         let outer_stats = iter.stats;
         let mut hit_count = 0;
-        let mut quality: Option<Quality> = None;
-
-        for (_, q) in priority_ray_iterator(&self.bvh_tree, &self.models, point) {
-            hit_count += 1;
-            quality = Some(match quality {
-                None => q,
-                Some(current) => {
-                    if abs_diff_eq!(current.alpha, ALPHA_SATURATED, epsilon = ALPHA_EPS) {
-                        break;
-                    }
-                    current.blend(&q)
-                }
-            });
-        }
+        let quality = blend_accumulate(
+            None,
+            priority_ray_iterator(
+                &self.bvh_tree,
+                &self.models,
+                point,
+                PRIORITY_MIN as Real,
+                PRIORITY_MAX as Real,
+            )
+            .inspect(|_| hit_count += 1),
+        );
 
         QueryStats {
             aabb_tests: outer_stats.aabb_tests,
@@ -138,8 +217,14 @@ impl Query for ModelTree {
         let mut blended: Option<Quality> = None;
         let mut termination = None;
 
-        for (i, (priority, q)) in
-            priority_ray_iterator(&self.bvh_tree, &self.models, point).enumerate()
+        for (i, (priority, q)) in priority_ray_iterator(
+            &self.bvh_tree,
+            &self.models,
+            point,
+            PRIORITY_MIN as Real,
+            PRIORITY_MAX as Real,
+        )
+        .enumerate()
         {
             contributions.push(ModelContribution {
                 priority,
@@ -307,6 +392,113 @@ mod tests {
         assert_relative_eq!(aabb.max.x, 3.0, epsilon = 1e-5);
         assert_relative_eq!(aabb.min.y, 0.0, epsilon = 1e-5);
         assert_relative_eq!(aabb.max.y, 1.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_query_bounded_tomography_only() {
+        // priority 10 = tomography range (0-127), priority 200 = basin range (128-255)
+        let mesh_tomo = unit_cube_mesh(10, 5.0, 1.0);
+        let mesh_basin = unit_cube_mesh(200, 99.0, 1.0);
+        let tree = ModelTree::new(vec![mesh_tomo, mesh_basin]);
+        let pt = Point3::new(0.5, 0.5, 0.5);
+
+        // Query only tomography range: should return tomo value
+        let result = tree.query_bounded(pt, 0, 127);
+        assert!(result.is_some());
+        assert_relative_eq!(result.unwrap().rho, 5.0, epsilon = 1e-4);
+
+        // Query only basin range: should return basin value
+        let result = tree.query_bounded(pt, 128, 255);
+        assert!(result.is_some());
+        assert_relative_eq!(result.unwrap().rho, 99.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_query_bounded_excludes_out_of_range() {
+        let mesh = unit_cube_mesh(50, 7.0, 1.0);
+        let tree = ModelTree::new(vec![mesh]);
+        let pt = Point3::new(0.5, 0.5, 0.5);
+
+        // Model has priority 50; query in range 128-255 should return None
+        let result = tree.query_bounded(pt, 128, 255);
+        assert!(result.is_none());
+
+        // Query in range 0-127 should return the value
+        let result = tree.query_bounded(pt, 0, 127);
+        assert!(result.is_some());
+        assert_relative_eq!(result.unwrap().rho, 7.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_query_bounded_exact_boundary() {
+        let mesh_lo = unit_cube_mesh(127, 1.0, 1.0);
+        let mesh_hi = unit_cube_mesh(128, 2.0, 1.0);
+        let tree = ModelTree::new(vec![mesh_lo, mesh_hi]);
+        let pt = Point3::new(0.5, 0.5, 0.5);
+
+        // Priority 127 is the last value in 0-127 range
+        let result = tree.query_bounded(pt, 0, 127);
+        assert!(result.is_some());
+        assert_relative_eq!(result.unwrap().rho, 1.0, epsilon = 1e-4);
+
+        // Priority 128 is the first value in 128-255 range
+        let result = tree.query_bounded(pt, 128, 255);
+        assert!(result.is_some());
+        assert_relative_eq!(result.unwrap().rho, 2.0, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_query_into_blends_with_existing() {
+        // Priority-0 model: rho=4.0, alpha=0.5
+        let mesh0 = unit_cube_mesh(0, 4.0, 0.5);
+        let tree = ModelTree::new(vec![mesh0]);
+        let pt = Point3::new(0.5, 0.5, 0.5);
+
+        // Start with an existing quality (rho=10.0, alpha=0.5)
+        let existing = Some(Quality {
+            rho: 10.0,
+            vp: 10.0,
+            vs: 10.0,
+            qp: 10.0,
+            qs: 10.0,
+            alpha: 0.5,
+        });
+        let result = tree.query_into(pt, existing);
+        assert!(result.is_some());
+        let q = result.unwrap();
+        // existing.blend(&new_quality): existing takes precedence
+        // alpha = 0.5 + 0.5*(1-0.5) = 0.75
+        // rho = (0.5/0.75)*10.0 + (0.5*0.5/0.75)*4.0
+        let expected_rho = (0.5 / 0.75) * 10.0 + (0.5 * 0.5 / 0.75) * 4.0;
+        assert_relative_eq!(q.rho, expected_rho as Real, epsilon = 1e-4);
+        assert_relative_eq!(q.alpha, 0.75, epsilon = 1e-4);
+    }
+
+    #[test]
+    fn test_query_into_no_existing_matches_query() {
+        let mesh = unit_cube_mesh(0, 6.0, 1.0);
+        let tree = ModelTree::new(vec![mesh]);
+        let pt = Point3::new(0.5, 0.5, 0.5);
+
+        let from_query = tree.query(pt);
+        let from_query_into = tree.query_into(pt, None);
+        assert_eq!(from_query, from_query_into);
+    }
+
+    #[test]
+    fn test_query_bounded_into_combines_two_queries() {
+        // Simulate the Ely taper pattern:
+        // 1. Query tomography (priority 0-127) → use as "existing"
+        // 2. query_bounded_into basin (128-255) to blend basin over tomo
+        let mesh_tomo = unit_cube_mesh(10, 5.0, 0.5);
+        let mesh_basin = unit_cube_mesh(200, 9.0, 0.5);
+        let tree = ModelTree::new(vec![mesh_tomo, mesh_basin]);
+        let pt = Point3::new(0.5, 0.5, 0.5);
+
+        let tomo = tree.query_bounded(pt, 0, 127);
+        let result = tree.query_bounded_into(pt, tomo, 128, 255);
+        assert!(result.is_some());
+        // Both contribute; combined alpha should be 0.75
     }
 
     #[test]

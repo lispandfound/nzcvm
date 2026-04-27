@@ -197,7 +197,7 @@ mod tests {
             Point4::new(1, 2, 4, 7),
         ];
         let q = Quality { rho: quality_val, vp: quality_val, vs: quality_val, qp: quality_val, qs: quality_val, alpha };
-        let qualities = Quality::from_slice(&vec![q; vertices.len()]);
+        let qualities = vec![q; vertices.len()];
         let models = faces
             .iter()
             .map(|f| Model::from(InterpolateModel { qualities: *f }))
@@ -297,7 +297,7 @@ mod tests {
             Point4::new(1, 2, 4, 7),
         ];
         let q = Quality { rho: 7.0, vp: 7.0, vs: 7.0, qp: 7.0, qs: 7.0, alpha: 1.0 };
-        let qualities = Quality::from_slice(&vec![q; vertices.len()]);
+        let qualities = vec![q; vertices.len()];
         let models = faces.iter().map(|f| Model::from(InterpolateModel { qualities: *f })).collect();
         let mesh1 = MeshModel::new(vertices, faces, models, qualities, 1, None, String::new());
 
@@ -319,7 +319,7 @@ mod tests {
         ];
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let q = Quality { rho: 42.0, vp: 1.0, vs: 1.0, qp: 1.0, qs: 1.0, alpha: 1.0 };
-        let qualities = Quality::from_slice(&[q]);
+        let qualities = vec![q];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
         let mesh = MeshModel::new(vertices, faces, models, qualities, 0, None, String::new());
         let tree = ModelTree::new(vec![mesh]);

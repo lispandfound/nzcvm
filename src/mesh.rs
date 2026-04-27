@@ -461,7 +461,7 @@ mod tests {
         let quality = mock_quality(1.0);
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
-        let qualities = Quality::from_slice(&[quality; 4]);
+        let qualities = vec![quality; 4];
         let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
         let q = mesh.query(Point3::new(5.0, 5.0, 5.0));
         assert!(q.is_none());
@@ -489,8 +489,7 @@ mod tests {
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let qualities_vec: Vec<Quality> = (0..4).map(|i| mock_quality(i as Real)).collect();
         let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
-        let qualities = Quality::from_slice(&qualities_vec);
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
+        let mesh = MeshModel::new(v, faces, models, qualities_vec, 0, None, String::new());
         let q = mesh.query(Point3::new(0.25, 0.25, 0.25));
         assert!(q.is_some());
         // Centroid bary coords all equal 0.25; qualities are 0,1,2,3
@@ -504,7 +503,7 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let q_fixed = Quality { rho: 42.0, vp: 1.0, vs: 2.0, qp: 3.0, qs: 4.0, alpha: 1.0 };
-        let qualities = Quality::from_slice(&[q_fixed]);
+        let qualities = vec![q_fixed];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
         let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
         let result = mesh.query(Point3::new(0.2, 0.1, 0.1));
@@ -522,7 +521,7 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let qualities = Quality::from_slice(&[mock_quality(5.0)]);
+        let qualities = vec![mock_quality(5.0)];
 
         // World-to-local: subtract 5 from x-coordinate.
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
@@ -547,7 +546,7 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let qualities = Quality::from_slice(&[mock_quality(1.0)]);
+        let qualities = vec![mock_quality(1.0)];
 
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
             Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),

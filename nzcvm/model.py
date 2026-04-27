@@ -42,7 +42,10 @@ class ModelRange(Enum):
     and ``255`` is the lowest.  The ranges below reflect the NZCVM convention:
 
     * ``0–127``  — tomography models (higher priority, evaluated first).
-    * ``128–255`` — basin models (lower priority, blended in afterwards).
+    * ``129–255`` — basin models (lower priority, blended in afterwards).
+
+    Priority 128 is intentionally excluded from both named ranges and may be
+    used as a separator value by model authors.
 
     Parameters
     ----------

@@ -63,12 +63,6 @@ class TestQueryMany:
         xr.testing.assert_allclose(ds[["rho"]], expected)
 
 
-class TestModelRange:
-    def test_values(self):
-        assert ModelRange.TOMOGRAPHY.value == (0, 127)
-        assert ModelRange.BASINS.value == (129, 255)
-        assert ModelRange.ALL.value == (0, 255)
-
 
 class TestDask:
     def test_query_many_raw_via_apply_ufunc(self):

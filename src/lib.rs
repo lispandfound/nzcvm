@@ -1,3 +1,4 @@
+pub mod blend;
 pub mod mesh;
 pub mod model;
 pub mod model_tree;
@@ -10,6 +11,7 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
+    use crate::blend::{Blend, BlendDispatch, Erase, Over};
     use crate::mesh::MeshModel;
     use crate::model::{ConstantModel, InterpolateModel, Model};
     use crate::model_tree::ModelTree;
@@ -27,6 +29,9 @@ mod nzcvm {
     ///
     /// Passed to [`PyModelTree::query_many`] to select between overwriting
     /// and Porter-Duff alpha blending.
+    ///
+    /// Internally converted to a [`BlendDispatch`] before entering the query
+    /// loop so that no `match` is needed inside the hot path.
     #[pyclass(from_py_object)]
     #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
     #[serde(rename_all = "snake_case")]
@@ -39,6 +44,15 @@ mod nzcvm {
         /// Blend the query result *over* the existing buffer row using the
         /// Porter-Duff "over" operator.
         Over,
+    }
+
+    impl From<BlendMode> for BlendDispatch {
+        fn from(mode: BlendMode) -> Self {
+            match mode {
+                BlendMode::Erase => BlendDispatch::Erase(Erase),
+                BlendMode::Over => BlendDispatch::Over(Over),
+            }
+        }
     }
 
     /// Python-facing single tetrahedral mesh model.
@@ -365,6 +379,9 @@ mod nzcvm {
         ///   rows for points outside all matching models are left unchanged.
         /// * `BlendMode.Over` — Porter-Duff "over" blend of the query result
         ///   over the existing row value.
+        ///
+        /// Internally, `blend_mode` is converted to a [`BlendDispatch`] once
+        /// before the loop so the hot path contains no `match`.
         #[allow(clippy::too_many_arguments)]
         pub fn query_many<'py>(
             &self,
@@ -381,21 +398,14 @@ mod nzcvm {
             let y = y_py.as_array();
             let z = z_py.as_array();
             let buffer_in = buffer_py.as_array();
+            // Resolve blend mode once; the hot loop calls blend.apply() with no match.
+            let blend: BlendDispatch = blend_mode.into();
 
             let result = py.detach(|| {
                 let mut out_array = buffer_in.to_owned();
                 azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
                     let pt = Point3::new(xi, yi, zi);
-                    let quality = match blend_mode {
-                        BlendMode::Erase => {
-                            self.inner.query_bounded(pt, priority_lo, priority_hi)
-                        }
-                        BlendMode::Over => {
-                            let existing = Some(crate::quality::Quality::from(out_lane.view()));
-                            self.inner.query_bounded_into(pt, existing, priority_lo, priority_hi)
-                        }
-                    };
-                    if let Some(q) = quality {
+                    if let Some(q) = blend.apply(&self.inner, pt, out_lane.view(), priority_lo, priority_hi) {
                         out_lane[0] = q.rho;
                         out_lane[1] = q.vp;
                         out_lane[2] = q.vs;

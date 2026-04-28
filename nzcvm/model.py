@@ -22,7 +22,6 @@ from typing import Any, Protocol, Self
 import numpy as np
 import pyvista as pv
 import rich
-import xarray as xr
 from mashumaro.mixins.dict import DataClassDictMixin
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
@@ -512,7 +511,7 @@ class ModelTree:
         ModelTree.get_explanation : Query with per-model contribution details.
         """
         lo, hi = model_range.value
-        quality_dict = self._raw.query_bounded(x, y, z, lo, hi)
+        quality_dict = self._raw.query(x, y, z, lo, hi)
         return Quality.from_dict(quality_dict) if quality_dict is not None else None
 
     def query_stats(self, x: Any, y: Any, z: Any) -> QueryStats:

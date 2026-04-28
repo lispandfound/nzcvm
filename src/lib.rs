@@ -387,7 +387,9 @@ mod nzcvm {
                 let mut out_array = buffer_in.to_owned();
                 azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
                     let pt = Point3::new(xi, yi, zi);
-                    if let Some(q) = blend.apply(&self.inner, pt, out_lane.view(), priority_lo, priority_hi) {
+                    if let Some(new_q) = self.inner.query(pt, None, priority_lo, priority_hi) {
+                        let existing = Some(Quality::from(out_lane.view()));
+                        let q = blend.apply(existing, new_q);
                         out_lane[0] = q.rho;
                         out_lane[1] = q.vp;
                         out_lane[2] = q.vs;

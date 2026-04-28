@@ -1,14 +1,13 @@
-use crate::model_tree::ModelTree;
 use crate::quality::Quality;
-use crate::query::Query;
-use crate::real::Real;
 use enum_dispatch::enum_dispatch;
-use nalgebra::Point3;
-use ndarray::ArrayView1;
 
 #[enum_dispatch]
 pub trait Blend {
-    fn apply(&self, tree: &ModelTree, pt: Point3<Real>, row: ArrayView1<'_, Real>, lo: u8, hi: u8) -> Option<Quality>;
+    /// Combine an existing (buffer) quality with a freshly-queried one.
+    ///
+    /// `existing` is the current value in the output buffer row (may be
+    /// `None` if the buffer is zero-filled and the caller passes nothing).
+    fn apply(&self, existing: Option<Quality>, new: Quality) -> Quality;
 }
 
 /// Overwrite: replaces the buffer row with the query result.
@@ -21,15 +20,18 @@ pub struct Over;
 
 impl Blend for Erase {
     #[inline]
-    fn apply(&self, tree: &ModelTree, pt: Point3<Real>, _row: ArrayView1<'_, Real>, lo: u8, hi: u8) -> Option<Quality> {
-        tree.query(pt, None, lo, hi)
+    fn apply(&self, _existing: Option<Quality>, new: Quality) -> Quality {
+        new
     }
 }
 
 impl Blend for Over {
     #[inline]
-    fn apply(&self, tree: &ModelTree, pt: Point3<Real>, row: ArrayView1<'_, Real>, lo: u8, hi: u8) -> Option<Quality> {
-        tree.query(pt, Some(Quality::from(row)), lo, hi)
+    fn apply(&self, existing: Option<Quality>, new: Quality) -> Quality {
+        match existing {
+            None => new,
+            Some(e) => e.blend(&new),
+        }
     }
 }
 

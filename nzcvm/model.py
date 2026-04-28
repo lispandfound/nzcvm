@@ -30,7 +30,7 @@ from rich.tree import Tree
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import read_vtkhdf
 
-from .nzcvm import BlendMode, PyModelTree  # ty: ignore[unresolved-import]
+from .nzcvm import BlendMode, PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 
@@ -617,17 +617,12 @@ class ModelTree:
         if buffer is None:
             buf = np.zeros((n, 6), dtype=np.float32)
         else:
-            buf = buffer.astype(np.float32, copy=False).reshape(-1, 6)
+            buf = np.asarray(buffer, dtype=np.float32).reshape(-1, 6)
+        xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
         lo, hi = model_range.value
-        return self._raw.query_many(
-            buf,
-            x.ravel(),
-            y.ravel(),
-            z.ravel(),
-            lo,
-            hi,
-            blend_mode,
-        ).reshape(x.shape + (6,))
+        params = QueryParams(lo, hi, blend_mode)
+        self._raw.query_many(buf, xyz, params)
+        return buf.reshape(x.shape + (6,))
 
     def query_many(
         self,

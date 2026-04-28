@@ -20,7 +20,7 @@ mod nzcvm {
     use crate::real::Real;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
     use ndarray::{array, azip, Axis};
-    use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+    use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
@@ -51,6 +51,40 @@ mod nzcvm {
             match mode {
                 BlendMode::Erase => BlendDispatch::Erase(Erase),
                 BlendMode::Over => BlendDispatch::Over(Over),
+            }
+        }
+    }
+
+    /// Parameters controlling a vectorised query (priority range + blend mode).
+    ///
+    /// Bundles `priority_lo`, `priority_hi`, and `blend_mode` into a single
+    /// object so that [`PyModelTree::query_many`] has a compact signature.
+    #[pyclass(from_py_object)]
+    #[derive(Debug, Clone, Copy)]
+    pub struct QueryParams {
+        pub priority_lo: u8,
+        pub priority_hi: u8,
+        pub blend_mode: BlendMode,
+    }
+
+    #[pymethods]
+    impl QueryParams {
+        /// Create a new ``QueryParams``.
+        ///
+        /// Parameters
+        /// ----------
+        /// priority_lo, priority_hi :
+        ///     Inclusive priority bounds; only models whose priority falls in
+        ///     ``[priority_lo, priority_hi]`` are queried.  Pass ``0, 255`` to
+        ///     query all models.
+        /// blend_mode :
+        ///     How the query result is composited into the output buffer.
+        #[new]
+        pub fn new(priority_lo: u8, priority_hi: u8, blend_mode: BlendMode) -> Self {
+            QueryParams {
+                priority_lo,
+                priority_hi,
+                blend_mode,
             }
         }
     }
@@ -346,61 +380,40 @@ mod nzcvm {
             pythonize(py, &view).map_err(|e| e.into())
         }
 
-        /// Query the model for many points at once, releasing the GIL.
+        /// Query the model for many points at once, writing results in-place.
         ///
-        /// `buffer_py` is an `(N, 6)` float32 array with columns
-        /// `[rho, vp, vs, qp, qs, alpha]`.  The array is **not** modified
-        /// in-place; a new array with the result is returned.
+        /// `buffer` is an `(N, 6)` float32 array with columns
+        /// `[rho, vp, vs, qp, qs, alpha]`.  It is modified **in-place**.
         ///
-        /// Only models whose priority falls in `[priority_lo, priority_hi]`
-        /// (both inclusive) contribute.  Use `0, 255` to query all models.
+        /// `xyz` is an `(N, 3)` float32 array with columns `[x, y, z]`.
         ///
-        /// The `blend_mode` argument controls how the query result is written:
-        ///
-        /// * `BlendMode.Erase` — overwrite the row with the query result;
-        ///   rows for points outside all matching models are left unchanged.
-        /// * `BlendMode.Over` — Porter-Duff "over" blend of the query result
-        ///   over the existing row value.
-        ///
-        /// Internally, `blend_mode` is converted to a [`BlendDispatch`] once
-        /// before the loop so the hot path contains no `match`.
-        #[allow(clippy::too_many_arguments)]
-        pub fn query_many<'py>(
+        /// `params` bundles the priority bounds and blend mode.  Use
+        /// `QueryParams(0, 255, BlendMode.Erase)` to overwrite all rows.
+        pub fn query_many(
             &self,
-            py: Python<'py>,
-            buffer_py: PyReadonlyArray2<Real>,
-            x_py: PyReadonlyArray1<Real>,
-            y_py: PyReadonlyArray1<Real>,
-            z_py: PyReadonlyArray1<Real>,
-            priority_lo: u8,
-            priority_hi: u8,
-            blend_mode: BlendMode,
-        ) -> Bound<'py, PyArray2<Real>> {
-            let x = x_py.as_array();
-            let y = y_py.as_array();
-            let z = z_py.as_array();
-            let buffer_in = buffer_py.as_array();
-            // Resolve blend mode once; the hot loop calls blend.apply() with no match.
-            let blend: BlendDispatch = blend_mode.into();
-
-            let result = py.detach(|| {
-                let mut out_array = buffer_in.to_owned();
-                azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
-                    let pt = Point3::new(xi, yi, zi);
-                    if let Some(new_q) = self.inner.query(pt, None, priority_lo, priority_hi) {
-                        let existing = Some(Quality::from(out_lane.view()));
-                        let q = blend.apply(existing, new_q);
-                        out_lane[0] = q.rho;
-                        out_lane[1] = q.vp;
-                        out_lane[2] = q.vs;
-                        out_lane[3] = q.qp;
-                        out_lane[4] = q.qs;
-                        out_lane[5] = q.alpha;
-                    }
-                });
-                out_array
+            _py: Python<'_>,
+            mut buffer: PyReadwriteArray2<Real>,
+            xyz: PyReadonlyArray2<Real>,
+            params: QueryParams,
+        ) {
+            let blend: BlendDispatch = params.blend_mode.into();
+            let lo = params.priority_lo;
+            let hi = params.priority_hi;
+            let mut buf = buffer.as_array_mut();
+            let coords = xyz.as_array();
+            azip!((mut out_lane in buf.rows_mut(), xyz_row in coords.rows()) {
+                let pt = Point3::new(xyz_row[0], xyz_row[1], xyz_row[2]);
+                if let Some(new_q) = self.inner.query(pt, None, lo, hi) {
+                    let existing = Some(Quality::from(out_lane.view()));
+                    let q = blend.apply(existing, new_q);
+                    out_lane[0] = q.rho;
+                    out_lane[1] = q.vp;
+                    out_lane[2] = q.vs;
+                    out_lane[3] = q.qp;
+                    out_lane[4] = q.qs;
+                    out_lane[5] = q.alpha;
+                }
             });
-            result.into_pyarray(py)
         }
 
         /// Print a human-readable summary of the model tree to stdout.
@@ -414,6 +427,7 @@ mod nzcvm {
         m.add_class::<PyMeshModel>()?;
         m.add_class::<PyModelTree>()?;
         m.add_class::<BlendMode>()?;
+        m.add_class::<QueryParams>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;
 

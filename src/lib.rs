@@ -391,7 +391,6 @@ mod nzcvm {
         /// `QueryParams(0, 255, BlendMode.Erase)` to overwrite all rows.
         pub fn query_many(
             &self,
-            _py: Python<'_>,
             mut buffer: PyReadwriteArray2<Real>,
             xyz: PyReadonlyArray2<Real>,
             params: QueryParams,

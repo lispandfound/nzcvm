@@ -617,7 +617,7 @@ class ModelTree:
         if buffer is None:
             buf = np.zeros((n, 6), dtype=np.float32)
         else:
-            buf = np.asarray(buffer, dtype=np.float32).reshape(-1, 6)
+            buf = np.ascontiguousarray(buffer, dtype=np.float32).reshape(-1, 6)
         xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
         lo, hi = model_range.value
         params = QueryParams(lo, hi, blend_mode)

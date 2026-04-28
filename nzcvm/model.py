@@ -30,7 +30,7 @@ from rich.tree import Tree
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import read_vtkhdf
 
-from .nzcvm import PyModelTree  # ty: ignore[unresolved-import]
+from .nzcvm import BlendMode, PyModelTree  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 
@@ -621,12 +621,16 @@ class ModelTree:
         ModelTree.query_many_bounded : Same query returning a labelled Dataset.
         """
         lo, hi = model_range.value
-        return self._raw.query_many_bounded(
+        n = x.ravel().shape[0]
+        buffer = np.zeros((n, 6), dtype=np.float32)
+        return self._raw.query_many(
+            buffer,
             x.astype(np.float32, copy=False).ravel(),
             y.astype(np.float32, copy=False).ravel(),
             z.astype(np.float32, copy=False).ravel(),
             lo,
             hi,
+            BlendMode.Erase,
         ).reshape(x.shape + (6,))
 
     def query_many_bounded(
@@ -691,11 +695,14 @@ class ModelTree:
         --------
         ModelTree.query_many_bounded_into : Bounded variant.
         """
-        return self._raw.query_many_into(
+        return self._raw.query_many(
             existing.astype(np.float32, copy=False).reshape(-1, 6),
             x.astype(np.float32, copy=False).ravel(),
             y.astype(np.float32, copy=False).ravel(),
             z.astype(np.float32, copy=False).ravel(),
+            0,
+            255,
+            BlendMode.Over,
         ).reshape(existing.shape)
 
     def query_many_raw_bounded_into(
@@ -730,13 +737,14 @@ class ModelTree:
         ModelTree.query_many_raw_into : Unbounded variant.
         """
         lo, hi = model_range.value
-        return self._raw.query_many_bounded_into(
+        return self._raw.query_many(
             existing.astype(np.float32, copy=False).reshape(-1, 6),
             x.astype(np.float32, copy=False).ravel(),
             y.astype(np.float32, copy=False).ravel(),
             z.astype(np.float32, copy=False).ravel(),
             lo,
             hi,
+            BlendMode.Over,
         ).reshape(existing.shape)
 
     def query_many_raw(self, x: Any, y: Any, z: Any) -> np.ndarray:
@@ -757,10 +765,16 @@ class ModelTree:
         --------
         ModelTree.query_many : Same query returning a labelled xarray Dataset.
         """
+        n = x.ravel().shape[0]
+        buffer = np.zeros((n, 6), dtype=np.float32)
         return self._raw.query_many(
+            buffer,
             x.astype(np.float32, copy=False).ravel(),
             y.astype(np.float32, copy=False).ravel(),
             z.astype(np.float32, copy=False).ravel(),
+            0,
+            255,
+            BlendMode.Erase,
         ).reshape(x.shape + (6,))
 
     def query_many(self, x: Any, y: Any, z: Any) -> xr.Dataset:

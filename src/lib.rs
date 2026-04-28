@@ -17,11 +17,29 @@ mod nzcvm {
     use crate::query::Query;
     use crate::real::Real;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
-    use ndarray::{array, azip, Array2, Axis};
+    use ndarray::{array, azip, Axis};
     use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
+
+    /// How the vectorised query result is composited into the output buffer.
+    ///
+    /// Passed to [`PyModelTree::query_many`] to select between overwriting
+    /// and Porter-Duff alpha blending.
+    #[pyclass(from_py_object)]
+    #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    pub enum BlendMode {
+        /// Overwrite each buffer row with the query result.
+        ///
+        /// Rows for points outside all matching models are left at their
+        /// current value (typically zeros if the caller zeroed the buffer).
+        Erase,
+        /// Blend the query result *over* the existing buffer row using the
+        /// Porter-Duff "over" operator.
+        Over,
+    }
 
     /// Python-facing single tetrahedral mesh model.
     ///
@@ -334,101 +352,30 @@ mod nzcvm {
 
         /// Query the model for many points at once, releasing the GIL.
         ///
-        /// Returns an `(N, 6)` float32 array with columns
-        /// `[rho, vp, vs, qp, qs, alpha]`.
+        /// `buffer_py` is an `(N, 6)` float32 array with columns
+        /// `[rho, vp, vs, qp, qs, alpha]`.  The array is **not** modified
+        /// in-place; a new array with the result is returned.
         ///
-        /// # Panics
+        /// Only models whose priority falls in `[priority_lo, priority_hi]`
+        /// (both inclusive) contribute.  Use `0, 255` to query all models.
         ///
-        /// Panics if any point lies outside all model regions.  Use
-        /// [`query`](Self::query) for individual points when coverage is uncertain.
+        /// The `blend_mode` argument controls how the query result is written:
+        ///
+        /// * `BlendMode.Erase` — overwrite the row with the query result;
+        ///   rows for points outside all matching models are left unchanged.
+        /// * `BlendMode.Over` — Porter-Duff "over" blend of the query result
+        ///   over the existing row value.
+        #[allow(clippy::too_many_arguments)]
         pub fn query_many<'py>(
             &self,
             py: Python<'py>,
-            x_py: PyReadonlyArray1<Real>,
-            y_py: PyReadonlyArray1<Real>,
-            z_py: PyReadonlyArray1<Real>,
-        ) -> Bound<'py, PyArray2<Real>> {
-            let x = x_py.as_array();
-            let y = y_py.as_array();
-            let z = z_py.as_array();
-
-            let results = py.detach(|| {
-                let num_points = x.len();
-
-                let mut out_array = Array2::zeros((num_points, 6));
-                azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
-                    let query_point = Point3::new(xi, yi, zi);
-
-                    let quality = self.inner.query(query_point).unwrap_or_else(|| {
-                        panic!("Point {} outside of defined model layers", query_point);
-                    });
-
-                    out_lane[0] = quality.rho;
-                    out_lane[1] = quality.vp;
-                    out_lane[2] = quality.vs;
-                    out_lane[3] = quality.qp;
-                    out_lane[4] = quality.qs;
-                    out_lane[5] = quality.alpha;
-                });
-
-                out_array
-            });
-            results.into_pyarray(py)
-        }
-
-        /// Like [`query_many`](Self::query_many) but only considers models whose
-        /// priority falls in `[priority_lo, priority_hi]` (both inclusive).
-        ///
-        /// Points not covered by any matching model are left as zero.
-        pub fn query_many_bounded<'py>(
-            &self,
-            py: Python<'py>,
+            buffer_py: PyReadonlyArray2<Real>,
             x_py: PyReadonlyArray1<Real>,
             y_py: PyReadonlyArray1<Real>,
             z_py: PyReadonlyArray1<Real>,
             priority_lo: u8,
             priority_hi: u8,
-        ) -> Bound<'py, PyArray2<Real>> {
-            let x = x_py.as_array();
-            let y = y_py.as_array();
-            let z = z_py.as_array();
-
-            let results = py.detach(|| {
-                let num_points = x.len();
-                let mut out_array = Array2::zeros((num_points, 6));
-                azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
-                    let query_point = Point3::new(xi, yi, zi);
-                    if let Some(quality) = self.inner.query_bounded(query_point, priority_lo, priority_hi) {
-                        out_lane[0] = quality.rho;
-                        out_lane[1] = quality.vp;
-                        out_lane[2] = quality.vs;
-                        out_lane[3] = quality.qp;
-                        out_lane[4] = quality.qs;
-                        out_lane[5] = quality.alpha;
-                    }
-                });
-                out_array
-            });
-            results.into_pyarray(py)
-        }
-
-        /// Alpha-blend the model's output at each point into an existing buffer.
-        ///
-        /// `buffer_py` must be a writeable `(N, 6)` float32 array (same layout as
-        /// returned by [`query_many`](Self::query_many)).  Each row is treated as
-        /// an existing [`Quality`] value; the new query result is blended *over*
-        /// it using the Porter-Duff "over" operator and written back in place.
-        ///
-        /// Rows where the existing alpha is already `1.0` are not updated.
-        ///
-        /// Returns the modified buffer.
-        pub fn query_many_into<'py>(
-            &self,
-            py: Python<'py>,
-            buffer_py: PyReadonlyArray2<Real>,
-            x_py: PyReadonlyArray1<Real>,
-            y_py: PyReadonlyArray1<Real>,
-            z_py: PyReadonlyArray1<Real>,
+            blend_mode: BlendMode,
         ) -> Bound<'py, PyArray2<Real>> {
             let x = x_py.as_array();
             let y = y_py.as_array();
@@ -438,52 +385,23 @@ mod nzcvm {
             let result = py.detach(|| {
                 let mut out_array = buffer_in.to_owned();
                 azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
-                    let query_point = Point3::new(xi, yi, zi);
-                    let existing = Some(crate::quality::Quality::from(out_lane.view()));
-                    if let Some(blended) = self.inner.query_into(query_point, existing) {
-                        out_lane[0] = blended.rho;
-                        out_lane[1] = blended.vp;
-                        out_lane[2] = blended.vs;
-                        out_lane[3] = blended.qp;
-                        out_lane[4] = blended.qs;
-                        out_lane[5] = blended.alpha;
-                    }
-                });
-                out_array
-            });
-            result.into_pyarray(py)
-        }
-
-        /// Like [`query_many_into`](Self::query_many_into) but only blends
-        /// models whose priority falls in `[priority_lo, priority_hi]`.
-        #[allow(clippy::too_many_arguments)]
-        pub fn query_many_bounded_into<'py>(
-            &self,
-            py: Python<'py>,
-            buffer_py: PyReadonlyArray2<Real>,
-            x_py: PyReadonlyArray1<Real>,
-            y_py: PyReadonlyArray1<Real>,
-            z_py: PyReadonlyArray1<Real>,
-            priority_lo: u8,
-            priority_hi: u8,
-        ) -> Bound<'py, PyArray2<Real>> {
-            let x = x_py.as_array();
-            let y = y_py.as_array();
-            let z = z_py.as_array();
-            let buffer_in = buffer_py.as_array();
-
-            let result = py.detach(|| {
-                let mut out_array = buffer_in.to_owned();
-                azip!((mut out_lane in out_array.rows_mut(), &xi in x, &yi in y, &zi in z) {
-                    let query_point = Point3::new(xi, yi, zi);
-                    let existing = Some(crate::quality::Quality::from(out_lane.view()));
-                    if let Some(blended) = self.inner.query_bounded_into(query_point, existing, priority_lo, priority_hi) {
-                        out_lane[0] = blended.rho;
-                        out_lane[1] = blended.vp;
-                        out_lane[2] = blended.vs;
-                        out_lane[3] = blended.qp;
-                        out_lane[4] = blended.qs;
-                        out_lane[5] = blended.alpha;
+                    let pt = Point3::new(xi, yi, zi);
+                    let quality = match blend_mode {
+                        BlendMode::Erase => {
+                            self.inner.query_bounded(pt, priority_lo, priority_hi)
+                        }
+                        BlendMode::Over => {
+                            let existing = Some(crate::quality::Quality::from(out_lane.view()));
+                            self.inner.query_bounded_into(pt, existing, priority_lo, priority_hi)
+                        }
+                    };
+                    if let Some(q) = quality {
+                        out_lane[0] = q.rho;
+                        out_lane[1] = q.vp;
+                        out_lane[2] = q.vs;
+                        out_lane[3] = q.qp;
+                        out_lane[4] = q.qs;
+                        out_lane[5] = q.alpha;
                     }
                 });
                 out_array
@@ -501,6 +419,7 @@ mod nzcvm {
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyMeshModel>()?;
         m.add_class::<PyModelTree>()?;
+        m.add_class::<BlendMode>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;
 

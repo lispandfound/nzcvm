@@ -64,7 +64,7 @@ class ModelRange(Enum):
     """
 
     TOMOGRAPHY = (0, 127)
-    BASINS = (129, 255)
+    BASINS = (128, 255)
     ALL = (0, 255)
 
 

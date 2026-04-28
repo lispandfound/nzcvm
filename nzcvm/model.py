@@ -22,6 +22,7 @@ from typing import Any, Protocol, Self
 import numpy as np
 import pyvista as pv
 import rich
+import xarray as xr
 from mashumaro.mixins.dict import DataClassDictMixin
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
@@ -573,7 +574,7 @@ class ModelTree:
                 "or combined quality alpha ~ 1.0"
             )
 
-    def query_many(
+    def query_many_raw(
         self,
         x: Any,
         y: Any,
@@ -591,20 +592,13 @@ class ModelTree:
             Arrays of coordinates; must be broadcastable to the same shape.
         buffer :
             Optional float32 array of shape ``(*x.shape, 6)`` to composite
-            into.  When ``None`` (the default) a zero-filled buffer is
-            created automatically.  The array is never modified in-place;
-            a new array is always returned.
+            into.  When ``None`` a zero-filled buffer is created.
         model_range :
             Restricts the query to models whose priority falls within this
             range.  Defaults to :attr:`ModelRange.ALL`.
         blend_mode :
-            Controls how the query result is composited into ``buffer``:
-
-            * :attr:`BlendMode.Erase` *(default)* — overwrite each row with
-              the query result; rows for points outside all matching models
-              are left at their buffer value (zeros if no buffer was given).
-            * :attr:`BlendMode.Over` — Porter-Duff "over" blend of the query
-              result over the existing buffer row.
+            :attr:`BlendMode.Erase` overwrites the buffer;
+            :attr:`BlendMode.Over` composites using Porter-Duff "over".
 
         Returns
         -------
@@ -614,8 +608,7 @@ class ModelTree:
 
         See Also
         --------
-        ModelTree.query : Single-point query.
-        ModelRange : Priority range constants.
+        ModelTree.query_many : Same query returning a labelled xarray Dataset.
         """
         x = np.asarray(x, dtype=np.float32)
         y = np.asarray(y, dtype=np.float32)
@@ -635,6 +628,51 @@ class ModelTree:
             hi,
             blend_mode,
         ).reshape(x.shape + (6,))
+
+    def query_many(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        buffer: np.ndarray | None = None,
+        model_range: ModelRange = ModelRange.ALL,
+        blend_mode: BlendMode = BlendMode.Erase,
+    ) -> xr.Dataset:
+        """Vectorised query returning a labelled :class:`xarray.Dataset`.
+
+        Parameters
+        ----------
+        x, y, z :
+            Arrays of coordinates; broadcastable to a common shape.
+        buffer :
+            Optional float32 array of shape ``(*x.shape, 6)`` to composite
+            into.  When ``None`` a zero-filled buffer is created.
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+        blend_mode :
+            :attr:`BlendMode.Erase` overwrites the buffer;
+            :attr:`BlendMode.Over` composites using Porter-Duff "over".
+
+        Returns
+        -------
+        xarray.Dataset
+            Dataset with variables ``rho``, ``vp``, ``vs``, ``qp``, ``qs``
+            and coordinates ``x``, ``y``, ``z``.
+
+        See Also
+        --------
+        ModelTree.query_many_raw : Same query as an unlabelled float32 array.
+        """
+        x, y, z = np.broadcast_arrays(x, y, z)
+        raw = self.query_many_raw(x, y, z, buffer=buffer, model_range=model_range, blend_mode=blend_mode)
+        dims = tuple(f"d{i}" for i in range(x.ndim))
+        var_names = ["rho", "vp", "vs", "qp", "qs"]
+        return xr.Dataset(
+            data_vars={name: (dims, raw[..., i]) for i, name in enumerate(var_names)},
+            coords={"x": (dims, x), "y": (dims, y), "z": (dims, z)},
+        )
 
     def view(self) -> Tree:
         """Return a :class:`rich.tree.Tree` representation of the model tree."""

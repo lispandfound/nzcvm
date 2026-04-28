@@ -14,7 +14,7 @@ from nzcvm.model import Model
 class ModelLayer:
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
-    Calls :meth:`~nzcvm.model.Model.query_many` on every ``/block/*``
+    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/block/*``
     node and writes the returned material properties (``rho``, ``vp``,
     ``vs``, ``qp``, ``qs``, ``alpha``) as dataset variables.
 
@@ -60,7 +60,7 @@ class ModelLayer:
             ds = ds.copy()
 
             qualities = xr.apply_ufunc(
-                self.model.query_many,
+                self.model.query_many_raw,
                 ds[Coordinate.X.value],
                 ds[Coordinate.Y.value],
                 ds[Coordinate.Z.value],

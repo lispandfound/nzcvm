@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import make_mesh
@@ -78,11 +79,11 @@ class TestModelWrapper:
         expl = model.get_explanation(0.1, 0.1, 0.1)
         assert len(expl.contributions) >= 1
 
-    def test_query_many_shape(self):
+    def test_query_many_raw_shape(self):
         raw = _make_raw_model()
         model = Model(raw, {})
         x = np.array([0.1, 0.2])
-        result = model.query_many(x, np.array([0.1, 0.1]), np.array([0.1, 0.1]))
+        result = model.query_many_raw(x, np.array([0.1, 0.1]), np.array([0.1, 0.1]))
         assert result.shape == (2, 6)
         assert result.dtype == np.float32
 
@@ -90,7 +91,19 @@ class TestModelWrapper:
         raw = _make_raw_model()
         model = Model(raw, {})
         x = np.full((3, 2), 0.1)
-        assert model.query_many(x, x, x).shape == (3, 2, 6)
+        assert model.query_many_raw(x, x, x).shape == (3, 2, 6)
+
+    def test_query_many_xarray(self):
+        raw = _make_raw_model()
+        model = Model(raw, {})
+        x = np.array([0.1, 0.2], dtype=np.float32)
+        z = np.zeros(2, dtype=np.float32)
+        ds = model.query_many(x, z, z)
+        expected = xr.Dataset(
+            {"rho": ("d0", [2700.0, 2700.0])},
+            coords={"x": ("d0", x), "y": ("d0", z), "z": ("d0", z)},
+        )
+        xr.testing.assert_allclose(ds[["rho"]], expected)
 
 
 class TestModelFromMesh:

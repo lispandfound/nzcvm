@@ -15,6 +15,7 @@ nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, Self
 
@@ -29,9 +30,33 @@ from rich.tree import Tree
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import read_vtkhdf
 
-from .nzcvm import PyModelTree  # ty: ignore[unresolved-import]
+from .nzcvm import BlendMode, PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
+
+
+class ModelRange(Enum):
+    """Priority ranges for bounded velocity-model queries.
+
+    Priority values are ``u8`` ordered so that ``0`` is the highest priority
+    and ``255`` is the lowest.  The ranges below reflect the NZCVM convention:
+
+    * ``0–127``  — tomography models (higher priority, evaluated first).
+    * ``129–255`` — basin models (lower priority, blended in afterwards).
+
+    Priority 128 is intentionally excluded from both named ranges and may be
+    used as a separator value by model authors.
+
+    Parameters
+    ----------
+    value :
+        A ``(priority_lo, priority_hi)`` tuple (both inclusive) passed to
+        :meth:`~nzcvm.model.ModelTree.query_bounded`.
+    """
+
+    TOMOGRAPHY = (0, 127)
+    BASINS = (128, 255)
+    ALL = (0, 255)
 
 
 @dataclass
@@ -447,19 +472,29 @@ class ModelTree:
         """
         return self._raw.aabb()
 
-    def query(self, x: Any, y: Any, z: Any) -> Quality | None:
+    def query(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        model_range: ModelRange = ModelRange.ALL,
+    ) -> Quality | None:
         """Query material properties at a single point.
 
         Parameters
         ----------
         x, y, z :
             Coordinates in the model's projected CRS (metres).
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
 
         Returns
         -------
         Quality or None
             Blended quality, or ``None`` if the point lies outside all
-            mesh models.
+            mesh models in the requested priority range.
 
         See Also
         --------
@@ -467,7 +502,8 @@ class ModelTree:
         ModelTree.query_stats : Query with BVH traversal diagnostics.
         ModelTree.get_explanation : Query with per-model contribution details.
         """
-        quality_dict = self._raw.query(x, y, z)
+        lo, hi = model_range.value
+        quality_dict = self._raw.query(x, y, z, lo, hi)
         return Quality.from_dict(quality_dict) if quality_dict is not None else None
 
     def query_stats(self, x: Any, y: Any, z: Any) -> QueryStats:
@@ -529,37 +565,81 @@ class ModelTree:
                 "or combined quality alpha ~ 1.0"
             )
 
-    def query_many_raw(self, x: Any, y: Any, z: Any) -> np.ndarray:
+    def query_many_raw(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        buffer: np.ndarray | None = None,
+        model_range: ModelRange = ModelRange.ALL,
+        blend_mode: BlendMode = BlendMode.Erase,
+    ) -> np.ndarray:
         """Vectorised query returning a raw float32 array.
 
         Parameters
         ----------
         x, y, z :
             Arrays of coordinates; must be broadcastable to the same shape.
+        buffer :
+            Optional float32 array of shape ``(*x.shape, 6)`` to composite
+            into.  When ``None`` a zero-filled buffer is created.
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+        blend_mode :
+            :attr:`BlendMode.Erase` overwrites the buffer;
+            :attr:`BlendMode.Over` composites using Porter-Duff "over".
 
         Returns
         -------
         numpy.ndarray
-            Float32 array of shape ``(*x.shape, 6)`` with columns ordered
-            as ``[rho, vp, vs, qp, qs, alpha]``.
+            Float32 array of shape ``(*x.shape, 6)`` with columns ordered as
+            ``[rho, vp, vs, qp, qs, alpha]``.
 
         See Also
         --------
         ModelTree.query_many : Same query returning a labelled xarray Dataset.
         """
-        return self._raw.query_many(
-            x.astype(np.float32, copy=False).ravel(),
-            y.astype(np.float32, copy=False).ravel(),
-            z.astype(np.float32, copy=False).ravel(),
-        ).reshape(x.shape + (6,))
+        x = np.asarray(x, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        z = np.asarray(z, dtype=np.float32)
+        n = x.ravel().shape[0]
+        if buffer is None:
+            buf = np.zeros((n, 6), dtype=np.float32)
+        else:
+            buf = np.ascontiguousarray(buffer, dtype=np.float32).reshape(-1, 6)
+        xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
+        lo, hi = model_range.value
+        params = QueryParams(lo, hi, blend_mode)
+        self._raw.query_many(buf, xyz, params)
+        return buf.reshape(x.shape + (6,))
 
-    def query_many(self, x: Any, y: Any, z: Any) -> xr.Dataset:
+    def query_many(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        buffer: np.ndarray | None = None,
+        model_range: ModelRange = ModelRange.ALL,
+        blend_mode: BlendMode = BlendMode.Erase,
+    ) -> xr.Dataset:
         """Vectorised query returning a labelled :class:`xarray.Dataset`.
 
         Parameters
         ----------
         x, y, z :
             Arrays of coordinates; broadcastable to a common shape.
+        buffer :
+            Optional float32 array of shape ``(*x.shape, 6)`` to composite
+            into.  When ``None`` a zero-filled buffer is created.
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+        blend_mode :
+            :attr:`BlendMode.Erase` overwrites the buffer;
+            :attr:`BlendMode.Over` composites using Porter-Duff "over".
 
         Returns
         -------
@@ -572,25 +652,13 @@ class ModelTree:
         ModelTree.query_many_raw : Same query as an unlabelled float32 array.
         """
         x, y, z = np.broadcast_arrays(x, y, z)
-
-        ndim = x.ndim
-        dims = tuple(f"d{i}" for i in range(ndim))
-        quality_array = self.query_many_raw(x, y, z)
+        raw = self.query_many_raw(x, y, z, buffer=buffer, model_range=model_range, blend_mode=blend_mode)
+        dims = tuple(f"d{i}" for i in range(x.ndim))
         var_names = ["rho", "vp", "vs", "qp", "qs"]
-        data_vars = {}
-        for i, name in enumerate(var_names):
-            data_vars[name] = (dims, quality_array[..., i])
-
-        dset = xr.Dataset(
-            data_vars=data_vars,
-            coords={
-                "x": (dims, x),
-                "y": (dims, y),
-                "z": (dims, z),
-            },
+        return xr.Dataset(
+            data_vars={name: (dims, raw[..., i]) for i, name in enumerate(var_names)},
+            coords={"x": (dims, x), "y": (dims, y), "z": (dims, z)},
         )
-
-        return dset
 
     def view(self) -> Tree:
         """Return a :class:`rich.tree.Tree` representation of the model tree."""

@@ -120,25 +120,41 @@ pub struct TraversalStats {
 // ---------------------------------------------------------------------------
 
 /// Tests whether a `DQ`-dimensional query point lies within the first `DQ`
-/// dimensions of a `DBVH`-dimensional AABB.
+/// dimensions of a `DBVH`-dimensional AABB, and whether the subtree's
+/// priority range overlaps `[priority_lo, priority_hi]`.
 ///
 /// Returns `Some(aabb.min[DQ])` — the minimum value along the extra
 /// dimension (i.e. the minimum priority reachable through this subtree) —
-/// on hit, or `None` on a spatial miss.
+/// on hit, or `None` on a spatial miss or priority-range miss.
 ///
 /// This implements the AABB intersection test for the conceptual ray
 /// `origin = (p[0], …, p[DQ-1], 0)`, `direction = (0, …, 0, 1)`.
+///
+/// For a leaf at priority `p` the AABB's priority dimension is `[p, p + 0.5]`.
+/// For an internal node it spans `[min_priority_in_subtree, max_priority_in_subtree + 0.5]`.
+/// The subtree is pruned when:
+/// - its minimum priority exceeds `priority_hi`, or
+/// - its maximum priority (= `aabb.max[DQ] - 0.5`) is less than `priority_lo`
+///   (equivalently `aabb.max[DQ] <= priority_lo`, since priorities are integers
+///   and the extent is exactly `0.5`).
 #[inline]
-fn priority_aabb_hit<T: BHValue, const DBVH: usize, const DQ: usize>(
+fn priority_aabb_hit_bounded<T: BHValue, const DBVH: usize, const DQ: usize>(
     point: &Point<T, DQ>,
     aabb: &Aabb<T, DBVH>,
+    priority_lo: T,
+    priority_hi: T,
 ) -> Option<T> {
     for i in 0..DQ {
         if point.coords[i] < aabb.min.coords[i] || point.coords[i] > aabb.max.coords[i] {
             return None;
         }
     }
-    Some(aabb.min.coords[DQ])
+    let p_min = aabb.min.coords[DQ];
+    let p_max = aabb.max.coords[DQ];
+    if p_min > priority_hi || p_max <= priority_lo {
+        return None;
+    }
+    Some(p_min)
 }
 
 /// Iterator over a `DBVH`-dimensional BVH that models a ray from
@@ -149,6 +165,11 @@ fn priority_aabb_hit<T: BHValue, const DBVH: usize, const DQ: usize>(
 /// At each internal node the child with the lower `t_min` (= lower minimum
 /// priority value in that subtree) is pushed on top of the stack and
 /// therefore visited first.
+///
+/// The optional priority bounds `[priority_lo, priority_hi]` restrict which
+/// leaves are visited: subtrees whose priority range does not overlap
+/// `[priority_lo, priority_hi]` are pruned, and individual leaves are
+/// skipped when their own priority is out of range.
 ///
 /// For each leaf the iterator calls `shape.contains(point_DQ)` and yields
 /// the returned `Data` if the shape contains the point.
@@ -165,6 +186,8 @@ pub struct PriorityRayIterator<
     point: Point<T, DQ>,
     shapes: &'shape [Shape],
     stack: SmallVec<[usize; SMALL_VEC_RAY_SIZE]>,
+    priority_lo: T,
+    priority_hi: T,
     _phantom: std::marker::PhantomData<Data>,
 }
 
@@ -174,7 +197,13 @@ where
     T: BHValue,
     Shape: Bounded<T, DBVH> + Contains<T, DQ, Data>,
 {
-    fn new(bvh: &'bvh Bvh<T, DBVH>, point: Point<T, DQ>, shapes: &'shape [Shape]) -> Self {
+    fn new(
+        bvh: &'bvh Bvh<T, DBVH>,
+        point: Point<T, DQ>,
+        shapes: &'shape [Shape],
+        priority_lo: T,
+        priority_hi: T,
+    ) -> Self {
         let mut stack = SmallVec::new();
         if !shapes.is_empty() {
             stack.push(0usize);
@@ -184,6 +213,8 @@ where
             point,
             shapes,
             stack,
+            priority_lo,
+            priority_hi,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -202,6 +233,12 @@ where
             match self.bvh.nodes[node_idx] {
                 BvhNode::Leaf { shape_index, .. } => {
                     let shape = &self.shapes[shape_index];
+                    // Check this leaf's own priority is within bounds before
+                    // running the (potentially expensive) containment test.
+                    let leaf_p = shape.aabb().min.coords[DQ];
+                    if leaf_p < self.priority_lo || leaf_p > self.priority_hi {
+                        continue;
+                    }
                     if let Some(data) = shape.contains(&self.point) {
                         return Some(data);
                     }
@@ -213,8 +250,18 @@ where
                     ref child_r_aabb,
                     ..
                 } => {
-                    let l_t = priority_aabb_hit(&self.point, child_l_aabb);
-                    let r_t = priority_aabb_hit(&self.point, child_r_aabb);
+                    let l_t = priority_aabb_hit_bounded(
+                        &self.point,
+                        child_l_aabb,
+                        self.priority_lo,
+                        self.priority_hi,
+                    );
+                    let r_t = priority_aabb_hit_bounded(
+                        &self.point,
+                        child_r_aabb,
+                        self.priority_lo,
+                        self.priority_hi,
+                    );
 
                     match (l_t, r_t) {
                         (None, None) => {}
@@ -239,6 +286,8 @@ where
     }
 }
 
+/// Return an iterator over all models whose priority lies in `[priority_lo, priority_hi]`
+/// (inclusive), visited in ascending priority order.
 pub fn priority_ray_iterator<
     'bvh,
     'shape,
@@ -251,8 +300,10 @@ pub fn priority_ray_iterator<
     bvh_tree: &'bvh Bvh<T, DBVH>,
     shapes: &'shape [Shape],
     point: Point<T, DQ>,
+    priority_lo: T,
+    priority_hi: T,
 ) -> PriorityRayIterator<'bvh, 'shape, T, DBVH, DQ, Data, Shape> {
-    PriorityRayIterator::new(bvh_tree, point, shapes)
+    PriorityRayIterator::new(bvh_tree, point, shapes, priority_lo, priority_hi)
 }
 
 /// Like [`PriorityRayIterator`] but also tracks AABB and leaf-test counts.
@@ -269,6 +320,8 @@ pub struct PriorityRayStatsIterator<
     point: Point<T, DQ>,
     shapes: &'shape [Shape],
     stack: SmallVec<[usize; 16]>,
+    priority_lo: T,
+    priority_hi: T,
     pub stats: TraversalStats,
     _phantom: std::marker::PhantomData<Data>,
 }
@@ -279,7 +332,13 @@ where
     T: BHValue,
     Shape: Bounded<T, DBVH> + Contains<T, DQ, Data>,
 {
-    fn new(bvh: &'bvh Bvh<T, DBVH>, point: Point<T, DQ>, shapes: &'shape [Shape]) -> Self {
+    fn new(
+        bvh: &'bvh Bvh<T, DBVH>,
+        point: Point<T, DQ>,
+        shapes: &'shape [Shape],
+        priority_lo: T,
+        priority_hi: T,
+    ) -> Self {
         let mut stack = SmallVec::new();
         if !shapes.is_empty() {
             stack.push(0usize);
@@ -289,6 +348,8 @@ where
             point,
             shapes,
             stack,
+            priority_lo,
+            priority_hi,
             stats: TraversalStats::default(),
             _phantom: std::marker::PhantomData,
         }
@@ -307,8 +368,12 @@ where
         while let Some(node_idx) = self.stack.pop() {
             match self.bvh.nodes[node_idx] {
                 BvhNode::Leaf { shape_index, .. } => {
-                    self.stats.simplex_tests += 1;
                     let shape = &self.shapes[shape_index];
+                    let leaf_p = shape.aabb().min.coords[DQ];
+                    if leaf_p < self.priority_lo || leaf_p > self.priority_hi {
+                        continue;
+                    }
+                    self.stats.simplex_tests += 1;
                     if let Some(data) = shape.contains(&self.point) {
                         return Some(data);
                     }
@@ -322,8 +387,18 @@ where
                 } => {
                     self.stats.aabb_tests += 2;
 
-                    let l_t = priority_aabb_hit(&self.point, child_l_aabb);
-                    let r_t = priority_aabb_hit(&self.point, child_r_aabb);
+                    let l_t = priority_aabb_hit_bounded(
+                        &self.point,
+                        child_l_aabb,
+                        self.priority_lo,
+                        self.priority_hi,
+                    );
+                    let r_t = priority_aabb_hit_bounded(
+                        &self.point,
+                        child_r_aabb,
+                        self.priority_lo,
+                        self.priority_hi,
+                    );
 
                     match (l_t, r_t) {
                         (None, None) => {}
@@ -358,6 +433,8 @@ pub fn priority_ray_stats_iterator<
     bvh_tree: &'bvh Bvh<T, DBVH>,
     shapes: &'shape [Shape],
     point: Point<T, DQ>,
+    priority_lo: T,
+    priority_hi: T,
 ) -> PriorityRayStatsIterator<'bvh, 'shape, T, DBVH, DQ, Data, Shape> {
-    PriorityRayStatsIterator::new(bvh_tree, point, shapes)
+    PriorityRayStatsIterator::new(bvh_tree, point, shapes, priority_lo, priority_hi)
 }

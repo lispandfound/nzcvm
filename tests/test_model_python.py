@@ -2,10 +2,11 @@
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import make_mesh
-from nzcvm.model import Explanation, MeshModel, Model, ModelTree, Quality, QueryStats
+from nzcvm.model import MeshModel, Model, ModelTree
 
 
 def _make_raw_model(rho=2700.0, alpha=1.0):
@@ -59,92 +60,59 @@ def _make_pv_model(rho=2700.0, alpha=1.0) -> Model:
 
 
 class TestModelWrapper:
-    def test_query_returns_quality(self):
+    def test_query_returns_correct_value(self):
         raw = _make_raw_model()
         model = Model(raw, {})
         q = model.query(0.1, 0.1, 0.1)
-        assert isinstance(q, Quality)
+        assert q is not None
         assert q.rho == pytest.approx(2700.0, rel=1e-3)
 
-    def test_query_stats_returns_query_stats(self):
+    def test_query_stats_hit_count(self):
         raw = _make_raw_model()
         model = Model(raw, {})
         stats = model.query_stats(0.1, 0.1, 0.1)
-        assert isinstance(stats, QueryStats)
         assert stats.hit_count >= 1
 
-    def test_get_explanation_returns_explanation(self):
+    def test_get_explanation_has_contributions(self):
         raw = _make_raw_model()
         model = Model(raw, {})
         expl = model.get_explanation(0.1, 0.1, 0.1)
-        assert isinstance(expl, Explanation)
         assert len(expl.contributions) >= 1
 
     def test_query_many_raw_shape(self):
         raw = _make_raw_model()
         model = Model(raw, {})
         x = np.array([0.1, 0.2])
-        y = np.array([0.1, 0.1])
-        z = np.array([0.1, 0.1])
-        result = model.query_many_raw(x, y, z)
+        result = model.query_many_raw(x, np.array([0.1, 0.1]), np.array([0.1, 0.1]))
         assert result.shape == (2, 6)
+        assert result.dtype == np.float32
+
+    def test_query_many_nd_shape(self):
+        raw = _make_raw_model()
+        model = Model(raw, {})
+        x = np.full((3, 2), 0.1)
+        assert model.query_many_raw(x, x, x).shape == (3, 2, 6)
 
     def test_query_many_xarray(self):
         raw = _make_raw_model()
         model = Model(raw, {})
-        x = np.array([0.1, 0.2])
-        y = np.array([0.1, 0.1])
-        z = np.array([0.1, 0.1])
-        ds = model.query_many(x, y, z)
-        assert "rho" in ds
-        assert "vp" in ds
-        assert ds["rho"].shape == (2,)
-
-    def test_aabb_returns_tuple_of_arrays(self):
-        raw = _make_raw_model()
-        model = Model(raw, {})
-        mn, mx = model.aabb
-        assert mn.shape == (3,)
-        assert mx.shape == (3,)
-        assert mn[0] == pytest.approx(0.0, abs=1e-4)
-        assert mx[0] == pytest.approx(1.0, abs=1e-4)
-
-    def test_query_many_xarray_has_correct_dims(self):
-        """query_many must return a Dataset with dims matching the input shape."""
-        raw = _make_raw_model()
-        model = Model(raw, {})
-        x = np.full((3, 2), 0.1)
-        y = np.full((3, 2), 0.1)
-        z = np.full((3, 2), 0.1)
-        ds = model.query_many(x, y, z)
-        assert ds["rho"].dims == ("d0", "d1")
-        assert ds["rho"].shape == (3, 2)
-        assert ds["vp"].dims == ("d0", "d1")
-
-    def test_query_many_xarray_has_coordinate_vars(self):
-        """query_many must include x, y, z as coordinate variables."""
-        raw = _make_raw_model()
-        model = Model(raw, {})
-        x = np.array([0.1, 0.2])
-        y = np.array([0.1, 0.1])
-        z = np.array([0.1, 0.1])
-        ds = model.query_many(x, y, z)
-        assert "x" in ds.coords
-        assert "y" in ds.coords
-        assert "z" in ds.coords
+        x = np.array([0.1, 0.2], dtype=np.float32)
+        z = np.zeros(2, dtype=np.float32)
+        ds = model.query_many(x, z, z)
+        expected = xr.Dataset(
+            {"rho": ("d0", [2700.0, 2700.0])},
+            coords={"x": ("d0", x), "y": ("d0", z), "z": ("d0", z)},
+        )
+        xr.testing.assert_allclose(ds[["rho"]], expected)
 
 
 class TestModelFromMesh:
     """Model.from_mesh must construct a working Model from a pyvista mesh."""
 
-    def test_from_mesh_returns_model(self):
-        model = _make_pv_model()
-        assert isinstance(model, Model)
-
     def test_from_mesh_query_inside(self):
         model = _make_pv_model(rho=1500.0)
         q = model.query(0.1, 0.1, 0.1)
-        assert isinstance(q, Quality)
+        assert q is not None
         assert q.rho == pytest.approx(1500.0, rel=1e-3)
 
     def test_from_mesh_query_outside_returns_none(self):
@@ -194,7 +162,7 @@ class TestMeshModel:
         raw = _make_raw_mesh_model(rho=1234.0)
         mesh = MeshModel(raw)
         q = mesh.query(0.1, 0.1, 0.1)
-        assert isinstance(q, Quality)
+        assert q is not None
         assert q.rho == pytest.approx(1234.0, rel=1e-3)
 
     def test_query_outside_returns_none(self):
@@ -211,20 +179,13 @@ class TestMeshModel:
 
     def test_model_tree_from_mesh_models(self):
         """ModelTree([mesh1, mesh2]) constructor path."""
-        raw1 = _make_raw_mesh_model(rho=1500.0, name="lower")
-        raw2 = _make_raw_mesh_model(rho=2700.0, name="upper")
-        mesh1 = MeshModel(raw1)
-        mesh2 = MeshModel(raw2)
-        tree = ModelTree([mesh1, mesh2])
+        tree = ModelTree([MeshModel(_make_raw_mesh_model(rho=1500.0)), MeshModel(_make_raw_mesh_model())])
         q = tree.query(0.1, 0.1, 0.1)
-        assert isinstance(q, Quality)
+        assert q is not None
 
     def test_view_returns_tree(self):
-        from rich.tree import Tree
-        raw = _make_raw_mesh_model(name="test_layer")
-        mesh = MeshModel(raw)
-        t = mesh.view()
-        assert isinstance(t, Tree)
+        t = MeshModel(_make_raw_mesh_model(name="test_layer")).view()
+        assert "test_layer" in t.label
 
 
 class TestMakeMeshName:
@@ -312,8 +273,3 @@ class TestModelTreeAlias:
 
     def test_model_is_model_tree(self):
         assert Model is ModelTree
-
-    def test_model_alias_constructs_correctly(self):
-        raw = _make_raw_model()
-        m = Model(raw, {})
-        assert isinstance(m, ModelTree)

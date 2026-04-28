@@ -6,13 +6,9 @@ use serde::Serialize;
 /// Performance counters collected during a single model query.
 #[derive(Debug, Serialize)]
 pub struct QueryStats {
-    /// Number of axis-aligned bounding-box intersection tests performed.
     pub aabb_tests: usize,
-    /// Number of simplex containment tests performed.
     pub simplex_tests: usize,
-    /// Number of simplices that contained the query point.
     pub hit_count: usize,
-    /// Final blended quality, or `None` if the point is outside all models.
     pub output: Option<Quality>,
     /// Wall-clock time for the full query in nanoseconds.
     pub elapsed: u64,
@@ -21,21 +17,15 @@ pub struct QueryStats {
 /// One model's contribution to a blended query result.
 #[derive(Serialize)]
 pub struct ModelContribution {
-    /// Priority of the contributing model (lower = higher priority).
     pub priority: u8,
-    /// Quality returned by this model at the query point.
     pub quality: Quality,
 }
 
 /// Diagnostic breakdown of a query, listing every model that contributed.
 #[derive(Serialize)]
 pub struct Explanation {
-    /// Ordered list of contributions, from highest priority to lowest.
     pub contributions: Vec<ModelContribution>,
-    /// Final blended output quality, or `None` if the point is outside all models.
     pub output: Option<Quality>,
-    /// Index into `contributions` at which the blend became fully opaque.
-    /// Contributions at or after this index do not affect the final result.
     pub termination: Option<usize>,
 }
 
@@ -43,10 +33,12 @@ pub struct Explanation {
 pub trait Query {
     type Explanation;
 
-    /// Return the blended quality at `point`, or `None` if outside all models.
-    fn query(&self, point: Point3<Real>) -> Option<Quality>;
-    /// Return the quality at `point` together with BVH traversal statistics.
+    /// Blend models whose priority falls in `[lo, hi]` into `existing` at `point`.
+    ///
+    /// Pass `existing = None` for a fresh query and `lo = 0, hi = 255` to
+    /// consider all models.  This single method subsumes the old
+    /// `query`, `query_bounded`, `query_into`, and `query_bounded_into`.
+    fn query(&self, point: Point3<Real>, existing: Option<Quality>, lo: u8, hi: u8) -> Option<Quality>;
     fn query_stats(&self, point: Point3<Real>) -> QueryStats;
-    /// Return a full diagnostic breakdown of the query at `point`.
     fn query_explain(&self, point: Point3<Real>) -> Self::Explanation;
 }

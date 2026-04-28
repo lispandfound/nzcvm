@@ -391,6 +391,7 @@ mod nzcvm {
         /// `QueryParams(0, 255, BlendMode.Erase)` to overwrite all rows.
         pub fn query_many(
             &self,
+            py: Python<'_>,
             mut buffer: PyReadwriteArray2<Real>,
             xyz: PyReadonlyArray2<Real>,
             params: QueryParams,
@@ -398,20 +399,24 @@ mod nzcvm {
             let blend: BlendDispatch = params.blend_mode.into();
             let lo = params.priority_lo;
             let hi = params.priority_hi;
+            // Acquire array views while the GIL is held; the views themselves
+            // hold no Python token so they are Send and can cross detach.
             let mut buf = buffer.as_array_mut();
             let coords = xyz.as_array();
-            azip!((mut out_lane in buf.rows_mut(), xyz_row in coords.rows()) {
-                let pt = Point3::new(xyz_row[0], xyz_row[1], xyz_row[2]);
-                if let Some(new_q) = self.inner.query(pt, None, lo, hi) {
-                    let existing = Some(Quality::from(out_lane.view()));
-                    let q = blend.apply(existing, new_q);
-                    out_lane[0] = q.rho;
-                    out_lane[1] = q.vp;
-                    out_lane[2] = q.vs;
-                    out_lane[3] = q.qp;
-                    out_lane[4] = q.qs;
-                    out_lane[5] = q.alpha;
-                }
+            py.detach(|| {
+                azip!((mut out_lane in buf.rows_mut(), xyz_row in coords.rows()) {
+                    let pt = Point3::new(xyz_row[0], xyz_row[1], xyz_row[2]);
+                    if let Some(new_q) = self.inner.query(pt, None, lo, hi) {
+                        let existing = Some(Quality::from(out_lane.view()));
+                        let q = blend.apply(existing, new_q);
+                        out_lane[0] = q.rho;
+                        out_lane[1] = q.vp;
+                        out_lane[2] = q.vs;
+                        out_lane[3] = q.qp;
+                        out_lane[4] = q.qs;
+                        out_lane[5] = q.alpha;
+                    }
+                });
             });
         }
 

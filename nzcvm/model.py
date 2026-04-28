@@ -52,15 +52,6 @@ class ModelRange(Enum):
     value :
         A ``(priority_lo, priority_hi)`` tuple (both inclusive) passed to
         :meth:`~nzcvm.model.ModelTree.query_bounded`.
-
-    Examples
-    --------
-    >>> ModelRange.TOMOGRAPHY.value
-    (0, 127)
-    >>> ModelRange.BASINS.value
-    (129, 255)
-    >>> ModelRange.ALL.value
-    (0, 255)
     """
 
     TOMOGRAPHY = (0, 127)

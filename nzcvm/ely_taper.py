@@ -37,7 +37,7 @@ from __future__ import annotations
 import numpy as np
 import xarray as xr
 
-from nzcvm.model import ModelRange, ModelTree
+from nzcvm.model import BlendMode, ModelRange, ModelTree
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -162,9 +162,7 @@ def apply_ely_taper(
     # Step 1: query tomography at reference depth z_T
     # ------------------------------------------------------------------
     z_ref = np.full_like(x_bc, z_t)
-    tomo_raw = model.query_many_raw_bounded(
-        x_bc, y_bc, z_ref, model_range=ModelRange.TOMOGRAPHY
-    )
+    tomo_raw = model.query_many(x_bc, y_bc, z_ref, model_range=ModelRange.TOMOGRAPHY)
     vs_at_z_t = tomo_raw[..., 2]  # column 2 = Vs
 
     # ------------------------------------------------------------------
@@ -188,8 +186,11 @@ def apply_ely_taper(
     # ------------------------------------------------------------------
     # Step 3: blend basin models into the GTL buffer
     # ------------------------------------------------------------------
-    blended_raw = model.query_many_raw_bounded_into(
-        gtl_buffer, x_bc, y_bc, z_bc, model_range=ModelRange.BASINS
+    blended_raw = model.query_many(
+        x_bc, y_bc, z_bc,
+        buffer=gtl_buffer,
+        model_range=ModelRange.BASINS,
+        blend_mode=BlendMode.Over,
     )
 
     # ------------------------------------------------------------------

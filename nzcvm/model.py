@@ -481,19 +481,29 @@ class ModelTree:
         """
         return self._raw.aabb()
 
-    def query(self, x: Any, y: Any, z: Any) -> Quality | None:
+    def query(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        model_range: ModelRange = ModelRange.ALL,
+    ) -> Quality | None:
         """Query material properties at a single point.
 
         Parameters
         ----------
         x, y, z :
             Coordinates in the model's projected CRS (metres).
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
 
         Returns
         -------
         Quality or None
             Blended quality, or ``None`` if the point lies outside all
-            mesh models.
+            mesh models in the requested priority range.
 
         See Also
         --------
@@ -501,7 +511,8 @@ class ModelTree:
         ModelTree.query_stats : Query with BVH traversal diagnostics.
         ModelTree.get_explanation : Query with per-model contribution details.
         """
-        quality_dict = self._raw.query(x, y, z)
+        lo, hi = model_range.value
+        quality_dict = self._raw.query_bounded(x, y, z, lo, hi)
         return Quality.from_dict(quality_dict) if quality_dict is not None else None
 
     def query_stats(self, x: Any, y: Any, z: Any) -> QueryStats:
@@ -563,258 +574,68 @@ class ModelTree:
                 "or combined quality alpha ~ 1.0"
             )
 
-    def query_bounded(
+    def query_many(
         self,
         x: Any,
         y: Any,
         z: Any,
+        *,
+        buffer: np.ndarray | None = None,
         model_range: ModelRange = ModelRange.ALL,
-    ) -> Quality | None:
-        """Query material properties at a single point within a priority range.
-
-        Parameters
-        ----------
-        x, y, z :
-            Coordinates in the model's projected CRS (metres).
-        model_range :
-            Restricts the query to models whose priority falls within this
-            range.  Defaults to :attr:`ModelRange.ALL`.
-
-        Returns
-        -------
-        Quality or None
-            Blended quality from models in the given range, or ``None`` if no
-            matching model covers the point.
-
-        See Also
-        --------
-        ModelRange : Priority range constants.
-        ModelTree.query : Query across all priorities.
-        ModelTree.query_many_bounded : Vectorised bounded query.
-        """
-        lo, hi = model_range.value
-        quality_dict = self._raw.query_bounded(x, y, z, lo, hi)
-        return Quality.from_dict(quality_dict) if quality_dict is not None else None
-
-    def query_many_raw_bounded(
-        self, x: Any, y: Any, z: Any, model_range: ModelRange = ModelRange.ALL
+        blend_mode: BlendMode = BlendMode.Erase,
     ) -> np.ndarray:
-        """Vectorised bounded query returning a raw float32 array.
-
-        Parameters
-        ----------
-        x, y, z :
-            Arrays of coordinates; must be broadcastable to the same shape.
-        model_range :
-            Restricts the query to models whose priority falls within this
-            range.
-
-        Returns
-        -------
-        numpy.ndarray
-            Float32 array of shape ``(*x.shape, 6)`` with columns ordered
-            as ``[rho, vp, vs, qp, qs, alpha]``.  Points not covered by any
-            matching model are returned as zeros.
-
-        See Also
-        --------
-        ModelTree.query_many_bounded : Same query returning a labelled Dataset.
-        """
-        lo, hi = model_range.value
-        n = x.ravel().shape[0]
-        buffer = np.zeros((n, 6), dtype=np.float32)
-        return self._raw.query_many(
-            buffer,
-            x.astype(np.float32, copy=False).ravel(),
-            y.astype(np.float32, copy=False).ravel(),
-            z.astype(np.float32, copy=False).ravel(),
-            lo,
-            hi,
-            BlendMode.Erase,
-        ).reshape(x.shape + (6,))
-
-    def query_many_bounded(
-        self, x: Any, y: Any, z: Any, model_range: ModelRange = ModelRange.ALL
-    ) -> xr.Dataset:
-        """Vectorised bounded query returning a labelled :class:`xarray.Dataset`.
-
-        Parameters
-        ----------
-        x, y, z :
-            Arrays of coordinates; broadcastable to a common shape.
-        model_range :
-            Restricts the query to models whose priority falls within this
-            range.
-
-        Returns
-        -------
-        xarray.Dataset
-            Dataset with variables ``rho``, ``vp``, ``vs``, ``qp``, ``qs``
-            and coordinates ``x``, ``y``, ``z``.  Points not covered by any
-            matching model are returned as zeros.
-
-        See Also
-        --------
-        ModelRange : Priority range constants.
-        ModelTree.query_bounded : Single-point bounded query.
-        """
-        x, y, z = np.broadcast_arrays(x, y, z)
-        ndim = x.ndim
-        dims = tuple(f"d{i}" for i in range(ndim))
-        quality_array = self.query_many_raw_bounded(x, y, z, model_range)
-        var_names = ["rho", "vp", "vs", "qp", "qs"]
-        data_vars = {
-            name: (dims, quality_array[..., i]) for i, name in enumerate(var_names)
-        }
-        return xr.Dataset(
-            data_vars=data_vars,
-            coords={"x": (dims, x), "y": (dims, y), "z": (dims, z)},
-        )
-
-    def query_many_raw_into(self, existing: np.ndarray, x: Any, y: Any, z: Any) -> np.ndarray:
-        """Vectorised query that alpha-blends into an existing quality buffer.
-
-        Parameters
-        ----------
-        existing :
-            Float32 array of shape ``(*x.shape, 6)`` containing the current
-            quality values (same layout as returned by
-            :meth:`query_many_raw`).  The array is **not** modified in-place;
-            a new array with the blended result is returned.
-        x, y, z :
-            Arrays of coordinates; must be broadcastable to ``existing.shape[:-1]``.
-
-        Returns
-        -------
-        numpy.ndarray
-            Float32 array of the same shape as ``existing`` with each row
-            blended with the new query result using the Porter-Duff "over"
-            operator.
-
-        See Also
-        --------
-        ModelTree.query_many_bounded_into : Bounded variant.
-        """
-        return self._raw.query_many(
-            existing.astype(np.float32, copy=False).reshape(-1, 6),
-            x.astype(np.float32, copy=False).ravel(),
-            y.astype(np.float32, copy=False).ravel(),
-            z.astype(np.float32, copy=False).ravel(),
-            0,
-            255,
-            BlendMode.Over,
-        ).reshape(existing.shape)
-
-    def query_many_raw_bounded_into(
-        self,
-        existing: np.ndarray,
-        x: Any,
-        y: Any,
-        z: Any,
-        model_range: ModelRange = ModelRange.ALL,
-    ) -> np.ndarray:
-        """Bounded vectorised query that alpha-blends into an existing buffer.
-
-        Parameters
-        ----------
-        existing :
-            Float32 array of shape ``(*x.shape, 6)`` containing the current
-            quality values.
-        x, y, z :
-            Arrays of coordinates; must be broadcastable to ``existing.shape[:-1]``.
-        model_range :
-            Restricts the query to models whose priority falls within this
-            range.
-
-        Returns
-        -------
-        numpy.ndarray
-            Float32 array with the same shape as ``existing``.
-
-        See Also
-        --------
-        ModelRange : Priority range constants.
-        ModelTree.query_many_raw_into : Unbounded variant.
-        """
-        lo, hi = model_range.value
-        return self._raw.query_many(
-            existing.astype(np.float32, copy=False).reshape(-1, 6),
-            x.astype(np.float32, copy=False).ravel(),
-            y.astype(np.float32, copy=False).ravel(),
-            z.astype(np.float32, copy=False).ravel(),
-            lo,
-            hi,
-            BlendMode.Over,
-        ).reshape(existing.shape)
-
-    def query_many_raw(self, x: Any, y: Any, z: Any) -> np.ndarray:
         """Vectorised query returning a raw float32 array.
 
         Parameters
         ----------
         x, y, z :
             Arrays of coordinates; must be broadcastable to the same shape.
+        buffer :
+            Optional float32 array of shape ``(*x.shape, 6)`` to composite
+            into.  When ``None`` (the default) a zero-filled buffer is
+            created automatically.  The array is never modified in-place;
+            a new array is always returned.
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+        blend_mode :
+            Controls how the query result is composited into ``buffer``:
+
+            * :attr:`BlendMode.Erase` *(default)* — overwrite each row with
+              the query result; rows for points outside all matching models
+              are left at their buffer value (zeros if no buffer was given).
+            * :attr:`BlendMode.Over` — Porter-Duff "over" blend of the query
+              result over the existing buffer row.
 
         Returns
         -------
         numpy.ndarray
-            Float32 array of shape ``(*x.shape, 6)`` with columns ordered
-            as ``[rho, vp, vs, qp, qs, alpha]``.
+            Float32 array of shape ``(*x.shape, 6)`` with columns ordered as
+            ``[rho, vp, vs, qp, qs, alpha]``.
 
         See Also
         --------
-        ModelTree.query_many : Same query returning a labelled xarray Dataset.
+        ModelTree.query : Single-point query.
+        ModelRange : Priority range constants.
         """
+        x = np.asarray(x, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        z = np.asarray(z, dtype=np.float32)
         n = x.ravel().shape[0]
-        buffer = np.zeros((n, 6), dtype=np.float32)
+        if buffer is None:
+            buf = np.zeros((n, 6), dtype=np.float32)
+        else:
+            buf = buffer.astype(np.float32, copy=False).reshape(-1, 6)
+        lo, hi = model_range.value
         return self._raw.query_many(
-            buffer,
-            x.astype(np.float32, copy=False).ravel(),
-            y.astype(np.float32, copy=False).ravel(),
-            z.astype(np.float32, copy=False).ravel(),
-            0,
-            255,
-            BlendMode.Erase,
+            buf,
+            x.ravel(),
+            y.ravel(),
+            z.ravel(),
+            lo,
+            hi,
+            blend_mode,
         ).reshape(x.shape + (6,))
-
-    def query_many(self, x: Any, y: Any, z: Any) -> xr.Dataset:
-        """Vectorised query returning a labelled :class:`xarray.Dataset`.
-
-        Parameters
-        ----------
-        x, y, z :
-            Arrays of coordinates; broadcastable to a common shape.
-
-        Returns
-        -------
-        xarray.Dataset
-            Dataset with variables ``rho``, ``vp``, ``vs``, ``qp``, ``qs``
-            and coordinates ``x``, ``y``, ``z``.
-
-        See Also
-        --------
-        ModelTree.query_many_raw : Same query as an unlabelled float32 array.
-        """
-        x, y, z = np.broadcast_arrays(x, y, z)
-
-        ndim = x.ndim
-        dims = tuple(f"d{i}" for i in range(ndim))
-        quality_array = self.query_many_raw(x, y, z)
-        var_names = ["rho", "vp", "vs", "qp", "qs"]
-        data_vars = {}
-        for i, name in enumerate(var_names):
-            data_vars[name] = (dims, quality_array[..., i])
-
-        dset = xr.Dataset(
-            data_vars=data_vars,
-            coords={
-                "x": (dims, x),
-                "y": (dims, y),
-                "z": (dims, z),
-            },
-        )
-
-        return dset
 
     def view(self) -> Tree:
         """Return a :class:`rich.tree.Tree` representation of the model tree."""

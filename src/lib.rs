@@ -278,28 +278,10 @@ mod nzcvm {
     impl PyModelTree {
         /// Query the velocity model at a single point.
         ///
-        /// Returns a dict with keys `rho`, `vp`, `vs`, `qp`, `qs`, `alpha`,
-        /// or `None` if the point lies outside all model regions.
+        /// Only models whose priority falls in `[priority_lo, priority_hi]` contribute.
+        /// Use `0, 255` to query all models.
+        /// Returns a dict `{rho, vp, vs, qp, qs, alpha}` or `None` if outside all models.
         pub fn query<'py>(
-            &self,
-            py: Python<'py>,
-            x: Real,
-            y: Real,
-            z: Real,
-        ) -> PyResult<Option<Bound<'py, PyAny>>> {
-            let pt = Point3::new(x, y, z);
-            self.inner
-                .query(pt)
-                .map(|q| pythonize(py, &q).map_err(|e| e.into()))
-                .transpose()
-        }
-
-        /// Query the velocity model at a single point, considering only models
-        /// whose priority falls in `[priority_lo, priority_hi]` (both inclusive).
-        ///
-        /// Returns a dict with keys `rho`, `vp`, `vs`, `qp`, `qs`, `alpha`,
-        /// or `None` if no matching model covers the point.
-        pub fn query_bounded<'py>(
             &self,
             py: Python<'py>,
             x: Real,
@@ -310,7 +292,7 @@ mod nzcvm {
         ) -> PyResult<Option<Bound<'py, PyAny>>> {
             let pt = Point3::new(x, y, z);
             self.inner
-                .query_bounded(pt, priority_lo, priority_hi)
+                .query(pt, None, priority_lo, priority_hi)
                 .map(|q| pythonize(py, &q).map_err(|e| e.into()))
                 .transpose()
         }

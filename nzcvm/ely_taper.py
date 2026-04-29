@@ -11,33 +11,20 @@ A Vs30-derived near-surface seismic velocity model.
 *Abstracts, Annual Meeting of the Southern California Earthquake Center*, 174.
 """
 
+import functools
 from dataclasses import dataclass
 
 import numpy as np
-import functools
-
-import numpy.typing as npt
 import xarray as xr
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
-#: Reference depth (metres, positive = depth below surface) at which the
-#: tomography velocity anchors the GTL profile.
-Z_T: float = 450.0
-
-#: Fallback Vs30 used when site-specific values are unavailable.
-REFERENCE_VS30: float = 500.0
-
-
-def horner_relation(x: npt.ArrayLike, coeffs: np.ndarray):
+def horner_relation(x: xr.DataArray, coeffs: np.ndarray):
     """
     Evaluate a polynomial at x using Horner's method (xarray-aware).
 
     Parameters
     ----------
-    x : array-like or xarray.DataArray
+    x : array or xarray.DataArray
         Input values at which to evaluate the polynomial. Can be a NumPy array,
         or an xarray.DataArray. The return type will match the
         type of `x`: if `x` is an xarray.DataArray, an xarray.DataArray is
@@ -67,10 +54,7 @@ def horner_relation(x: npt.ArrayLike, coeffs: np.ndarray):
     >>> horner_relation(np.array([1, 2]), coeffs)
     array([2, 9])
     """
-    if isinstance(x, xr.DataArray):
-        y = xr.zeros_like(x)
-    else:
-        y = np.zeros_like(x)
+    y = xr.zeros_like(x)
 
     for c in coeffs:
         y = y * x + c
@@ -96,34 +80,34 @@ class ElyProfile:
 
     Parameters
     ----------
-    rho : ArrayLike
+    rho : xarray.DataArray
         Density (kg/m^3).
-    vp : ArrayLike
+    vp : xarray.DataArray
         P-wave velocity (m/s).
-    vs : ArrayLike
+    vs : xarray.DataArray
         S-wave velocity (m/s).
 
     Attributes
     ----------
-    rho : ArrayLike
+    rho : xarray.DataArray
         Mass density profile (kg/m^3).
-    vp : ArrayLike
+    vp : xarray.DataArray
         P-wave velocity profile (m/s).
-    vs : ArrayLike
+    vs : xarray.DataArray
         S-wave velocity profile (m/s).
     """
 
-    rho: npt.ArrayLike
-    vp: npt.ArrayLike
-    vs: npt.ArrayLike
+    rho: xr.DataArray
+    vp: xr.DataArray
+    vs: xr.DataArray
 
 
 def ely_vs_profile(
-    z: npt.ArrayLike,
-    vs30: npt.ArrayLike,
-    vp_at_z_t: npt.ArrayLike,
-    vs_at_z_t: npt.ArrayLike,
-    z_t: float = Z_T,
+    z: xr.DataArray,
+    vs30: xr.DataArray,
+    vp_at_z_t: xr.DataArray,
+    vs_at_z_t: xr.DataArray,
+    z_t: float,
 ) -> ElyProfile:
     """Compute the Ely GTL Vs profile at depths ``z``.
 
@@ -138,7 +122,7 @@ def ely_vs_profile(
         Shear-wave velocity at the reference depth ``z_t`` taken from the
         underlying tomography model (m/s).
     z_t :
-        Reference depth (metres).  Defaults to :data:`Z_T`.
+        Reference depth (metres).
 
     Returns
     -------

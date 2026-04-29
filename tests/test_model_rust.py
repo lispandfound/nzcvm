@@ -67,7 +67,12 @@ class TestQueryMany:
         z = np.zeros(1, dtype=np.float32)
         ds = _make_model().query_many(x, z, z)
         assert list(ds.coords["component"].values) == [
-            "rho", "vp", "vs", "qp", "qs", "alpha"
+            "rho",
+            "vp",
+            "vs",
+            "qp",
+            "qs",
+            "alpha",
         ]
 
 

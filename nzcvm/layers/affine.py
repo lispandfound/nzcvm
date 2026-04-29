@@ -1,10 +1,11 @@
 """Pipeline layer for applying a 4x4 affine transform to model coordinates."""
 
+from typing import Any
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from typing import Any
 
 from nzcvm.coordinates import Affine, Coordinate
 from nzcvm.layers.protocol import QueryLayer

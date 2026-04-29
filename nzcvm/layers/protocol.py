@@ -1,10 +1,9 @@
 """Structural protocol for pipeline layers."""
 
-from typing import Protocol
+from typing import Any, Protocol
 
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
-from typing import Any
 
 
 class QueryLayer(Protocol):

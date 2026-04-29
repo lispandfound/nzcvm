@@ -1,5 +1,7 @@
 """Pipeline layer for converting depth-below-surface to absolute elevation."""
 
+from typing import Any
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
@@ -8,7 +10,6 @@ from rich.tree import Tree
 from nzcvm.coordinates import Coordinate
 from nzcvm.layers.protocol import QueryLayer
 from nzcvm.surface import Surface
-from typing import Any
 
 
 class DepthTransformLayer:

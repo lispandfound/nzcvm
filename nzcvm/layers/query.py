@@ -1,11 +1,11 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
+from typing import Any
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-
-from typing import Any
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate

@@ -1,21 +1,19 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
-from nzcvm.components import Component
-
-from nzcvm.model import ModelRange
 from typing import Any
-import dask.array as da
 
+import dask.array as da
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
+from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
-
-from nzcvm.layers.protocol import QueryLayer
-from nzcvm.surface import Surface
 from nzcvm.ely_taper import ely_vs_profile
+from nzcvm.layers.protocol import QueryLayer
+from nzcvm.model import ModelRange
+from nzcvm.surface import Surface
 
 
 class ElyTaperLayer:

@@ -1,10 +1,11 @@
 """Pipeline layer for applying a pyproj CRS transform to model coordinates."""
 
+from typing import Any
+
 import xarray as xr
 from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from typing import Any
 
 from nzcvm.coordinates import Coordinate, crs_transform
 from nzcvm.layers.protocol import QueryLayer

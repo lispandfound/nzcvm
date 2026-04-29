@@ -7,9 +7,9 @@ an :class:`xarray.DataTree` and delegates to the next layer.
 from .affine import AffineTransformLayer
 from .crs import CrsTransformLayer
 from .depth import DepthTransformLayer
+from .helpers import block_map, block_map_no_path
 from .protocol import QueryLayer
 from .query import ModelLayer
-from .helpers import block_map, block_map_no_path
 
 __all__ = [
     "QueryLayer",

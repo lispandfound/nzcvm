@@ -1,7 +1,5 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-from nzcvm.layers.ely import ElyTaperLayer
-
 import os
 from contextlib import nullcontext
 from pathlib import Path
@@ -26,6 +24,7 @@ from nzcvm.layers import (
     ModelLayer,
     block_map_no_path,
 )
+from nzcvm.layers.ely import ElyTaperLayer
 from nzcvm.model import Model
 from nzcvm.scripts import (
     construct_mesh,

@@ -74,9 +74,9 @@ class DepthTransformLayer:
                 output_dtypes=[np.float32],
             )
 
-            # Surface elevation has +z => decreasing elevation (positive depth).
-            # Hence *adding* ds[Z] is the correct calculation to translate from
-            # elevation to depth.
+            # In this repository, ``z`` is depth below the surface with +z pointing
+            # downward. Adding that depth to the interpolated surface elevation
+            # converts depth-below-surface to absolute ``z`` / elevation.
             ds[Coordinate.Z.value] = surface_elevation + ds[Coordinate.Z.value]
 
             return ds

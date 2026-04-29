@@ -4,9 +4,9 @@ from pathlib import Path
 from typing import Annotated
 
 import geopandas as gpd
-import platformdirs
 import numpy as np
 import pandas as pd
+import platformdirs
 import scipy as sp
 import shapely
 import typer
@@ -23,7 +23,9 @@ memory = Memory(platformdirs.user_cache_dir("nzcvm"), verbose=0)
 
 console = Console()
 
-app = typer.Typer(help="Benchmark BVH performance with realistic NZ land-sampled queries.")
+app = typer.Typer(
+    help="Benchmark BVH performance with realistic NZ land-sampled queries."
+)
 
 
 @memory.cache
@@ -49,9 +51,7 @@ def sample_land_points(
     while len(xs_final) < n_required:
         c_x = np.random.uniform(min_bounds[0], max_bounds[0], batch_size)
         c_y = np.random.uniform(min_bounds[1], max_bounds[1], batch_size)
-        c_z = sp.stats.truncexpon(b=max_bounds[2] / 0.1, scale=0.1).rvs(
-            size=batch_size
-        )
+        c_z = sp.stats.truncexpon(b=max_bounds[2] / 0.1, scale=0.1).rvs(size=batch_size)
 
         points = shapely.multipoints(np.column_stack((c_x, c_y)))
         mask = nz_poly.contains(points.geoms)
@@ -162,11 +162,25 @@ def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
 
 @app.command()
 def main(
-    models: Annotated[list[Path], typer.Argument(help="One or more VTKHDF model files to load.", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    n_samples: Annotated[int, typer.Option("-n", "--n-samples", help="Number of random sample points to query.", min=1)] = 1000,
-    output: Annotated[Path, typer.Option(help="Output Parquet path.")] = Path("nzcvm_benchmark.parquet"),
+    models: Annotated[
+        list[Path],
+        typer.Argument(
+            help="One or more VTKHDF model files to load.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    n_samples: Annotated[
+        int,
+        typer.Option(
+            "-n", "--n-samples", help="Number of random sample points to query.", min=1
+        ),
+    ] = 1000,
+    output: Annotated[Path, typer.Option(help="Output Parquet path.")] = Path(
+        "nzcvm_benchmark.parquet"
+    ),
 ) -> None:
     """Entry point for the ``nzcvm tree-stats`` command."""
     run_benchmark(models, n_samples, output)
-
-

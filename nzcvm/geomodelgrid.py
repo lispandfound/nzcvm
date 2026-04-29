@@ -28,7 +28,14 @@ from mashumaro.mixins.toml import DataClassTOMLMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 
 from nzcvm.components import Component
-from nzcvm.coordinates import NO_ORIGIN, WGS84_CRS, Affine, Coordinate, rotate, translate
+from nzcvm.coordinates import (
+    NO_ORIGIN,
+    WGS84_CRS,
+    Affine,
+    Coordinate,
+    rotate,
+    translate,
+)
 
 
 class ConfigObject(
@@ -40,6 +47,7 @@ class ConfigObject(
     ``to_dict`` methods from mashumaro. ``None`` fields are omitted and
     serialisation uses field aliases where defined.
     """
+
     class Meta(BaseConfig):
         serialize_by_alias = True
         omit_none = True
@@ -125,7 +133,10 @@ class ModelMetadata(ConfigObject):
         nzcvm.layers.crs.CrsTransformLayer : Follow with a CRS layer when needed.
         """
         from pyproj import Transformer
-        origin_tr = Transformer.from_crs(self.origin_crs, self.target_crs, always_xy=True)
+
+        origin_tr = Transformer.from_crs(
+            self.origin_crs, self.target_crs, always_xy=True
+        )
         ox, oy = origin_tr.transform(self.origin_lon, self.origin_lat)
         return translate(ox, oy) @ rotate(self.azimuth, ccw=False)
 
@@ -166,6 +177,7 @@ class Block(ConfigObject):
     >>> block.resolution_horiz
     100.0
     """
+
     resolution_horiz: float
     resolution_vert: float
     z_top: float
@@ -191,36 +203,12 @@ class Block(ConfigObject):
             }
 
 
-@dataclass
-class Surface(ConfigObject):
-    """A 2-D surface grid configuration (e.g. topography).
-
-    Parameters
-    ----------
-    shape :
-        ``(ni, nj)`` dimensions of the surface grid.
-    resolution_horiz :
-        Horizontal spacing in metres between grid points.
-    name :
-        Identifier used as the DataTree node name.
-
-    Examples
-    --------
-    >>> from nzcvm.geomodelgrid import Surface
-    >>> s = Surface(shape=(3, 3), resolution_horiz=100.0, name="topo")
-    >>> s.resolution_horiz
-    100.0
-    """
-    shape: tuple[int, int]
-    resolution_horiz: float
-    name: str
-
-
 DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
 
 
 class GeoModelGridFormat(StrEnum):
     """Supported serialisation formats for :class:`GeoModelGrid` configs."""
+
     INFERRED = auto()
     YAML = auto()
     TOML = auto()
@@ -231,25 +219,24 @@ class GeoModelGridFormat(StrEnum):
 class GeoModelGrid(ConfigObject):
     """Top-level configuration for an NZCVM velocity model grid.
 
-    Holds the coordinate metadata plus lists of :class:`Block` and
-    :class:`Surface` specifications.  Call :meth:`to_datatree` to create
-    the empty :class:`xarray.DataTree` that pipeline layers will fill in.
+    Holds the coordinate metadata plus lists of :class:`Block`. Call
+    :meth:`to_datatree` to create the empty :class:`xarray.DataTree` that
+    pipeline layers will fill in.
 
     See Also
     --------
     GeoModelGrid.read_config : Load from a TOML, YAML, or JSON file.
     GeoModelGrid.to_datatree : Create the corresponding empty DataTree.
     """
+
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
-    surfaces: list[Surface] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)
 
     def to_datatree(self) -> xr.DataTree:
         """Build an empty :class:`xarray.DataTree` from this grid configuration.
 
-        The returned tree has nodes at ``/block/<name>`` and
-        ``/surface/<name>`` populated with coordinate arrays but no
-        material-property variables.  Pipeline layers fill those in.
+        The returned tree has nodes at ``/block/<name>`` which pipeline layers
+        fill those in.
 
         Returns
         -------
@@ -270,11 +257,8 @@ class GeoModelGrid(ConfigObject):
         name = self.metadata.title or "model"
 
         blocks = {b.name: empty_block(b) for b in self.blocks}
-        surfaces = {s.name: empty_surface(s) for s in self.surfaces}
 
-        root = xr.DataTree.from_dict(
-            {"block": blocks, "surface": surfaces}, name=name, nested=True
-        )
+        root = xr.DataTree.from_dict({"block": blocks}, name=name, nested=True)
 
         root.attrs.update(self.metadata.to_dict())
 
@@ -368,34 +352,4 @@ def empty_block(block: Block) -> xr.Dataset:
             resolution_vert=block.resolution_vert,
             z_top=block.z_top,
         ),
-    )
-
-
-def empty_surface(surface: Surface) -> xr.Dataset:
-    """Create an empty coordinate-only :class:`xarray.Dataset` for *surface*.
-
-    Parameters
-    ----------
-    surface :
-        Surface specification with shape and horizontal resolution.
-
-    Returns
-    -------
-    xarray.Dataset
-
-    Examples
-    --------
-    >>> from nzcvm.geomodelgrid import Surface, empty_surface
-    >>> from nzcvm.coordinates import Coordinate
-    >>> s = Surface(shape=(4, 5), resolution_horiz=200.0, name="topo")
-    >>> ds = empty_surface(s)
-    >>> ds.sizes[Coordinate.I], ds.sizes[Coordinate.J]
-    (4, 5)
-    """
-    (ni, nj) = surface.shape
-    i = np.arange(ni) * surface.resolution_horiz
-    j = np.arange(nj) * surface.resolution_horiz
-    return xr.Dataset(
-        coords={Coordinate.I: i, Coordinate.J: j},
-        attrs=dict(resolution_horiz=surface.resolution_horiz),
     )

@@ -49,6 +49,7 @@ class Coordinate(StrEnum):
     >>> Coordinate.X == "x"
     True
     """
+
     X = auto()
     Y = auto()
     Z = auto()
@@ -139,10 +140,12 @@ def rotate(
     st, ct = np.sin(theta), np.cos(theta)
     if ccw:
         r: Affine = np.array(
-            [[ct, -st, 0.0, 0.0],
-             [st,  ct, 0.0, 0.0],
-             [0.0, 0.0, 1.0, 0.0],
-             [0.0, 0.0, 0.0, 1.0]],
+            [
+                [ct, -st, 0.0, 0.0],
+                [st, ct, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             dtype=np.float32,
         )
     else:
@@ -150,10 +153,12 @@ def rotate(
         #   column 0 → (sin(az), cos(az))   local x points toward azimuth
         #   column 1 → (cos(az), -sin(az))  local y is 90° CCW from x
         r = np.array(
-            [[st,  ct, 0.0, 0.0],
-             [ct, -st, 0.0, 0.0],
-             [0.0, 0.0, 1.0, 0.0],
-             [0.0, 0.0, 0.0, 1.0]],
+            [
+                [st, ct, 0.0, 0.0],
+                [ct, -st, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
             dtype=np.float32,
         )
     ox, oy = origin
@@ -265,6 +270,7 @@ def crs_transform(x, y, *, transformer: Transformer):
     >>> x_out, y_out = crs_transform(np.array([172.0]), np.array([-41.0]), transformer=tr)
     """
     if isinstance(x, xr.DataArray) or isinstance(y, xr.DataArray):
+
         def _extract_x(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
             xo, _ = transformer.transform(xi, yi)
             return np.asarray(xo)

@@ -3,6 +3,7 @@
 Writes ``rho3dfile.d``, ``vp3dfile.p``, and ``vs3dfile.s`` binary files into
 a directory using memory-mapped I/O via :mod:`numpy.memmap`.
 """
+
 import os
 from pathlib import Path
 

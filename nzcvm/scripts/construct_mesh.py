@@ -131,7 +131,9 @@ class Layer:
     alpha: float = 1.0
 
 
-def construct_volumetric_mesh(layers: list[Layer], priority: int) -> pv.UnstructuredGrid:
+def construct_volumetric_mesh(
+    layers: list[Layer], priority: int
+) -> pv.UnstructuredGrid:
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
     rho = np.array([layer.rho for layer in layers])
@@ -201,7 +203,9 @@ class LinearNDInterpolatorExt(object):
         return t
 
 
-def interpolate_surface(surface: np.ndarray, vertices: np.ndarray, neighbours: int) -> np.ndarray:
+def interpolate_surface(
+    surface: np.ndarray, vertices: np.ndarray, neighbours: int
+) -> np.ndarray:
     interp = LinearNDInterpolatorExt(surface[:, :-1], surface[:, -1])
     return interp(np.c_[vertices["x"], vertices["y"]])
 
@@ -220,14 +224,10 @@ def enforce_mesh_constraints(mesh_top, mesh_bottom):
         e.add_note(f"{nan_top_values=}\n{nan_bottom_values=}")
         raise e
     if bottom_nan_mask.any():
-        print(
-            "Warning: bottom surface has nan values. Will crimp to top-level."
-        )
+        print("Warning: bottom surface has nan values. Will crimp to top-level.")
         mesh_bottom[bottom_nan_mask] = mesh_top[bottom_nan_mask]
     if top_nan_mask.any():
-        print(
-            "Warning: top surface has nan values. Will crimp to bottom-level."
-        )
+        print("Warning: top surface has nan values. Will crimp to bottom-level.")
         mesh_top[top_nan_mask] = mesh_bottom[top_nan_mask]
     overlap_mask = mesh_top >= mesh_bottom
     if overlap_mask.any():
@@ -368,21 +368,117 @@ def mask_surface(
 
 @app.command()
 def main(
-    bounds: Annotated[Path, typer.Argument(help="GeoJSON file defining the basin boundary.", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    topography: Annotated[Path, typer.Argument(help="Topography surface file (HDF5).", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    top_surface: Annotated[Path, typer.Argument(help="Top surface file (HDF5).", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    bottom_surface: Annotated[Path, typer.Argument(help="Bottom surface file (HDF5).", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    bounds: Annotated[
+        Path,
+        typer.Argument(
+            help="GeoJSON file defining the basin boundary.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    topography: Annotated[
+        Path,
+        typer.Argument(
+            help="Topography surface file (HDF5).",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    top_surface: Annotated[
+        Path,
+        typer.Argument(
+            help="Top surface file (HDF5).",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    bottom_surface: Annotated[
+        Path,
+        typer.Argument(
+            help="Bottom surface file (HDF5).",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
     output: Annotated[Path, typer.Argument(help="Output VTKHDF file path.")],
-    simplification: Annotated[float, typer.Option("-s", "--simplification", help="Polygon simplification parameter (higher = simpler).", min=0.0)] = 10.0,
-    culling_volume: Annotated[float, typer.Option("-v", "--culling-volume", help="Tetrahedron volume cull threshold (lower = finer).", min=0.0)] = 1e-3,
-    triangulation_radius: Annotated[float, typer.Option("-r", "--triangulation-radius", help="Max triangulation radius in metres.", min=0.0)] = 1000.0,
-    neighbours: Annotated[int, typer.Option("-n", "--neighbours", help="Nearest neighbours for RBF surface interpolation.", min=1)] = 5,
-    smoothing: Annotated[float, typer.Option("-S", "--smoothing", help="RBF smoothing parameter (0 = exact interpolation).", min=0.0)] = 0.0,
-    vm_1d: Annotated[Path | None, typer.Option(help="Path to 1-D velocity model CSV.", exists=True, file_okay=True, dir_okay=False, readable=True)] = None,
-    rho: Annotated[float | None, typer.Option(help="Constant density (kg/m³).", min=0.0)] = None,
-    vp: Annotated[float | None, typer.Option(help="Constant P-wave velocity (m/s).", min=0.0)] = None,
-    vs: Annotated[float | None, typer.Option(help="Constant S-wave velocity (m/s).", min=0.0)] = None,
-    priority: Annotated[int, typer.Option(help="Basin mesh priority (lower = higher priority).", min=0, max=255)] = 0,
+    simplification: Annotated[
+        float,
+        typer.Option(
+            "-s",
+            "--simplification",
+            help="Polygon simplification parameter (higher = simpler).",
+            min=0.0,
+        ),
+    ] = 10.0,
+    culling_volume: Annotated[
+        float,
+        typer.Option(
+            "-v",
+            "--culling-volume",
+            help="Tetrahedron volume cull threshold (lower = finer).",
+            min=0.0,
+        ),
+    ] = 1e-3,
+    triangulation_radius: Annotated[
+        float,
+        typer.Option(
+            "-r",
+            "--triangulation-radius",
+            help="Max triangulation radius in metres.",
+            min=0.0,
+        ),
+    ] = 1000.0,
+    neighbours: Annotated[
+        int,
+        typer.Option(
+            "-n",
+            "--neighbours",
+            help="Nearest neighbours for RBF surface interpolation.",
+            min=1,
+        ),
+    ] = 5,
+    smoothing: Annotated[
+        float,
+        typer.Option(
+            "-S",
+            "--smoothing",
+            help="RBF smoothing parameter (0 = exact interpolation).",
+            min=0.0,
+        ),
+    ] = 0.0,
+    vm_1d: Annotated[
+        Path | None,
+        typer.Option(
+            help="Path to 1-D velocity model CSV.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ] = None,
+    rho: Annotated[
+        float | None, typer.Option(help="Constant density (kg/m³).", min=0.0)
+    ] = None,
+    vp: Annotated[
+        float | None, typer.Option(help="Constant P-wave velocity (m/s).", min=0.0)
+    ] = None,
+    vs: Annotated[
+        float | None, typer.Option(help="Constant S-wave velocity (m/s).", min=0.0)
+    ] = None,
+    priority: Annotated[
+        int,
+        typer.Option(
+            help="Basin mesh priority (lower = higher priority).", min=0, max=255
+        ),
+    ] = 0,
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
     collection = shapely.from_geojson(bounds.read_text())
@@ -399,9 +495,13 @@ def main(
     topography_data = mask_surface(poly, topography_data, buffer=10000)
 
     mesh_top = interpolate_surface(top_surface_data, triangulation.vertices, neighbours)
-    mesh_bottom = interpolate_surface(bottom_surface_data, triangulation.vertices, neighbours)
+    mesh_bottom = interpolate_surface(
+        bottom_surface_data, triangulation.vertices, neighbours
+    )
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
-    mesh_topography = interpolate_surface(topography_data, triangulation.vertices, neighbours)
+    mesh_topography = interpolate_surface(
+        topography_data, triangulation.vertices, neighbours
+    )
 
     if vm_1d is None and (rho and vp and vs):
         model = uniform_model(rho, vp, vs)
@@ -420,5 +520,3 @@ def main(
     print("Constructed mesh:")
     print(mesh_data)
     mesh_data.save(str(output))
-
-

@@ -18,9 +18,13 @@ def _make_model(rho: float = 2700.0, vs: float = 3500.0, priority: int = 0) -> M
     faces = np.array([[0, 1, 2, 3]], dtype=np.uint64)
     q = np.array([[rho, 6000.0, vs, 200.0, 100.0, 1.0]], dtype=np.float32)
     mesh = _nzcvm.mesh_model(
-        v, faces,
-        np.array([0], dtype=np.uint8), np.array([0], dtype=np.uint64),
-        q, np.uint8(priority), None,
+        v,
+        faces,
+        np.array([0], dtype=np.uint8),
+        np.array([0], dtype=np.uint64),
+        q,
+        np.uint8(priority),
+        None,
     )
     return Model(_nzcvm.model_tree([mesh]))
 
@@ -40,13 +44,17 @@ class TestQueryManyRaw:
 
     def test_model_range_filters(self):
         x = np.array([0.1], dtype=np.float32)
-        result = _make_model(vs=3500.0, priority=10).query_many_raw(x, x, x, model_range=ModelRange.TOMOGRAPHY)
+        result = _make_model(vs=3500.0, priority=10).query_many_raw(
+            x, x, x, model_range=ModelRange.TOMOGRAPHY
+        )
         assert abs(float(result[0, 2]) - 3500.0) < 1.0
 
     def test_blend_mode_over(self):
         x = np.array([0.1], dtype=np.float32)
         buf = np.zeros((1, 6), dtype=np.float32)
-        assert _make_model().query_many_raw(x, x, x, buffer=buf, blend_mode=BlendMode.Over).shape == (1, 6)
+        assert _make_model().query_many_raw(
+            x, x, x, buffer=buf, blend_mode=BlendMode.Over
+        ).shape == (1, 6)
 
 
 class TestQueryMany:
@@ -63,15 +71,20 @@ class TestQueryMany:
         xr.testing.assert_allclose(ds[["rho"]], expected)
 
 
-
 class TestDask:
     def test_query_many_raw_via_apply_ufunc(self):
         dask = pytest.importorskip("dask.array")
         model = _make_model()
-        x = xr.DataArray(dask.from_array(np.array([0.1, 0.2], dtype=np.float32), chunks=1), dims=["d0"])
+        x = xr.DataArray(
+            dask.from_array(np.array([0.1, 0.2], dtype=np.float32), chunks=1),
+            dims=["d0"],
+        )
         z = xr.DataArray(dask.zeros_like(x.data), dims=["d0"])
         result = xr.apply_ufunc(
-            model.query_many_raw, x, z, z,
+            model.query_many_raw,
+            x,
+            z,
+            z,
             input_core_dims=[[], [], []],
             output_core_dims=[["quality_dim"]],
             dask="parallelized",

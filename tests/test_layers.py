@@ -8,6 +8,8 @@ computing any actual model queries (all inputs are dask-backed, so the
 assertions check the *lazy* graph, not computed values).
 """
 
+from dataclasses import dataclass
+
 import dask.array as da
 import numpy as np
 import pytest
@@ -18,6 +20,7 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.coordinates import Coordinate, rotate, translate
 from nzcvm.geomodelgrid import Block, empty_block
+from nzcvm.layers import DepthTransformLayer
 from nzcvm.layers.affine import AffineTransformLayer
 from nzcvm.layers.query import ModelLayer
 from nzcvm.model import Model
@@ -273,3 +276,56 @@ class TestAffineTransformLayerDimensions:
         xt = result_transposed["/block/test"].dataset[Coordinate.X]
         xn = result_normal_swapped["/block/test"].dataset[Coordinate.X]
         xr.testing.assert_allclose(xt, xn, rtol=1e-6)
+
+
+@dataclass
+class DummySurface:
+    """A minimal mock for nzcvm.surface.Surface."""
+
+    elevation_value: float = 100.0
+
+    def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
+        # Returns a constant elevation with the same shape as input
+        return np.full(x.shape, self.elevation_value, dtype=np.float32)
+
+
+class TestDepthTransformLayer:
+    def test_dimensions_and_shapes_preserved(self):
+        """Verify that i, j, k dimensions remain intact after transform."""
+        ni, nj, nk = 4, 3, 2
+        tree = _make_block_datatree(ni=ni, nj=nj, nk=nk)
+        layer = DepthTransformLayer(DummySurface(), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+
+        result = layer(tree)
+        block_ds = result["/block/test"].dataset
+
+        expected_dims = (Coordinate.I.value, Coordinate.J.value, Coordinate.K.value)
+        for coord in [Coordinate.X, Coordinate.Y, Coordinate.Z]:
+            assert block_ds[coord.value].dims == expected_dims
+            assert block_ds[coord.value].shape == (ni, nj, nk)
+
+    def test_z_math_calculation(self):
+        """Verify the arithmetic: Elevation = Surface + Depth."""
+        surface_val = 500.0
+        # Create a block where vertical resolution is 10.0
+        # z_top=0.0 means depths will be [0.0, 10.0]
+        tree = _make_block_datatree(ni=1, nj=1, nk=2, size=20.0)
+
+        layer = DepthTransformLayer(DummySurface(surface_val), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+        result = layer(tree)
+
+        transformed_z = result["/block/test"].dataset[Coordinate.Z.value].values
+
+        # Expected: 500.0 (surface) + [0.0, 10.0] (depths)
+        expected_z = np.array([500.0, 510.0]).reshape(1, 1, 2)
+        np.testing.assert_allclose(transformed_z, expected_z)
+
+    def test_maintains_dask_laziness(self):
+        """Ensure the Z coordinate stays as a dask array after the transform."""
+        tree = _make_block_datatree()
+        layer = DepthTransformLayer(DummySurface(), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
+
+        result = layer(tree)
+        z_data = result["/block/test"].dataset[Coordinate.Z.value].data
+
+        assert isinstance(z_data, da.Array), "Z coordinate was eagerly computed!"

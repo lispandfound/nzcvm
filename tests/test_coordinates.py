@@ -136,7 +136,12 @@ class TestComposition:
 
     def test_inverse_roundtrip(self):
         """An affine composed with its inverse should recover the identity (float32 precision)."""
-        A = translate(100.0, 200.0) @ scale(1000.0) @ reflect_x() @ rotate(140.0, ccw=False)
+        A = (
+            translate(100.0, 200.0)
+            @ scale(1000.0)
+            @ reflect_x()
+            @ rotate(140.0, ccw=False)
+        )
         np.testing.assert_allclose(np.linalg.inv(A) @ A, np.eye(4), atol=1e-3)
 
 
@@ -164,8 +169,12 @@ class TestCrsTransform:
         import xarray as xr
 
         tr = Transformer.from_crs(4326, 2193, always_xy=True)
-        x_da = xr.DataArray(da.from_array(np.array([172.0, 173.0]), chunks=1), dims=["pt"])
-        y_da = xr.DataArray(da.from_array(np.array([-41.0, -42.0]), chunks=1), dims=["pt"])
+        x_da = xr.DataArray(
+            da.from_array(np.array([172.0, 173.0]), chunks=1), dims=["pt"]
+        )
+        y_da = xr.DataArray(
+            da.from_array(np.array([-41.0, -42.0]), chunks=1), dims=["pt"]
+        )
         x_out, y_out = crs_transform(x_da, y_da, transformer=tr)
         assert isinstance(x_out, xr.DataArray)
         assert isinstance(y_out, xr.DataArray)

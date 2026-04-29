@@ -9,10 +9,6 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.geomodelgrid import (
     Block,
     empty_block,
-    empty_surface,
-)
-from nzcvm.geomodelgrid import (
-    Surface as GeoSurface,
 )
 
 
@@ -79,22 +75,3 @@ class TestEmptyBlockDaskLaziness:
         assert x.chunks[0][0] <= 2
         assert x.chunks[1][0] <= 2
         assert x.chunks[2][0] <= 2
-
-
-class TestEmptySurface:
-    def test_returns_xarray_dataset(self):
-        surf = GeoSurface(shape=(10, 8), resolution_horiz=200.0, name="topo")
-        ds = empty_surface(surf)
-        assert isinstance(ds, xr.Dataset)
-
-    def test_coord_sizes(self):
-        surf = GeoSurface(shape=(10, 8), resolution_horiz=200.0, name="topo")
-        ds = empty_surface(surf)
-        assert ds.sizes[Coordinate.I] == 10
-        assert ds.sizes[Coordinate.J] == 8
-
-    def test_resolution_in_coords(self):
-        surf = GeoSurface(shape=(5, 3), resolution_horiz=500.0, name="topo")
-        ds = empty_surface(surf)
-        i_vals = ds.coords[Coordinate.I].values
-        assert float(i_vals[1] - i_vals[0]) == pytest.approx(500.0, rel=1e-5)

@@ -22,7 +22,9 @@ CRS_UTM60S = CRS.from_epsg(32760)
 CRS_NZGD2000 = CRS.from_epsg(4167)
 
 
-def _project_origin(lon: float, lat: float, from_crs: CRS, to_crs: CRS) -> tuple[float, float]:
+def _project_origin(
+    lon: float, lat: float, from_crs: CRS, to_crs: CRS
+) -> tuple[float, float]:
     """Project a lon/lat origin into *to_crs* using ``always_xy=True``."""
     tr = Transformer.from_crs(from_crs, to_crs, always_xy=True)
     return tr.transform(lon, lat)
@@ -43,8 +45,18 @@ def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
     involutory). ``reflect_x()`` is also self-inverse.
     """
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
-    fwd = translate(ox, oy) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x() @ rotate(140.0, ccw=False)
-    inv = rotate(140.0, ccw=False) @ reflect_x() @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0) @ translate(-ox, -oy)
+    fwd = (
+        translate(ox, oy)
+        @ scale(1000.0, 1000.0, 1000.0)
+        @ reflect_x()
+        @ rotate(140.0, ccw=False)
+    )
+    inv = (
+        rotate(140.0, ccw=False)
+        @ reflect_x()
+        @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
+        @ translate(-ox, -oy)
+    )
     return fwd, inv
 
 
@@ -55,10 +67,14 @@ EP2020_AFFINE: Affine = _EP2020_FWD
 
 _db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
 DB2025_AFFINE: Affine = (
-    translate(_db2025_ox, _db2025_oy) @ scale(1000.0, 1000.0, 1000.0) @ rotate(35.0, ccw=False)
+    translate(_db2025_ox, _db2025_oy)
+    @ scale(1000.0, 1000.0, 1000.0)
+    @ rotate(35.0, ccw=False)
 )
 DB2025_INV_AFFINE: Affine = (
-    rotate(35.0, ccw=False) @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0) @ translate(-_db2025_ox, -_db2025_oy)
+    rotate(35.0, ccw=False)
+    @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
+    @ translate(-_db2025_ox, -_db2025_oy)
 )
 DB2025_CRS_TRANSFORMER = Transformer.from_crs(CRS_UTM60S, CRS_NZTM, always_xy=True)
 
@@ -217,7 +233,9 @@ class ModelType(StrEnum):
     EP2020 = auto()
 
 
-MODEL_KWARGS: dict[ModelType, dict[str, int | str]] = {ModelType.EP2020: dict(header=1, sep=r"\s+")}
+MODEL_KWARGS: dict[ModelType, dict[str, int | str]] = {
+    ModelType.EP2020: dict(header=1, sep=r"\s+")
+}
 
 MODEL_COLUMNS = {
     ModelType.EP2020: TomographyModel(
@@ -234,14 +252,29 @@ MODEL_COLUMNS = {
     )
 }
 
-app = typer.Typer(help="Convert a CSV-like tomography model to a VTKHDF tetrahedral mesh.")
+app = typer.Typer(
+    help="Convert a CSV-like tomography model to a VTKHDF tetrahedral mesh."
+)
 
 
 @app.command()
 def main(
-    model: Annotated[Path, typer.Argument(help="CSV-like readable tomography model.", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    output: Annotated[Path, typer.Argument(help="Output path for the converted model.")],
-    model_type: Annotated[ModelType, typer.Argument(help="Model type to read.")] = ModelType.EP2020,
+    model: Annotated[
+        Path,
+        typer.Argument(
+            help="CSV-like readable tomography model.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    output: Annotated[
+        Path, typer.Argument(help="Output path for the converted model.")
+    ],
+    model_type: Annotated[
+        ModelType, typer.Argument(help="Model type to read.")
+    ] = ModelType.EP2020,
 ) -> None:
     """Entry point for the ``nzcvm convert-tomography`` command."""
     df = pd.read_csv(model, **MODEL_KWARGS[model_type])  # ty: ignore[no-matching-overload]
@@ -256,5 +289,3 @@ def main(
 
     mesh = data_frame_to_mesh(df, column_keys)
     mesh.save(str(output))
-
-

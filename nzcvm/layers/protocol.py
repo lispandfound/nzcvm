@@ -1,4 +1,5 @@
 """Structural protocol for pipeline layers."""
+
 from typing import Protocol
 
 import xarray as xr

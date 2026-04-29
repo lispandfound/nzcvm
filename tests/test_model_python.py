@@ -179,12 +179,19 @@ class TestMeshModel:
 
     def test_model_tree_from_mesh_models(self):
         """ModelTree([mesh1, mesh2]) constructor path."""
-        tree = ModelTree([MeshModel(_make_raw_mesh_model(rho=1500.0)), MeshModel(_make_raw_mesh_model())])
+        tree = ModelTree(
+            [
+                MeshModel(_make_raw_mesh_model(rho=1500.0)),
+                MeshModel(_make_raw_mesh_model()),
+            ]
+        )
         q = tree.query(0.1, 0.1, 0.1)
         assert q is not None
 
     def test_view_returns_tree(self):
         t = MeshModel(_make_raw_mesh_model(name="test_layer")).view()
+
+        assert isinstance(t.label, str)
         assert "test_layer" in t.label
 
 

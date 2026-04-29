@@ -18,60 +18,22 @@ import numpy as np
 import xarray as xr
 
 
-def horner_relation(x: xr.DataArray, coeffs: np.ndarray):
-    """
-    Evaluate a polynomial at x using Horner's method (xarray-aware).
-
-    Parameters
-    ----------
-    x : array or xarray.DataArray
-        Input values at which to evaluate the polynomial. Can be a NumPy array,
-        or an xarray.DataArray. The return type will match the
-        type of `x`: if `x` is an xarray.DataArray, an xarray.DataArray is
-        returned; otherwise a NumPy/Dask-like array is returned.
-    coeffs : numpy.ndarray
-        1-D array of polynomial coefficients ordered from highest-degree term
-        to the constant term. For example, for a polynomial
-        p(x) = a0*x^n + a1*x^(n-1) + ... + an, pass coeffs = [a0, a1, ..., an].
-
-    Returns
-    -------
-    y : array-like or xarray.DataArray
-        The polynomial evaluated at `x`, with the same shape and array type as
-        the input `x`.
-
-    Notes
-    -----
-    Horner's method is used for numerical stability and computational
-    efficiency. This implementation handles xarray.DataArray inputs by using
-    xarray.zeros_like to construct the accumulator; for other array-like inputs
-    numpy.zeros_like is used, making it compatible with NumPy and Dask arrays.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> coeffs = np.array([1, 0, -2, 3])  # Represents x^3 - 2*x + 3
-    >>> horner_relation(np.array([1, 2]), coeffs)
-    array([2, 9])
-    """
-    y = xr.zeros_like(x)
-
-    for c in coeffs:
-        y = y * x + c
-
-    return y
-
-
 # Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s using sympy.
-BROCHER_VP_COEFFS = np.array(
-    [-2.51e-11, 2.683e-07, 0.0008206, 2.0947, 940.9], dtype=np.float32
+BROCHER_VP_COEFFS = xr.DataArray(
+    np.array([-2.51e-11, 2.683e-07, 0.0008206, 2.0947, 940.9], dtype=np.float32),
+    dims=["degree"],
+    coords=dict(degree=[4, 3, 2, 1, 0]),
 )
-VP_FROM_VS_RELATION = functools.partial(horner_relation, coeffs=BROCHER_VP_COEFFS)
+VP_FROM_VS_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_VP_COEFFS)
 
-BROCHER_DENSITY_COEFFS = np.array(
-    [1.06e-16, -4.3e-12, 6.71e-08, -0.00047211, 1.6612, 0.0], dtype=np.float32
+BROCHER_DENSITY_COEFFS = xr.DataArray(
+    np.array(
+        [1.06e-16, -4.3e-12, 6.71e-08, -0.00047211, 1.6612, 0.0], dtype=np.float32
+    ),
+    dims=["degree"],
+    coords=dict(degree=[5, 4, 3, 2, 1, 0]),
 )
-DENSITY_RELATION = functools.partial(horner_relation, coeffs=BROCHER_DENSITY_COEFFS)
+DENSITY_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_DENSITY_COEFFS)
 
 
 @dataclass

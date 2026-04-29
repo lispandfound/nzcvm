@@ -11,12 +11,13 @@ A Vs30-derived near-surface seismic velocity model.
 *Abstracts, Annual Meeting of the Southern California Earthquake Center*, 174.
 """
 
+from nzcvm.components import Component
+
 import functools
 from dataclasses import dataclass
 
 import numpy as np
 import xarray as xr
-
 
 # Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s using sympy.
 BROCHER_VP_COEFFS = xr.DataArray(
@@ -36,41 +37,13 @@ BROCHER_DENSITY_COEFFS = xr.DataArray(
 DENSITY_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_DENSITY_COEFFS)
 
 
-@dataclass
-class ElyProfile:
-    """ElyProfile dataclass holding.
-
-    Parameters
-    ----------
-    rho : xarray.DataArray
-        Density (kg/m^3).
-    vp : xarray.DataArray
-        P-wave velocity (m/s).
-    vs : xarray.DataArray
-        S-wave velocity (m/s).
-
-    Attributes
-    ----------
-    rho : xarray.DataArray
-        Mass density profile (kg/m^3).
-    vp : xarray.DataArray
-        P-wave velocity profile (m/s).
-    vs : xarray.DataArray
-        S-wave velocity profile (m/s).
-    """
-
-    rho: xr.DataArray
-    vp: xr.DataArray
-    vs: xr.DataArray
-
-
 def ely_vs_profile(
     z: xr.DataArray,
     vs30: xr.DataArray,
     vp_at_z_t: xr.DataArray,
     vs_at_z_t: xr.DataArray,
     z_t: float,
-) -> ElyProfile:
+) -> xr.DataArray:
     """Compute the Ely GTL Vs profile at depths ``z``.
 
     Parameters
@@ -88,8 +61,8 @@ def ely_vs_profile(
 
     Returns
     -------
-    numpy.ndarray
-        Vs values at the requested depths (m/s).
+    DataArray
+        Ely GTL computed velocities and densities.
     """
     z_norm = z / z_t
     z_norm_sq = np.square(z)
@@ -100,4 +73,17 @@ def ely_vs_profile(
     vp_from_vs30 = VP_FROM_VS_RELATION(vs30)
     vp = f * vp_at_z_t + g * vp_from_vs30
     rho = DENSITY_RELATION(vp)
-    return ElyProfile(rho=rho, vp=vp, vs=vs)
+    qp = xr.full_like(rho, 100.0)
+    qs = xr.full_like(rho, 50.0)
+    alpha = xr.full_like(rho, 1.0)
+    qualities = [rho, vp, vs, qp, qs, alpha]
+    qualities = [
+        a.expand_dims(component=[name], axis=-1)
+        for name, a in zip(Component, qualities)
+    ]
+
+    darr = xr.concat(
+        qualities,
+        dim="component",
+    )
+    return darr

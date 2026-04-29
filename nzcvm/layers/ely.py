@@ -25,8 +25,8 @@ class ElyTaperLayer:
        anchor velocity ``vs_at_z_t``.
     2. Compute the GTL layer at all points above ``z_T`` using
        :func:`_ely_vs_profile`.
-    3. Blend basin models (priority 128–255) into the GTL buffer so that basin
-       velocities replace the GTL inside basins and blend at boundaries.
+    3. Blend basin models into the GTL buffer so that basin velocities replace
+       the GTL inside basins and blend at boundaries.
 
     Parameters
     ----------
@@ -109,30 +109,24 @@ class ElyTaperLayer:
             # Drop the k coordinate so that the Ely profile broadcasts the calculation out again.
             {Coordinate.K: 0}
         )
+        taper_vp = (
+            taper_qualities["qualities"]
+            .sel(component=Component.VP.value)
+            .drop_vars("component")
+        )
+        taper_vs = (
+            taper_qualities["qualities"]
+            .sel(component=Component.VS.value)
+            .drop_vars("component")
+        )
 
-        # Calculate complete Vs profile interpolation using safe_z.
-        ely_profile = ely_vs_profile(
+        # Calculate complete ely qualities using safe_z.
+        ely_qualities = ely_vs_profile(
             safe_z,
             vs30,
-            taper_qualities["qualities"].sel(component=Component.VP.value),
-            taper_qualities["qualities"].sel(component=Component.VS.value),
+            taper_vp,
+            taper_vs,
             z_t=self.z_t,
-        )
-
-        qp = xr.full_like(ely_profile.rho, 100.0)
-        qs = xr.full_like(ely_profile.rho, 50.0)
-        alpha = xr.full_like(ely_profile.rho, 1.0)
-
-        # Build a (component, i, j, k) DataArray for the Ely taper qualities.
-        # xarray aligns by dimension name, so component-first order is fine.
-        component_coord = xr.DataArray(
-            list(Component),
-            dims=["component"],
-            name="component",
-        )
-        ely_qualities = xr.concat(
-            [ely_profile.rho, ely_profile.vp, ely_profile.vs, qp, qs, alpha],
-            dim=component_coord,
         )
 
         # Blend the basins over the Ely taper. `basin_alpha` has the

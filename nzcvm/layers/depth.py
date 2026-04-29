@@ -16,7 +16,7 @@ class DepthTransformLayer:
     """Pipeline layer that converts depth-below-surface to absolute elevation.
 
     Interpolates the surface elevation at each ``(x, y)`` column and
-    replaces the ``z`` coordinate with ``surface_elevation - z``.
+    replaces the ``z`` coordinate with ``surface_elevation + z``.
 
     Parameters
     ----------

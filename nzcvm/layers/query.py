@@ -4,7 +4,8 @@ import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from xarray.core.treenode import NodePath
+
+from typing import Any
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
@@ -32,6 +33,8 @@ class ModelLayer:
         z-values are depths below the surface.
     """
 
+    _MODEL_KWARGS = ["model_range", "blend_mode"]
+
     def __init__(self, model: Model) -> None:
         """
         Parameters
@@ -41,43 +44,54 @@ class ModelLayer:
         """
         self.model = model
 
-    def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         """Query the model for every block node and add material variables.
 
         Parameters
         ----------
         velocity_model :
-            DataTree with ``x``, ``y``, ``z`` coordinates already in the
+            Dataset with ``x``, ``y``, ``z`` coordinates already in the
             model's projected CRS.
 
         Returns
         -------
-        xarray.DataTree
+        xarray.Dataset
         """
         var_names = list(Component)
 
-        def process_node(_path: NodePath, ds: xr.Dataset) -> xr.Dataset:
-            """Query the model for a single block dataset."""
-            ds = ds.copy()
+        block = block.copy()
 
+        apply_kwargs = dict(
+            input_core_dims=[[], [], []],
+            output_core_dims=[["quality_dim"]],
+            dask="parallelized",
+            kwargs={key: kwargs[key] for key in self._MODEL_KWARGS if key in kwargs},
+            output_dtypes=[np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"quality_dim": len(var_names)}},
+        )
+
+        if buffer := kwargs.get("buffer"):
             qualities = xr.apply_ufunc(
                 self.model.query_many_raw,
-                ds[Coordinate.X.value],
-                ds[Coordinate.Y.value],
-                ds[Coordinate.Z.value],
-                input_core_dims=[[], [], []],
-                output_core_dims=[["quality_dim"]],
-                dask="parallelized",
-                output_dtypes=[np.float32],
-                dask_gufunc_kwargs={"output_sizes": {"quality_dim": len(var_names)}},
+                block[Coordinate.X.value],
+                block[Coordinate.Y.value],
+                block[Coordinate.Z.value],
+                buffer,
+                **apply_kwargs,
+            )
+        else:
+            qualities = xr.apply_ufunc(
+                self.model.query_many_raw,
+                block[Coordinate.X.value],
+                block[Coordinate.Y.value],
+                block[Coordinate.Z.value],
+                **apply_kwargs,
             )
 
-            for i, name in enumerate(var_names):
-                ds[name] = qualities.isel(quality_dim=i)
+        for i, name in enumerate(var_names):
+            block[name] = qualities.isel(quality_dim=i)
 
-            return ds
-
-        return helpers.block_map(velocity_model, process_node)
+        return block
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

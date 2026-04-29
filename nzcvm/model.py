@@ -574,7 +574,6 @@ class ModelTree:
         x: Any,
         y: Any,
         z: Any,
-        *,
         buffer: np.ndarray | None = None,
         model_range: ModelRange = ModelRange.ALL,
         blend_mode: BlendMode = BlendMode.Erase,

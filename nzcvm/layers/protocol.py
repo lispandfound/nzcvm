@@ -4,14 +4,15 @@ from typing import Protocol
 
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
+from typing import Any
 
 
 class QueryLayer(Protocol):
     """Protocol for a single stage in the model-query pipeline.
 
-    Implementations transform an :class:`xarray.DataTree` (e.g. by
+    Implementations transform an :class:`xarray.Dataset` (e.g. by
     converting coordinates or querying a :class:`~nzcvm.model.Model`) and
-    return a new DataTree.  The rich console method enables pipeline
+    return a new Dataset.  The rich console method enables pipeline
     introspection via ``rich.print``.
 
     See Also
@@ -21,8 +22,8 @@ class QueryLayer(Protocol):
     nzcvm.layers.ModelLayer : Queries a velocity model.
     """
 
-    def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
-        """Apply this layer to *velocity_model* and return the result."""
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        """Apply this layer to *block* and return the result."""
         ...
 
     def __rich_console__(

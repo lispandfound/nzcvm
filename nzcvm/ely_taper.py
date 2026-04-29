@@ -32,7 +32,12 @@ The functional form of the GTL is a stub.  The Vs30-to-velocity relation and
 the depth taper shape will be refined once the full dataset is available.
 """
 
+from dataclasses import dataclass
+
 import numpy as np
+import dask.array as da
+import functools
+
 import numpy.typing as npt
 import xarray as xr
 
@@ -51,22 +56,46 @@ Z_T: float = 450.0
 REFERENCE_VS30: float = 500.0
 
 
-# ---------------------------------------------------------------------------
-# Helper: Ely Vs profile
-# ---------------------------------------------------------------------------
+# Dask-aware horner polynomial evaluation
+def horner_relation(x: npt.ArrayLike, coeffs: np.ndarray):
+    if isinstance(x, xr.DataArray):
+        y = xr.zeros_like(x)
+    else:
+        y = np.zeros_like(x)
+
+    for c in coeffs:
+        y = y * x + c
+
+    return y
 
 
-def _ely_vs_profile(
-    z: np.ndarray,
+# Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s
+BROCHER_VP_COEFFS = np.array(
+    [940.9, 2.0947, 0.0008206, 2.683e-7, -2.51e-11], dtype=np.float32
+)[::-1]
+VP_FROM_VS_RELATION = functools.partial(horner_relation, coeffs=BROCHER_VP_COEFFS)
+
+BROCHER_DENSITY_COEFFS = np.array(
+    [0.0, 1.6612, -0.00047211, 6.71e-8, -4.3e-12, 1.06e-16], dtype=np.float32
+)[::-1]
+DENSITY_RELATION = functools.partial(horner_relation, coeffs=BROCHER_DENSITY_COEFFS)
+
+
+@dataclass
+class ElyProfile:
+    rho: npt.ArrayLike
+    vp: npt.ArrayLike
+    vs: npt.ArrayLike
+
+
+def ely_vs_profile(
+    z: npt.ArrayLike,
     vs30: npt.ArrayLike,
+    vp_at_z_t: npt.ArrayLike,
     vs_at_z_t: npt.ArrayLike,
     z_t: float = Z_T,
-) -> np.ndarray:
+) -> ElyProfile:
     """Compute the Ely GTL Vs profile at depths ``z``.
-
-    This is a stub implementation that uses a simple power-law taper between
-    the near-surface Vs (derived from Vs30) and the tomography anchor velocity
-    at depth ``z_t``.
 
     Parameters
     ----------
@@ -74,28 +103,28 @@ def _ely_vs_profile(
         Depth values (metres, positive downwards) for which to compute Vs.
         Values must satisfy ``0 <= z <= z_t``.
     vs30 :
-        Site-average shear-wave velocity over the top 30 m (m s⁻¹).
+        Site-average shear-wave velocity over the top 30 m (m/s).
     vs_at_z_t :
         Shear-wave velocity at the reference depth ``z_t`` taken from the
-        underlying tomography model (m s⁻¹).
+        underlying tomography model (m/s).
     z_t :
         Reference depth (metres).  Defaults to :data:`Z_T`.
 
     Returns
     -------
     numpy.ndarray
-        Vs values at the requested depths (m s⁻¹).
-
-    Notes
-    -----
-    The functional form is a placeholder.  The blend fraction increases
-    linearly from ``vs30`` at the surface to ``vs_at_z_t`` at depth ``z_t``.
-    A more physically motivated relation (e.g. Brocher 2005 or Boore 2003)
-    will be substituted when the full dataset is available.
+        Vs values at the requested depths (m/s).
     """
-    z_arr = np.asarray(z, dtype=np.float32)
-    t = np.clip(z_arr / z_t, 0.0, 1.0)
-    return (1.0 - t) * vs30 + t * vs_at_z_t  # type: ignore[return-value]
+    z_norm = z / z_t
+    z_norm_sq = np.square(z)
+    f = z_norm + (2 / 3) * (z_norm - z_norm_sq)
+    g = 0.5 - 5 * z_norm + 1.5 * z_norm_sq + 3 * np.sqrt(z_norm)
+
+    vs = f * vs_at_z_t + g * vs30
+    vp_from_vs30 = VP_FROM_VS_RELATION(vs30)
+    vp = f * vp_at_z_t + g * vp_from_vs30
+    rho = DENSITY_RELATION(vp)
+    return ElyProfile(rho=rho, vp=vp, vs=vs)
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +153,7 @@ def apply_ely_taper(
         Depths below the surface (metres, positive downwards).  Must be
         broadcastable with ``x`` and ``y``.
     vs30 :
-        Reference Vs30 value (m s⁻¹) used for the GTL.  Defaults to
+        Reference Vs30 value (m/s) used for the GTL.  Defaults to
         :data:`REFERENCE_VS30`.  A spatially varying Vs30 array will be
         accepted here once the spatial dataset is integrated.
     z_t :

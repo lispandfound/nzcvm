@@ -14,7 +14,7 @@ import shapely
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
-DEFAULT_TOLERANCE = 1e-4
+DEFAULT_TOLERANCE = 1e-6
 
 
 @dataclass
@@ -39,8 +39,8 @@ class Surface:
     nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
 
-    mesh: pv.DataSet  # Store the PyVista mesh instead of the Scipy object
-    hull: shapely.Polygon
+    mesh: pv.DataSet
+    hull: shapely.Geometry
     bounds: np.ndarray
     n_points: int
     interpolation_tolerance: float = DEFAULT_TOLERANCE
@@ -61,14 +61,27 @@ class Surface:
         Raises
         ------
         ValueError
-            If any query point falls outside the mesh bounding box.
+            If any query point falls outside the surface boundaries.
         """
-        in_hull = shapely.contains_xy(self.hull, x, y)
-
-        if not in_hull.all():
-            raise ValueError("Points not in convex hull of surface boundary.")
 
         pts = np.stack((x.flatten(), y.flatten(), np.zeros(x.size)), axis=-1)
+        outside_hull = ~shapely.contains_xy(self.hull, pts[:, :2])
+
+        if outside_hull.any():
+            bad_indices = np.where(outside_hull)[0]
+            bad_coords = pts[bad_indices, :2]
+
+            note = (
+                f"Failure Summary:\n"
+                f"- Total points checked: {x.size}\n"
+                f"- Total failed: {len(bad_coords)}\n"
+                f"- Failure Rate: {len(bad_coords) / x.size:.2%}\n"
+            )
+            e = ValueError("Points not in convex hull of surface boundary.")
+            e.add_note(note)
+
+            raise e
+
         query_cloud = pv.PolyData(pts)
 
         sampled = query_cloud.sample(
@@ -85,7 +98,20 @@ class Surface:
             (sampled.point_data["vtkValidPointMask"] == 0) | (z > max_z) | (z < min_z)
         )
         if mask.any():
-            raise ValueError("Z values from interpolation invalid (out of bounds).")
+            bad_indices = np.where(mask)[0]
+            bad_coords = pts[bad_indices, :2]
+            bad_z = z[bad_indices]
+
+            note = (
+                f"Failure Summary:\n"
+                f"- Total points checked: {x.size}\n"
+                f"- Total failed: {len(bad_coords)}\n"
+                f"- Failure Rate: {len(bad_coords) / x.size:.2%}\n"
+                f"- First 3 failures:\n{bad_coords[:3]}\nmapping to\n{bad_z[:3]}"
+            )
+            e = ValueError("Z values from interpolation invalid (out of bounds).")
+            e.add_note(note)
+            raise e
 
         return z.reshape(x.shape)
 
@@ -127,7 +153,17 @@ def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
         mesh_data["Elevation"] = mesh_data.points[:, 2]
         mesh_data.set_active_scalars("Elevation")
 
-    hull = shapely.convex_hull(shapely.multipoints(mesh_data.points[:, :2]))
+    z = mesh_data.points[:, 2]
+    z_min = z.min()
+    z_max = z.max()
+
+    # Now flatten the mesh so that interpolation works at z=0.
+    mesh_data.points[:, 2] = 0.0
+
+    hull = shapely.buffer(
+        shapely.convex_hull(shapely.multipoints(mesh_data.points[:, :2])),
+        DEFAULT_TOLERANCE,
+    )
     shapely.prepare(hull)
 
     bounds = mesh_data.bounds
@@ -139,10 +175,10 @@ def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
             [
                 bounds.x_min,
                 bounds.y_min,
-                bounds.z_min,
+                z_min,
                 bounds.x_max,
                 bounds.y_max,
-                bounds.z_max,
+                z_max,
             ]
         ),
         n_points=mesh_data.n_points,

@@ -50,7 +50,7 @@ class DepthTransformLayer:
         ----------
         velocity_model :
             DataTree with projected ``x``, ``y`` coordinates and depth ``z``
-            values (positive downward from the surface).
+            values (positive downward from the surface, e.g. +100m is 100m below the surface).
 
         Returns
         -------
@@ -74,6 +74,9 @@ class DepthTransformLayer:
                 output_dtypes=[np.float32],
             )
 
+            # Surface elevation has +z => decreasing elevation (positive depth).
+            # Hence *adding* ds[Z] is the correct calculation to translate from
+            # elevation to depth.
             ds[Coordinate.Z.value] = surface_elevation + ds[Coordinate.Z.value]
 
             return ds

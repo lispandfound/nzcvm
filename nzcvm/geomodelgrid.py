@@ -219,9 +219,9 @@ class GeoModelGridFormat(StrEnum):
 class GeoModelGrid(ConfigObject):
     """Top-level configuration for an NZCVM velocity model grid.
 
-    Holds the coordinate metadata plus lists of :class:`Block` and
-    :class:`Surface` specifications.  Call :meth:`to_datatree` to create
-    the empty :class:`xarray.DataTree` that pipeline layers will fill in.
+    Holds the coordinate metadata plus lists of :class:`Block`. Call
+    :meth:`to_datatree` to create the empty :class:`xarray.DataTree` that
+    pipeline layers will fill in.
 
     See Also
     --------

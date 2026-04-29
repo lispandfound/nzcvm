@@ -100,9 +100,9 @@ westport:
 
 basins: canterbury hanmer mackenzie southland west_coast te_anau balclutha castle_hill cheviot collingwood dunedin alexandra gisborne hakataramea karamea marlborough mosgiel murchison ranfurly rarakau springs_junction tolaga_bay waiapu waikato_hauraki wairarapa waitaki wakatipu wanaka westport
 
-
 test:
-    uv run --config-setting 'build-args=--profile=dev' pytest -s tests
+    uv run --dev --config-setting 'build-args=--profile=dev' pytest -s tests
+    uv run --dev --config-setting 'build-args=--profile=dev' pytest --doctest-modules nzcvm/ -v
     cargo test
 
 lint:

@@ -1,7 +1,8 @@
-import pytest
 import numpy as np
+import pytest
 import pyvista as pv
-from nzcvm.surface import build_surface_interpolator, Surface
+
+from nzcvm.surface import Surface, build_surface_interpolator
 
 
 @pytest.fixture

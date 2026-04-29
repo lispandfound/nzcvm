@@ -8,20 +8,21 @@ computing any actual model queries (all inputs are dask-backed, so the
 assertions check the *lazy* graph, not computed values).
 """
 
+from dataclasses import dataclass
+
 import dask.array as da
 import numpy as np
 import pytest
 import xarray as xr
-from dataclasses import dataclass
 from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.coordinates import Coordinate, rotate, translate
 from nzcvm.geomodelgrid import Block, empty_block
+from nzcvm.layers import DepthTransformLayer
 from nzcvm.layers.affine import AffineTransformLayer
 from nzcvm.layers.query import ModelLayer
-from nzcvm.layers import DepthTransformLayer
 from nzcvm.model import Model
 
 # ---------------------------------------------------------------------------

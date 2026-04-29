@@ -43,7 +43,7 @@ class Surface:
     hull: shapely.Geometry
     bounds: np.ndarray
     n_points: int
-    interpolation_tolerance: float = DEFAULT_TOLERANCE
+    interpolation_tolerance: float
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -148,6 +148,13 @@ def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
     --------
     read_surface_from_path : Load a surface directly from a file.
     """
+    interpolation_tolerance_raw = mesh_data.field_data.get("interpolation_tolerance")
+
+    if interpolation_tolerance_raw is not None:
+        interpolation_tolerance = interpolation_tolerance_raw.item()
+    else:
+        interpolation_tolerance = DEFAULT_TOLERANCE
+
     if mesh_data.active_scalars_name is None:
         # If no scalars are active, we use the Z coordinates themselves
         mesh_data["Elevation"] = mesh_data.points[:, 2]
@@ -171,6 +178,7 @@ def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
     return Surface(
         mesh=mesh_data,
         hull=hull,
+        interpolation_tolerance=interpolation_tolerance,
         bounds=np.array(
             [
                 bounds.x_min,

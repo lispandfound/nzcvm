@@ -410,11 +410,8 @@ class TestElyTaperLayerDimensions:
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk, z_top=0.0, size=100.0)
         result = layer(ds)
-        n_comp = len(Component)
-        assert result["qualities"].shape == (ni, nj, nk, n_comp) or (
-            # component may be first due to xr.concat ordering; check spatial shape is correct
-            result["qualities"].sel(component="rho").shape == (ni, nj, nk)
-        )
+        # Spatial dims of each component slice must match (ni, nj, nk)
+        assert result["qualities"].sel(component="rho").shape == (ni, nj, nk)
 
     def test_below_taper_uses_background(self):
         """Points with z >= z_t (deeper than the taper zone) must use background values."""

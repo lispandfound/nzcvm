@@ -115,7 +115,6 @@ def generate(
         DepthTransformLayer(topo, ModelLayer(model)),  # ty: ignore[invalid-argument-type]
     )
     rich.print(model_pipeline)
-    breakpoint()
 
     velocity_model = model_pipeline(velocity_model)
 

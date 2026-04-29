@@ -35,6 +35,7 @@ class Surface:
     read_surface_from_path : Load a ``Surface`` directly from a file path.
     nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
+
     mesh: pv.DataSet  # Store the PyVista mesh instead of the Scipy object
     bounds: np.ndarray
     n_points: int
@@ -60,15 +61,21 @@ class Surface:
         pts = np.stack((x.flatten(), y.flatten(), np.zeros(x.size)), axis=-1)
         query_cloud = pv.PolyData(pts)
 
-        sampled = query_cloud.sample(self.mesh)
+        sampled = query_cloud.sample(
+            self.mesh, tolerance=1e-4, snap_to_closest_point=True
+        )
 
         z = sampled.point_data[self.mesh.active_scalars_name]
+        min_z = self.bounds[2]
+        max_z = self.bounds[-1]
 
-        mask = sampled.point_data["vtkValidPointMask"] == 0
+        mask = (
+            (sampled.point_data["vtkValidPointMask"] == 0) | (z > max_z) | (z < min_z)
+        )
         if mask.any():
             bad_points = pts[mask][:, :2]
             raise ValueError(
-                f"Z values from interpolation invalid (out of bounds): {bad_points=}"
+                f"Z values from interpolation invalid (out of bounds): {bad_points=}, {z=}"
             )
 
         return z.reshape(x.shape)

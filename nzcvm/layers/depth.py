@@ -1,4 +1,5 @@
 """Pipeline layer for converting depth-below-surface to absolute elevation."""
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
@@ -7,7 +8,7 @@ from xarray.core.treenode import NodePath
 
 from nzcvm.coordinates import Coordinate
 from nzcvm.layers.protocol import QueryLayer
-from nzcvm.layers import helpers 
+from nzcvm.layers import helpers
 from nzcvm.surface import Surface
 
 
@@ -73,7 +74,7 @@ class DepthTransformLayer:
                 output_dtypes=[np.float32],
             )
 
-            ds[Coordinate.Z.value] = surface_elevation - ds[Coordinate.Z.value]
+            ds[Coordinate.Z.value] = surface_elevation + ds[Coordinate.Z.value]
 
             return ds
 

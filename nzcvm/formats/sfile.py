@@ -4,7 +4,6 @@ Writes a multi-grid velocity model in the NZCVM sfile HDF5 format used by
 downstream seismic simulation tools.
 """
 
-#!/usr/bin/env python3
 import dask.array as da
 import h5py
 import numpy as np

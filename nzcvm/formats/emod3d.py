@@ -70,9 +70,9 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
 
     contiguous_chunking = {0: "auto", 1: "auto", 2: -1}
     sources = [
-        block[Component.RHO].data.rechunk(contiguous_chunking),
-        block[Component.VP].data.rechunk(contiguous_chunking),
-        block[Component.VS].data.rechunk(contiguous_chunking),
+        block["qualities"].sel(component=str(Component.RHO)).data.rechunk(contiguous_chunking),
+        block["qualities"].sel(component=str(Component.VP)).data.rechunk(contiguous_chunking),
+        block["qualities"].sel(component=str(Component.VS)).data.rechunk(contiguous_chunking),
     ]
     targets = [rho, vp, vs]
 

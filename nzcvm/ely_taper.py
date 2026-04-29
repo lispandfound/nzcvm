@@ -11,13 +11,13 @@ A Vs30-derived near-surface seismic velocity model.
 *Abstracts, Annual Meeting of the Southern California Earthquake Center*, 174.
 """
 
-from nzcvm.components import Component
-
 import functools
 from dataclasses import dataclass
 
 import numpy as np
 import xarray as xr
+
+from nzcvm.components import Component
 
 # Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s using sympy.
 BROCHER_VP_COEFFS = xr.DataArray(

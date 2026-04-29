@@ -10,8 +10,11 @@ from pathlib import Path
 
 import numpy as np
 import pyvista as pv
+import shapely
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
+
+DEFAULT_TOLERANCE = 1e-4
 
 
 @dataclass
@@ -37,8 +40,10 @@ class Surface:
     """
 
     mesh: pv.DataSet  # Store the PyVista mesh instead of the Scipy object
+    hull: shapely.Polygon
     bounds: np.ndarray
     n_points: int
+    interpolation_tolerance: float = DEFAULT_TOLERANCE
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -58,11 +63,18 @@ class Surface:
         ValueError
             If any query point falls outside the mesh bounding box.
         """
+        in_hull = shapely.contains_xy(self.hull, x, y)
+
+        if not in_hull.all():
+            raise ValueError("Points not in convex hull of surface boundary.")
+
         pts = np.stack((x.flatten(), y.flatten(), np.zeros(x.size)), axis=-1)
         query_cloud = pv.PolyData(pts)
 
         sampled = query_cloud.sample(
-            self.mesh, tolerance=1e-4, snap_to_closest_point=True
+            self.mesh,
+            tolerance=self.interpolation_tolerance,
+            snap_to_closest_point=True,
         )
 
         z = sampled.point_data[self.mesh.active_scalars_name]
@@ -73,10 +85,7 @@ class Surface:
             (sampled.point_data["vtkValidPointMask"] == 0) | (z > max_z) | (z < min_z)
         )
         if mask.any():
-            bad_points = pts[mask][:, :2]
-            raise ValueError(
-                f"Z values from interpolation invalid (out of bounds): {bad_points=}, {z=}"
-            )
+            raise ValueError("Z values from interpolation invalid (out of bounds).")
 
         return z.reshape(x.shape)
 
@@ -118,10 +127,14 @@ def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
         mesh_data["Elevation"] = mesh_data.points[:, 2]
         mesh_data.set_active_scalars("Elevation")
 
+    hull = shapely.convex_hull(shapely.multipoints(mesh_data.points[:, :2]))
+    shapely.prepare(hull)
+
     bounds = mesh_data.bounds
 
     return Surface(
         mesh=mesh_data,
+        hull=hull,
         bounds=np.array(
             [
                 bounds.x_min,

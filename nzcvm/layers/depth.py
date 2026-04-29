@@ -58,8 +58,8 @@ class DepthTransformLayer:
         """
 
         block = block.copy()
-        x_top = block[Coordinate.X.value].isel({Coordinate.K: 0})
-        y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
+        x_top = block[Coordinate.X.value]
+        y_top = block[Coordinate.Y.value]
 
         surface_elevation = xr.apply_ufunc(
             self.interpolator.transform,

@@ -291,9 +291,10 @@ class GeoModelGrid(ConfigObject):
 def empty_block(block: Block) -> xr.Dataset:
     """Create an empty coordinate-only :class:`xarray.Dataset` for *block*.
 
-    Produces a 3-D grid with ``x``, ``y``, ``z`` data variables and
-    ``i``, ``j``, ``k`` dimension coordinates.  All material-property
-    variables (``rho``, ``vp``, …) are absent; pipeline layers add them.
+    Produces a 3-D grid with ``x`` (dims ``i, j``), ``y`` (dims ``i, j``),
+    and ``z`` (dim ``k``) data variables and ``i``, ``j``, ``k`` dimension
+    coordinates.  All material-property variables (``rho``, ``vp``, …) are
+    absent; pipeline layers add them.
 
     Parameters
     ----------
@@ -333,14 +334,14 @@ def empty_block(block: Block) -> xr.Dataset:
         da.arange(nk, chunks=chunks_k, dtype=np.float32) * block.resolution_vert
     ) + np.float32(block.z_top)
 
-    grid_x, grid_y, grid_z = da.meshgrid(x_arr, y_arr, z_arr, indexing="ij")
+    grid_x, grid_y = da.meshgrid(x_arr, y_arr, indexing="ij")
 
     # 5. Build the Dataset
     return xr.Dataset(
         data_vars={
-            Coordinate.X: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_x),
-            Coordinate.Y: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_y),
-            Coordinate.Z: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_z),
+            Coordinate.X: ([Coordinate.I, Coordinate.J], grid_x),
+            Coordinate.Y: ([Coordinate.I, Coordinate.J], grid_y),
+            Coordinate.Z: ([Coordinate.K], z_arr),
         },
         coords={
             Coordinate.I: np.arange(ni),

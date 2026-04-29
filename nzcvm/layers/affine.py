@@ -73,9 +73,27 @@ class AffineTransformLayer:
         x = block[Coordinate.X]
         y = block[Coordinate.Y]
         z = block[Coordinate.Z]
-        block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2] * z + a[0, 3]
-        block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2] * z + a[1, 3]
-        block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
+
+        # Compute each output component.  To avoid unnecessarily expanding 2-D
+        # (i, j) arrays or the 1-D (k,) array to 3-D via xarray broadcasting,
+        # we only add cross-dimension terms when the corresponding affine
+        # coefficient is non-zero.  This preserves the reduced array shapes
+        # (x/y as 2-D, z as 1-D) for standard horizontal-plane affines.
+        new_x = a[0, 0] * x + a[0, 1] * y + float(a[0, 3])
+        if float(a[0, 2]) != 0:
+            new_x = new_x + float(a[0, 2]) * z
+
+        new_y = a[1, 0] * x + a[1, 1] * y + float(a[1, 3])
+        if float(a[1, 2]) != 0:
+            new_y = new_y + float(a[1, 2]) * z
+
+        new_z = a[2, 2] * z + float(a[2, 3])
+        if float(a[2, 0]) != 0 or float(a[2, 1]) != 0:
+            new_z = new_z + a[2, 0] * x + a[2, 1] * y
+
+        block[Coordinate.X] = new_x
+        block[Coordinate.Y] = new_y
+        block[Coordinate.Z] = new_z
 
         return self.next_layer(block, **kwargs)
 

@@ -84,12 +84,15 @@ class ElyTaperLayer:
         # This will be used for any points in this block that are below z_t.
         background = self.next_layer(block, **kwargs)
 
-        # 3. ELY TAPER PREP: Clip z to z_t so the profile math is numerically stable
-        # for deep points in this mixed block.
-        safe_z = block["z"].clip(max=self.z_t)
+        x_top = block[Coordinate.X.value]
+        y_top = block[Coordinate.Y.value]
 
-        x_top = block[Coordinate.X.value].isel({Coordinate.K: 0})
-        y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
+        # 3. ELY TAPER PREP: Clip z to z_t so the profile math is numerically stable
+        # for deep points in this mixed block.  Broadcast safe_z against x_top so
+        # that the resulting (i, j, k) array has the same dimension order as the
+        # spatial arrays, which guarantees correct broadcasting in ely_vs_profile.
+        safe_z_clipped = block["z"].clip(max=self.z_t)
+        _, safe_z = xr.broadcast(x_top, safe_z_clipped)
 
         vs30 = xr.apply_ufunc(
             self.interpolator.transform,
@@ -100,23 +103,16 @@ class ElyTaperLayer:
             dask="parallelized",
             output_dtypes=[np.float32],
         )
-        # Select a z-layer of the block
-        # The array [0] as the selection is important because it preserve the k
-        # coordinate for downstream layers.
-        surface_layer = block.isel({Coordinate.K: [0]}).copy()
-
-        # Set the z-level to be z_T
-        surface_layer[Coordinate.Z.value] = xr.full_like(
-            surface_layer[Coordinate.X.value], self.z_t
-        )
+        # Build a copy of the block with z set to the constant taper depth z_T.
+        # Using a scalar z ensures the query broadcasts over (i, j) only,
+        # yielding taper_qualities with spatial dims (i, j).
+        surface_layer = block.copy()
+        surface_layer[Coordinate.Z.value] = xr.DataArray(np.float32(self.z_t))
         # Calculate bounding taper qualities using *ONLY* the tomography
         tomo_kwargs = kwargs.copy()
         tomo_kwargs["model_range"] = ModelRange.TOMOGRAPHY
 
-        taper_qualities = self.next_layer(surface_layer, **tomo_kwargs).isel(
-            # Drop the k coordinate so that the Ely profile broadcasts the calculation out again.
-            {Coordinate.K: 0}
-        )
+        taper_qualities = self.next_layer(surface_layer, **tomo_kwargs)
 
         # Calculate complete Vs profile interpolation using safe_z.
         ely_profile = ely_vs_profile(
@@ -159,8 +155,9 @@ class ElyTaperLayer:
 
         # 6. MASKING
         # Combine the Ely blend and the background model based on depth.
-        # xr.where is applied element-wise across all variables in the dataset.
-        is_in_taper = block["z"] < self.z_t
+        # Broadcast the 1-D z mask against x to ensure the (i, j, k) dim order
+        # matches that of ely_blended_qualities before the xr.where call.
+        _, is_in_taper = xr.broadcast(x_top, block["z"] < self.z_t)
 
         # Build result: keep all background variables, overwrite only qualities.
         result = background.copy()

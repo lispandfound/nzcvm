@@ -146,15 +146,15 @@ class TestModelLayerDimensions:
             assert coord in result
 
     def test_component_spatial_dims_match_coordinate_dims(self):
-        """Spatial dims of each component slice must match the x-coordinate dims."""
+        """Spatial dims of each component slice must be (i, j, k)."""
         model = _make_constant_model()
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=4, nj=3, nk=2)
         result = layer(ds)
-        x_dims = tuple(result[Coordinate.X].dims)
+        expected_spatial = (Coordinate.I, Coordinate.J, Coordinate.K)
         for comp in _COMPONENT_NAMES:
             slice_dims = tuple(result["qualities"].sel(component=comp).dims)
-            assert slice_dims == x_dims
+            assert slice_dims == expected_spatial
 
     def test_computed_rho_value(self):
         """After compute(), the rho component must equal the model's constant value."""
@@ -197,11 +197,13 @@ class TestAffineTransformLayerDimensions:
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(ni=3, nj=2, nk=2)
         result = layer(ds)
-        expected = (Coordinate.I, Coordinate.J, Coordinate.K)
-        for coord in (Coordinate.X, Coordinate.Y, Coordinate.Z):
-            assert tuple(result[coord].dims) == expected, (
-                f"'{coord}' has dims {tuple(result[coord].dims)}, expected {expected}"
+        for coord in (Coordinate.X, Coordinate.Y):
+            assert tuple(result[coord].dims) == (Coordinate.I, Coordinate.J), (
+                f"'{coord}' has dims {tuple(result[coord].dims)}, expected (i, j)"
             )
+        assert tuple(result[Coordinate.Z].dims) == (Coordinate.K,), (
+            f"'z' has dims {tuple(result[Coordinate.Z].dims)}, expected (k,)"
+        )
 
     def test_shape_preserved_after_transform(self):
         ni, nj, nk = 3, 2, 2
@@ -209,9 +211,9 @@ class TestAffineTransformLayerDimensions:
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
         result = layer(ds)
-        assert result[Coordinate.X].shape == (ni, nj, nk)
-        assert result[Coordinate.Y].shape == (ni, nj, nk)
-        assert result[Coordinate.Z].shape == (ni, nj, nk)
+        assert result[Coordinate.X].shape == (ni, nj)
+        assert result[Coordinate.Y].shape == (ni, nj)
+        assert result[Coordinate.Z].shape == (nk,)
 
     def test_x_y_z_remain_dask_backed(self):
         """Coordinate values must stay lazy (dask-backed) after the transform."""
@@ -272,17 +274,25 @@ class DummySurface:
 
 class TestDepthTransformLayer:
     def test_dimensions_and_shapes_preserved(self):
-        """Verify that i, j, k dimensions remain intact after transform."""
+        """Verify dimension contracts after depth transform.
+
+        x and y remain 2-D (i, j); z becomes 3-D (i, j, k) because the
+        surface elevation (varying over i, j) is added to the 1-D depth
+        array (varying over k).
+        """
         ni, nj, nk = 4, 3, 2
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
         layer = DepthTransformLayer(DummySurface(), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
         result = layer(ds)
 
-        expected_dims = (Coordinate.I.value, Coordinate.J.value, Coordinate.K.value)
-        for coord in [Coordinate.X, Coordinate.Y, Coordinate.Z]:
-            assert result[coord.value].dims == expected_dims
-            assert result[coord.value].shape == (ni, nj, nk)
+        xy_dims = (Coordinate.I.value, Coordinate.J.value)
+        xyz_dims = (Coordinate.I.value, Coordinate.J.value, Coordinate.K.value)
+        for coord in [Coordinate.X, Coordinate.Y]:
+            assert result[coord.value].dims == xy_dims
+            assert result[coord.value].shape == (ni, nj)
+        assert result[Coordinate.Z.value].dims == xyz_dims
+        assert result[Coordinate.Z.value].shape == (ni, nj, nk)
 
     def test_z_math_calculation(self):
         """Verify the arithmetic: Elevation = Surface + Depth."""
@@ -424,7 +434,7 @@ class TestElyTaperLayerDimensions:
         # is_in_taper is False everywhere and background values should dominate.
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=9.0, size=10.0)
         ds = ds.copy()
-        ds["z"] = (ds["z"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
+        ds["z"] = (ds["z"].dims, np.full(2, 15.0, dtype=np.float32))
         result = layer(ds)
         # All points are deeper than the taper zone → background (rho=9999) should be used
         np.testing.assert_allclose(
@@ -442,9 +452,7 @@ class TestElyTaperLayerDimensions:
         #   k=0 → z=5  (in the taper zone: z < z_t=10)
         #   k=1 → z=15 (deeper than the taper zone: z >= z_t=10)
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=0.0, size=10.0)
-        z_arr = np.zeros((2, 2, 2), dtype=np.float32)
-        z_arr[:, :, 0] = 5.0
-        z_arr[:, :, 1] = 15.0
+        z_arr = np.array([5.0, 15.0], dtype=np.float32)
         ds = ds.copy()
         ds["z"] = (ds["z"].dims, z_arr)
         result = layer(ds)

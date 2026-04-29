@@ -63,11 +63,20 @@ class ModelLayer:
 
         block = block.copy()
 
-        qualities = xr.apply_ufunc(
-            self.model.query_many_raw,
+        # Broadcast x (i, j), y (i, j), and z (k,) to a common (i, j, k) shape
+        # before passing to apply_ufunc, which does not auto-broadcast inputs
+        # with differing dimension sets.
+        x, y, z = xr.broadcast(
             block[Coordinate.X.value],
             block[Coordinate.Y.value],
             block[Coordinate.Z.value],
+        )
+
+        qualities = xr.apply_ufunc(
+            self.model.query_many_raw,
+            x,
+            y,
+            z,
             input_core_dims=[[], [], []],
             output_core_dims=[["component"]],
             dask="parallelized",

@@ -413,34 +413,34 @@ class TestElyTaperLayerDimensions:
             )
 
     def test_below_taper_uses_background(self):
-        """Points with z >= z_t must use the background (next_layer) values."""
+        """Points with z >= z_t (deeper than the taper zone) must use background values."""
         z_t = 10.0
         # inner returns rho=9999 so we can detect when background is used
         inner = _ConstantLayer(rho=9999.0)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
-        # All z values in the block will be >= z_t (z_top=10.0, size=10.0 → z ∈ [10, 15])
-        # but z_top=10.0 == z_t=10.0, so the fast-path fires.
-        # Use z_top just below z_t so the taper path runs, but z values >= z_t.
+        # Use z_top just below z_t so the taper path runs rather than the fast path,
+        # then override z to place all points at z=15 (deeper than z_t=10) so
+        # is_in_taper is False everywhere and background values should dominate.
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=9.0, size=10.0)
-        # Force z values to be >= z_t by setting them explicitly
-        z_vals = np.full((2, 2, 2), 15.0, dtype=np.float32)
         ds = ds.copy()
-        ds["z"] = (ds["z"].dims, z_vals)
+        ds["z"] = (ds["z"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
         result = layer(ds)
-        # All points are below the taper → background (rho=9999) should be used
+        # All points are deeper than the taper zone → background (rho=9999) should be used
         np.testing.assert_allclose(result["rho"].values, 9999.0, rtol=1e-3)
 
     def test_mixed_block_masks_correctly(self):
-        """In a block straddling z_t, points above use taper and below use background."""
+        """In a block straddling z_t, points in the taper zone use ely_blended
+        and points deeper than z_t use the background.
+        """
         z_t = 10.0
-        # Background (and taper anchor) layer returns rho=9999.
-        # Since the Ely profile calculation modifies rho via the profile,
-        # we only verify that the background value (9999) is used for z >= z_t.
+        # Background layer returns rho=9999 for easy detection.
         inner = _ConstantLayer(rho=9999.0, vp=6000.0, vs=3500.0)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
-        # Block with z_top < z_t and some z values >= z_t
+        # Block with z_top < z_t so the full taper path executes.
+        # We then override z so that:
+        #   k=0 → z=5  (in the taper zone: z < z_t=10)
+        #   k=1 → z=15 (deeper than the taper zone: z >= z_t=10)
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=0.0, size=10.0)
-        # Manually set z values: k=0 → z=5 (in taper), k=1 → z=15 (below taper)
         z_arr = np.zeros((2, 2, 2), dtype=np.float32)
         z_arr[:, :, 0] = 5.0
         z_arr[:, :, 1] = 15.0
@@ -448,6 +448,6 @@ class TestElyTaperLayerDimensions:
         ds["z"] = (ds["z"].dims, z_arr)
         result = layer(ds)
         rho = result["rho"].values
-        # k=1 slice (z=15 >= z_t=10) must equal the background rho=9999
+        # k=1 slice (z=15, deeper than z_t=10) must use the background rho=9999
         np.testing.assert_allclose(rho[:, :, 1], 9999.0, rtol=1e-3)
 

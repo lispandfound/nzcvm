@@ -148,12 +148,15 @@ class ElyTaperLayer:
         basins = self.next_layer(block, **basin_kwargs)
 
         # 5. XARRAY BLENDING
-        # Blend the basins over the Ely taper lazily.
+        # Blend the basins over the Ely taper lazily. `basin_alpha` has the
+        # same spatial dims as the block; xarray broadcasts it across all data
+        # variables in the datasets automatically.
         basin_alpha = basins[Component.ALPHA.value]
         ely_blended = (basins * basin_alpha) + (ely_buffer * (1 - basin_alpha))
 
         # 6. MASKING
         # Combine the Ely blend and the background model based on depth.
+        # `xr.where` is applied element-wise across all variables in each dataset.
         is_in_taper = block["z"] < self.z_t
 
         # xarray.where(condition, x, y) -> if condition use x, else use y

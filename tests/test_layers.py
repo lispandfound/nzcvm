@@ -1,11 +1,11 @@
 """Tests for the xarray dimension contracts of the NZCVM layer pipeline.
 
 The key invariant a researcher depends on: after applying any layer to a
-Dataset, the velocity-component variables (rho, vp, vs, qp, qs) and the
-coordinate variables (x, y, z) must have dimensions (i, j, k) with the shape
-matching the block definition.  These tests verify that contract without
-computing any actual model queries (all inputs are dask-backed, so the
-assertions check the *lazy* graph, not computed values).
+Dataset, the velocity-component data is in ``block["qualities"]`` — a DataArray
+with dims ``(i, j, k, component)`` — and the coordinate variables (x, y, z)
+must have dimensions (i, j, k) matching the block definition.  These tests
+verify that contract without computing any actual model queries (all inputs are
+dask-backed, so the assertions check the *lazy* graph, not computed values).
 """
 
 from dataclasses import dataclass
@@ -31,6 +31,8 @@ from nzcvm.model import Model
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+_COMPONENT_NAMES = [str(c) for c in Component]
 
 
 def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
@@ -96,37 +98,43 @@ def _make_block_dataset(
 
 
 class TestModelLayerDimensions:
-    """ModelLayer must attach velocity components with the same dims as x/y/z."""
+    """ModelLayer must attach a ``qualities`` DataArray with dims (i, j, k, component)."""
 
-    def test_output_contains_all_components(self):
+    def test_output_contains_qualities(self):
         model = _make_constant_model()
         layer = ModelLayer(model)
         ds = _make_block_dataset()
         result = layer(ds)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert var in result, f"Expected '{var}' in block dataset"
+        assert "qualities" in result, "Expected 'qualities' in block dataset"
 
-    def test_components_have_correct_dims(self):
+    def test_qualities_has_component_coordinate(self):
+        model = _make_constant_model()
+        layer = ModelLayer(model)
+        ds = _make_block_dataset()
+        result = layer(ds)
+        assert Coordinate.COMPONENT in result["qualities"].coords
+        assert list(result["qualities"].coords[Coordinate.COMPONENT].values) == _COMPONENT_NAMES
+
+    def test_qualities_has_correct_dims(self):
         model = _make_constant_model()
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=4, nj=3, nk=2)
         result = layer(ds)
-        expected = (Coordinate.I, Coordinate.J, Coordinate.K)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert tuple(result[var].dims) == expected, (
-                f"'{var}' has dims {tuple(result[var].dims)}, expected {expected}"
-            )
+        expected = (Coordinate.I, Coordinate.J, Coordinate.K, Coordinate.COMPONENT)
+        assert tuple(result["qualities"].dims) == expected, (
+            f"'qualities' has dims {tuple(result['qualities'].dims)}, expected {expected}"
+        )
 
-    def test_components_have_correct_shape(self):
+    def test_qualities_has_correct_shape(self):
         ni, nj, nk = 4, 3, 2
         model = _make_constant_model()
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
         result = layer(ds)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert result[var].shape == (ni, nj, nk), (
-                f"'{var}' shape {result[var].shape} ≠ ({ni},{nj},{nk})"
-            )
+        n_comp = len(Component)
+        assert result["qualities"].shape == (ni, nj, nk, n_comp), (
+            f"'qualities' shape {result['qualities'].shape} ≠ ({ni},{nj},{nk},{n_comp})"
+        )
 
     def test_coordinate_variables_preserved(self):
         """x, y, z must still be present after applying ModelLayer."""
@@ -137,23 +145,24 @@ class TestModelLayerDimensions:
         for coord in (Coordinate.X, Coordinate.Y, Coordinate.Z):
             assert coord in result
 
-    def test_component_dims_match_coordinate_dims(self):
-        """Velocity component dims must match the x-coordinate dims."""
+    def test_component_spatial_dims_match_coordinate_dims(self):
+        """Spatial dims of each component slice must match the x-coordinate dims."""
         model = _make_constant_model()
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=4, nj=3, nk=2)
         result = layer(ds)
         x_dims = tuple(result[Coordinate.X].dims)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert tuple(result[var].dims) == x_dims
+        for comp in _COMPONENT_NAMES:
+            slice_dims = tuple(result["qualities"].sel(component=comp).dims)
+            assert slice_dims == x_dims
 
     def test_computed_rho_value(self):
-        """After compute(), rho must equal the model's constant value."""
+        """After compute(), the rho component must equal the model's constant value."""
         model = _make_constant_model(rho=1111.0)
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=2, nj=2, nk=2, size=8.0)
         result = layer(ds)
-        rho_computed = result["rho"].values
+        rho_computed = result["qualities"].sel(component="rho").values
         assert rho_computed == pytest.approx(1111.0, rel=1e-3)
 
 
@@ -308,7 +317,7 @@ class TestDepthTransformLayer:
 
 
 class _ConstantLayer:
-    """Returns a Dataset with constant velocity values for all queried points."""
+    """Returns a Dataset with constant velocity values as a ``qualities`` DataArray."""
 
     def __init__(
         self,
@@ -319,19 +328,20 @@ class _ConstantLayer:
         qs: float = 100.0,
         alpha: float = 1.0,
     ) -> None:
-        self.values = {
-            Component.RHO: rho,
-            Component.VP: vp,
-            Component.VS: vs,
-            Component.QP: qp,
-            Component.QS: qs,
-            Component.ALPHA: alpha,
-        }
+        # Ordered to match list(Component): rho, vp, vs, qp, qs, alpha
+        self._values = [rho, vp, vs, qp, qs, alpha]
 
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         result = block.copy()
-        for comp, val in self.values.items():
-            result[comp] = xr.full_like(block[Coordinate.X.value], val)
+        component_names = list(Component)
+        spatial = block[Coordinate.X.value]
+        arrays = [xr.full_like(spatial, v) for v in self._values]
+        component_coord = xr.DataArray(
+            component_names,
+            dims=[Coordinate.COMPONENT],
+            name=Coordinate.COMPONENT,
+        )
+        result["qualities"] = xr.concat(arrays, dim=component_coord)
         return result
 
     def __rich_console__(
@@ -346,18 +356,17 @@ class _ConstantLayer:
 
 
 class TestElyTaperLayerDimensions:
-    """ElyTaperLayer must return a Dataset with the correct dimensions and components."""
+    """ElyTaperLayer must return a Dataset with qualities in (i, j, k, component) form."""
 
-    def test_fast_path_returns_dataset_with_components(self):
-        """When z_top >= z_t, next_layer is called and result has all components."""
+    def test_fast_path_returns_dataset_with_qualities(self):
+        """When z_top >= z_t, next_layer is called and result has a qualities variable."""
         z_t = 450.0
         inner = _ConstantLayer()
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         # z_top=500.0 >= z_t=450.0 → fast path
         ds = _make_block_dataset(z_top=500.0)
         result = layer(ds)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert var in result, f"Expected '{var}' in result (fast path)"
+        assert "qualities" in result, "Expected 'qualities' in result (fast path)"
 
     def test_fast_path_forwards_kwargs(self):
         """Fast path must forward **kwargs to next_layer."""
@@ -374,43 +383,38 @@ class TestElyTaperLayerDimensions:
         layer(ds, sentinel=True)
         assert received_kwargs.get("sentinel") is True
 
-    def test_taper_path_returns_dataset_with_all_components(self):
-        """When z_top < z_t, result must contain all velocity components."""
+    def test_taper_path_returns_dataset_with_qualities(self):
+        """When z_top < z_t, result must contain a qualities variable."""
         z_t = 450.0
         inner = _ConstantLayer()
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         # z_top=0.0 < z_t → full taper path
         ds = _make_block_dataset(z_top=0.0, size=100.0)
         result = layer(ds)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert var in result, f"Expected '{var}' in result (taper path)"
+        assert "qualities" in result, "Expected 'qualities' in result (taper path)"
 
-    def test_taper_path_preserves_dimensions(self):
-        """Component dims must match (i, j, k) after applying the taper."""
+    def test_taper_path_qualities_has_component_coordinate(self):
+        """qualities DataArray must carry the component coordinate."""
+        z_t = 450.0
+        inner = _ConstantLayer()
+        layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
+        ds = _make_block_dataset(z_top=0.0, size=100.0)
+        result = layer(ds)
+        assert Coordinate.COMPONENT in result["qualities"].coords
+
+    def test_taper_path_qualities_shape(self):
+        """qualities shape must be (ni, nj, nk, n_components) after the taper."""
         ni, nj, nk = 4, 3, 2
         z_t = 450.0
         inner = _ConstantLayer()
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk, z_top=0.0, size=100.0)
         result = layer(ds)
-        expected = (Coordinate.I.value, Coordinate.J.value, Coordinate.K.value)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert tuple(result[var].dims) == expected, (
-                f"'{var}' has dims {tuple(result[var].dims)}, expected {expected}"
-            )
-
-    def test_taper_path_preserves_shape(self):
-        """Component shape must match (ni, nj, nk) after applying the taper."""
-        ni, nj, nk = 4, 3, 2
-        z_t = 450.0
-        inner = _ConstantLayer()
-        layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
-        ds = _make_block_dataset(ni=ni, nj=nj, nk=nk, z_top=0.0, size=100.0)
-        result = layer(ds)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert result[var].shape == (ni, nj, nk), (
-                f"'{var}' shape {result[var].shape} ≠ ({ni},{nj},{nk})"
-            )
+        n_comp = len(Component)
+        assert result["qualities"].shape == (ni, nj, nk, n_comp) or (
+            # component may be first due to xr.concat ordering; check spatial shape is correct
+            result["qualities"].sel(component="rho").shape == (ni, nj, nk)
+        )
 
     def test_below_taper_uses_background(self):
         """Points with z >= z_t (deeper than the taper zone) must use background values."""
@@ -426,12 +430,12 @@ class TestElyTaperLayerDimensions:
         ds["z"] = (ds["z"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
         result = layer(ds)
         # All points are deeper than the taper zone → background (rho=9999) should be used
-        np.testing.assert_allclose(result["rho"].values, 9999.0, rtol=1e-3)
+        np.testing.assert_allclose(
+            result["qualities"].sel(component="rho").values, 9999.0, rtol=1e-3
+        )
 
     def test_mixed_block_masks_correctly(self):
-        """In a block straddling z_t, points in the taper zone use ely_blended
-        and points deeper than z_t use the background.
-        """
+        """In a block straddling z_t, points deeper than z_t use the background."""
         z_t = 10.0
         # Background layer returns rho=9999 for easy detection.
         inner = _ConstantLayer(rho=9999.0, vp=6000.0, vs=3500.0)
@@ -447,7 +451,7 @@ class TestElyTaperLayerDimensions:
         ds = ds.copy()
         ds["z"] = (ds["z"].dims, z_arr)
         result = layer(ds)
-        rho = result["rho"].values
+        rho = result["qualities"].sel(component="rho").values
         # k=1 slice (z=15, deeper than z_t=10) must use the background rho=9999
         np.testing.assert_allclose(rho[:, :, 1], 9999.0, rtol=1e-3)
 

@@ -99,11 +99,9 @@ class TestModelWrapper:
         x = np.array([0.1, 0.2], dtype=np.float32)
         z = np.zeros(2, dtype=np.float32)
         ds = model.query_many(x, z, z)
-        expected = xr.Dataset(
-            {"rho": ("d0", [2700.0, 2700.0])},
-            coords={"x": ("d0", x), "y": ("d0", z), "z": ("d0", z)},
-        )
-        xr.testing.assert_allclose(ds[["rho"]], expected)
+        assert "qualities" in ds
+        rho_vals = ds["qualities"].sel(component="rho").values
+        assert np.allclose(rho_vals, 2700.0, rtol=1e-3)
 
 
 class TestModelFromMesh:

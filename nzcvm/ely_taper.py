@@ -41,7 +41,7 @@ import functools
 import numpy.typing as npt
 import xarray as xr
 
-from nzcvm.model import BlendMode, ModelRange, ModelTree
+from nzcvm.model import ModelRange, ModelTree
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -192,13 +192,13 @@ def apply_ely_taper(
     # Step 1: query tomography at reference depth z_T
     # ------------------------------------------------------------------
     z_ref = np.full_like(x_bc, z_t)
-    tomo_raw = model.query_many(x_bc, y_bc, z_ref, model_range=ModelRange.TOMOGRAPHY)
-    vs_at_z_t = tomo_raw[..., 2]  # column 2 = Vs
+    tomo_ds = model.query_many(x_bc, y_bc, z_ref, model_range=ModelRange.TOMOGRAPHY)
+    vs_at_z_t = tomo_ds["qualities"].sel(component="vs").values
 
     # ------------------------------------------------------------------
     # Step 2: build GTL buffer
     # ------------------------------------------------------------------
-    gtl_vs = _ely_vs_profile(z_bc, vs30, vs_at_z_t, z_t=z_t)
+    gtl_vs = ely_vs_profile(z_bc, vs30, vs_at_z_t, z_t=z_t).vs
 
     # Stub scaling relations for the other parameters.
     # TODO: replace with physically motivated relations (e.g. Brocher 2005).
@@ -208,29 +208,31 @@ def apply_ely_taper(
     gtl_qs = np.full_like(gtl_vs, 50.0)
     gtl_alpha = np.ones_like(gtl_vs, dtype=np.float32)
 
-    # Pack into (N, 6) buffer
-    gtl_buffer = np.stack(
-        [gtl_rho, gtl_vp, gtl_vs, gtl_qp, gtl_qs, gtl_alpha], axis=-1
+    # ------------------------------------------------------------------
+    # Step 3: blend basin models over the GTL using Porter-Duff "over"
+    # ------------------------------------------------------------------
+    basins_ds = model.query_many(x_bc, y_bc, z_bc, model_range=ModelRange.BASINS)
+    basin_alpha = basins_ds["qualities"].sel(component="alpha").values
+
+    blended_rho = basins_ds["qualities"].sel(component="rho").values * basin_alpha + gtl_rho * (1 - basin_alpha)
+    blended_vp  = basins_ds["qualities"].sel(component="vp").values  * basin_alpha + gtl_vp  * (1 - basin_alpha)
+    blended_vs  = basins_ds["qualities"].sel(component="vs").values  * basin_alpha + gtl_vs  * (1 - basin_alpha)
+    blended_qp  = basins_ds["qualities"].sel(component="qp").values  * basin_alpha + gtl_qp  * (1 - basin_alpha)
+    blended_qs  = basins_ds["qualities"].sel(component="qs").values  * basin_alpha + gtl_qs  * (1 - basin_alpha)
+
+    # ------------------------------------------------------------------
+    # Wrap in xarray.Dataset with a qualities DataArray
+    # ------------------------------------------------------------------
+    component_names = ["rho", "vp", "vs", "qp", "qs", "alpha"]
+    qualities = np.stack(
+        [blended_rho, blended_vp, blended_vs, blended_qp, blended_qs, gtl_alpha], axis=-1
     ).astype(np.float32)
-
-    # ------------------------------------------------------------------
-    # Step 3: blend basin models into the GTL buffer
-    # ------------------------------------------------------------------
-    blended_raw = model.query_many(
-        x_bc,
-        y_bc,
-        z_bc,
-        buffer=gtl_buffer,
-        model_range=ModelRange.BASINS,
-        blend_mode=BlendMode.Over,
-    )
-
-    # ------------------------------------------------------------------
-    # Wrap in xarray.Dataset
-    # ------------------------------------------------------------------
-    var_names = ["rho", "vp", "vs", "qp", "qs"]
-    data_vars = {name: (dims, blended_raw[..., i]) for i, name in enumerate(var_names)}
     return xr.Dataset(
-        data_vars=data_vars,
-        coords={"x": (dims, x_bc), "y": (dims, y_bc), "z": (dims, z_bc)},
+        data_vars={"qualities": (dims + ("component",), qualities)},
+        coords={
+            "x": (dims, x_bc),
+            "y": (dims, y_bc),
+            "z": (dims, z_bc),
+            "component": component_names,
+        },
     )

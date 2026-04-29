@@ -71,7 +71,7 @@ class ElyTaperLayer:
         Returns
         -------
         xarray.Dataset
-            Same dataset with ``rho``, ``vp`` and ``vs`` calculated according to Ely taper relations.
+            Same dataset with ``qualities`` calculated according to Ely taper relations.
         """
 
         # 1. FAST PATH: If the whole block is below the taper, skip Ely entirely.
@@ -122,8 +122,8 @@ class ElyTaperLayer:
         ely_profile = ely_vs_profile(
             safe_z,
             vs30,
-            taper_qualities[Component.VP.value],
-            taper_qualities[Component.VS.value],
+            taper_qualities["qualities"].sel(component=Component.VP.value),
+            taper_qualities["qualities"].sel(component=Component.VS.value),
             z_t=self.z_t,
         )
 
@@ -131,15 +131,16 @@ class ElyTaperLayer:
         qs = xr.full_like(ely_profile.rho, 50.0)
         alpha = xr.full_like(ely_profile.rho, 1.0)
 
-        ely_buffer = xr.Dataset(
-            {
-                Component.RHO: ely_profile.rho,
-                Component.VP: ely_profile.vs,
-                Component.VS: ely_profile.vs,
-                Component.QP: qp,
-                Component.QS: qs,
-                Component.ALPHA: alpha,
-            }
+        # Build a (component, i, j, k) DataArray for the Ely taper qualities.
+        # xarray aligns by dimension name, so component-first order is fine.
+        component_coord = xr.DataArray(
+            list(Component),
+            dims=[Coordinate.COMPONENT],
+            name=Coordinate.COMPONENT,
+        )
+        ely_qualities = xr.concat(
+            [ely_profile.rho, ely_profile.vp, ely_profile.vs, qp, qs, alpha],
+            dim=component_coord,
         )
 
         # 4. BASIN CAPTURE: Ask the next layer *only* for the basins.
@@ -149,18 +150,24 @@ class ElyTaperLayer:
 
         # 5. XARRAY BLENDING
         # Blend the basins over the Ely taper lazily. `basin_alpha` has the
-        # same spatial dims as the block; xarray broadcasts it across all data
-        # variables in the datasets automatically.
-        basin_alpha = basins[Component.ALPHA.value]
-        ely_blended = (basins * basin_alpha) + (ely_buffer * (1 - basin_alpha))
+        # same spatial dims as the block; xarray broadcasts it across the
+        # component dimension automatically.
+        basin_alpha = basins["qualities"].sel(component=Component.ALPHA.value)
+        ely_blended_qualities = (basins["qualities"] * basin_alpha) + (
+            ely_qualities * (1 - basin_alpha)
+        )
 
         # 6. MASKING
         # Combine the Ely blend and the background model based on depth.
-        # `xr.where` is applied element-wise across all variables in each dataset.
+        # xr.where is applied element-wise across all variables in the dataset.
         is_in_taper = block["z"] < self.z_t
 
-        # xarray.where(condition, x, y) -> if condition use x, else use y
-        return xr.where(is_in_taper, ely_blended, background)
+        # Build result: keep all background variables, overwrite only qualities.
+        result = background.copy()
+        result["qualities"] = xr.where(
+            is_in_taper, ely_blended_qualities, background["qualities"]
+        )
+        return result
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

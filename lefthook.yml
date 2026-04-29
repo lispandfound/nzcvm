@@ -1,0 +1,23 @@
+# lefthook.yml
+pre-push:
+  parallel: true
+  commands:
+    # Python Linters (Ruff and Ty)
+    python-lint:
+      glob: "*.{py,pyi}"
+      run: just ruff && just ty
+
+    # Rust Linters (Clippy)
+    rust-lint:
+      glob: "*.{rs,toml}"
+      run: just clippy
+
+    # Python Tests
+    python-test:
+      glob: "*.{py,pyi}"
+      run: just pytest
+
+    # Rust Tests
+    rust-test:
+      glob: "*.{rs,toml}"
+      run: just cargo

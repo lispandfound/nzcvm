@@ -150,7 +150,6 @@ def generate(
     summary.add_row(
         "Model Title", f"[bold]{geo_model_grid.metadata.title or 'N/A'}[/bold]"
     )
-    summary.add_row("Surfaces", str(len(geo_model_grid.surfaces)))
     summary.add_row("Blocks", str(len(geo_model_grid.blocks)))
 
     console.print(summary)

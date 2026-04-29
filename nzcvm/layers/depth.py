@@ -78,13 +78,14 @@ class DepthTransformLayer:
 
             return ds
 
-        return self.next_layer(helpers.block_map(velocity_model, process_block))
+        elevation_transformed = helpers.block_map(velocity_model, process_block)
+        return self.next_layer(elevation_transformed)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
         """Render the pipeline chain as a rich tree."""
         tree = Tree("[bold blue]Depth Transform[/bold blue]")
-        tree.add(self.interpolator)  # ty: ignore[invalid-argument-type]
+        tree.add(self.interpolator)  #  ty: ignore[invalid-argument-type]
         tree.add(self.next_layer)
         yield tree

@@ -4,6 +4,7 @@
 infers a format from a file path, and :func:`write_velocity_model` dispatches
 to the appropriate writer.
 """
+
 from enum import StrEnum, auto
 from pathlib import Path
 
@@ -23,6 +24,7 @@ class Format(StrEnum):
     >>> Format.EMOD3D == "emod3d"
     True
     """
+
     INFERRED = auto()
     EMOD3D = auto()
     SFILE = auto()

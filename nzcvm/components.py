@@ -24,6 +24,7 @@ class Component(StrEnum):
     >>> list(Component)  # doctest: +NORMALIZE_WHITESPACE
     [<Component.RHO: 'rho'>, <Component.VP: 'vp'>, <Component.VS: 'vs'>, <Component.QP: 'qp'>, <Component.QS: 'qs'>, <Component.ALPHA: 'alpha'>]
     """
+
     RHO = auto()
     VP = auto()
     VS = auto()
@@ -44,6 +45,7 @@ class Coordinate(StrEnum):
     >>> Coordinate.I == "i"
     True
     """
+
     X = auto()
     Y = auto()
     Z = auto()

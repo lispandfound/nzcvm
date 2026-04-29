@@ -1,4 +1,5 @@
 """Helpers for mapping functions over DataTree nodes."""
+
 import glob
 import re
 from collections.abc import Callable, Mapping
@@ -32,7 +33,7 @@ def map_over_datasets_with_path(
     -------
     xarray.DataTree
         The datatree constructed from applying *func* at every node in the d
-        *data_tree*. 
+        *data_tree*.
     """
     results = {}
     kwargs = kwargs or dict()

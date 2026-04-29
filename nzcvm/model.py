@@ -86,6 +86,7 @@ class Quality(DataClassDictMixin):
     >>> str(q)
     '(ρ=2700.00, Vp=6000.00, Vs=3500.00, Qp=200.00, Qs=100.00, ɑ=1.00)'
     """
+
     rho: float
     vp: float
     vs: float
@@ -111,6 +112,7 @@ class Point(DataClassDictMixin):
     >>> str(p)
     '(1.5, 2.5, -100)'
     """
+
     x: float
     y: float
     z: float
@@ -140,6 +142,7 @@ class QueryStats(DataClassDictMixin):
     elapsed :
         Wall-clock time for the query in nanoseconds.
     """
+
     aabb_tests: int
     simplex_tests: int
     hit_count: int
@@ -158,6 +161,7 @@ class ModelContribution(DataClassDictMixin):
     quality :
         Raw (un-blended) quality returned by this model for the query point.
     """
+
     priority: int
     quality: Quality
 
@@ -188,6 +192,7 @@ class Explanation(DataClassDictMixin):
     -----
     If ``termination`` is ``None`` all contributions were used.
     """
+
     contributions: list[ModelContribution]
     output: Quality | None
     termination: int | None
@@ -427,8 +432,7 @@ class ModelTree:
             mesh_paths = [Path(p) for p in models]
 
         mesh_models = [
-            _mesh_model_from_pyvista(read_vtkhdf(p), name=p.stem)
-            for p in mesh_paths
+            _mesh_model_from_pyvista(read_vtkhdf(p), name=p.stem) for p in mesh_paths
         ]
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw)
@@ -652,7 +656,9 @@ class ModelTree:
         ModelTree.query_many_raw : Same query as an unlabelled float32 array.
         """
         x, y, z = np.broadcast_arrays(x, y, z)
-        raw = self.query_many_raw(x, y, z, buffer=buffer, model_range=model_range, blend_mode=blend_mode)
+        raw = self.query_many_raw(
+            x, y, z, buffer=buffer, model_range=model_range, blend_mode=blend_mode
+        )
         dims = tuple(f"d{i}" for i in range(x.ndim))
         var_names = ["rho", "vp", "vs", "qp", "qs"]
         return xr.Dataset(

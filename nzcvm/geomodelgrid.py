@@ -28,7 +28,14 @@ from mashumaro.mixins.toml import DataClassTOMLMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 
 from nzcvm.components import Component
-from nzcvm.coordinates import NO_ORIGIN, WGS84_CRS, Affine, Coordinate, rotate, translate
+from nzcvm.coordinates import (
+    NO_ORIGIN,
+    WGS84_CRS,
+    Affine,
+    Coordinate,
+    rotate,
+    translate,
+)
 
 
 class ConfigObject(
@@ -40,6 +47,7 @@ class ConfigObject(
     ``to_dict`` methods from mashumaro. ``None`` fields are omitted and
     serialisation uses field aliases where defined.
     """
+
     class Meta(BaseConfig):
         serialize_by_alias = True
         omit_none = True
@@ -125,7 +133,10 @@ class ModelMetadata(ConfigObject):
         nzcvm.layers.crs.CrsTransformLayer : Follow with a CRS layer when needed.
         """
         from pyproj import Transformer
-        origin_tr = Transformer.from_crs(self.origin_crs, self.target_crs, always_xy=True)
+
+        origin_tr = Transformer.from_crs(
+            self.origin_crs, self.target_crs, always_xy=True
+        )
         ox, oy = origin_tr.transform(self.origin_lon, self.origin_lat)
         return translate(ox, oy) @ rotate(self.azimuth, ccw=False)
 
@@ -166,6 +177,7 @@ class Block(ConfigObject):
     >>> block.resolution_horiz
     100.0
     """
+
     resolution_horiz: float
     resolution_vert: float
     z_top: float
@@ -211,6 +223,7 @@ class Surface(ConfigObject):
     >>> s.resolution_horiz
     100.0
     """
+
     shape: tuple[int, int]
     resolution_horiz: float
     name: str
@@ -221,6 +234,7 @@ DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
 
 class GeoModelGridFormat(StrEnum):
     """Supported serialisation formats for :class:`GeoModelGrid` configs."""
+
     INFERRED = auto()
     YAML = auto()
     TOML = auto()
@@ -240,6 +254,7 @@ class GeoModelGrid(ConfigObject):
     GeoModelGrid.read_config : Load from a TOML, YAML, or JSON file.
     GeoModelGrid.to_datatree : Create the corresponding empty DataTree.
     """
+
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
     surfaces: list[Surface] = field(default_factory=list)
     blocks: list[Block] = field(default_factory=list)

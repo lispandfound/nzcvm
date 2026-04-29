@@ -7,8 +7,8 @@ from rich.tree import Tree
 from xarray.core.treenode import NodePath
 
 from nzcvm.coordinates import Coordinate
-from nzcvm.layers.protocol import QueryLayer
 from nzcvm.layers import helpers
+from nzcvm.layers.protocol import QueryLayer
 from nzcvm.surface import Surface
 
 

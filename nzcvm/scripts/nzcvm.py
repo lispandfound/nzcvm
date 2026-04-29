@@ -1,4 +1,5 @@
 """Command-line interface for generating NZCVM velocity models."""
+
 import os
 from contextlib import nullcontext
 from pathlib import Path
@@ -19,7 +20,13 @@ from nzcvm import formats, surface
 from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
 from nzcvm.layers import AffineTransformLayer, DepthTransformLayer, ModelLayer
 from nzcvm.model import Model
-from nzcvm.scripts import construct_mesh, convert_tomography, convert_topography, tree_stats, view_basin
+from nzcvm.scripts import (
+    construct_mesh,
+    convert_tomography,
+    convert_topography,
+    tree_stats,
+    view_basin,
+)
 
 console = Console()
 
@@ -57,22 +64,69 @@ app.add_typer(view_basin.app, name="view-basin")
 
 @app.command()
 def generate(
-    config: Annotated[Path, typer.Argument(help="Config path to read model grid from.", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    output: Annotated[Path, typer.Argument(help="Output path to write velocity model to.")],
-    topography: Annotated[Path, typer.Option(help="Topography surface file.", exists=True, file_okay=True, dir_okay=False, readable=True)],
-    n_threads: Annotated[int | None, typer.Option(help="Number of threads to spawn to query the model.", min=1)] = None,
+    config: Annotated[
+        Path,
+        typer.Argument(
+            help="Config path to read model grid from.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    output: Annotated[
+        Path, typer.Argument(help="Output path to write velocity model to.")
+    ],
+    topography: Annotated[
+        Path,
+        typer.Option(
+            help="Topography surface file.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    n_threads: Annotated[
+        int | None,
+        typer.Option(help="Number of threads to spawn to query the model.", min=1),
+    ] = None,
     profile: Annotated[bool, typer.Option(help="If set, profile this run.")] = False,
     progress: Annotated[bool, typer.Option(help="If set, show progress.")] = True,
-    dt: Annotated[float, typer.Option(help="Resource profiler sample rate (seconds).", min=0.0)] = 0.25,
-    profile_output: Annotated[Path, typer.Option(help="Profile report output path.")] = Path("dask_profile.html"),
-    model_path: Annotated[Path | None, typer.Option(help="Path containing models.", exists=True, file_okay=False, dir_okay=True)] = None,
-    model_glob: Annotated[str, typer.Option(help="Glob for models, set this to load only a subset of models.")] = "*.vtkhdf",
-    output_format: Annotated[formats.Format, typer.Option("--format", help="Output format. You can usually leave this as inferred.")] = formats.Format.INFERRED,
-    config_format: Annotated[GeoModelGridFormat, typer.Option(help="Config format to read. You can usually leave this as inferred.")] = GeoModelGridFormat.INFERRED,
+    dt: Annotated[
+        float, typer.Option(help="Resource profiler sample rate (seconds).", min=0.0)
+    ] = 0.25,
+    profile_output: Annotated[
+        Path, typer.Option(help="Profile report output path.")
+    ] = Path("dask_profile.html"),
+    model_path: Annotated[
+        Path | None,
+        typer.Option(
+            help="Path containing models.", exists=True, file_okay=False, dir_okay=True
+        ),
+    ] = None,
+    model_glob: Annotated[
+        str,
+        typer.Option(help="Glob for models, set this to load only a subset of models."),
+    ] = "*.vtkhdf",
+    output_format: Annotated[
+        formats.Format,
+        typer.Option(
+            "--format", help="Output format. You can usually leave this as inferred."
+        ),
+    ] = formats.Format.INFERRED,
+    config_format: Annotated[
+        GeoModelGridFormat,
+        typer.Option(
+            help="Config format to read. You can usually leave this as inferred."
+        ),
+    ] = GeoModelGridFormat.INFERRED,
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
-    resolved_model_path = model_path if model_path is not None else determine_model_path()
+    resolved_model_path = (
+        model_path if model_path is not None else determine_model_path()
+    )
 
     console.print(
         Panel.fit(
@@ -136,5 +190,3 @@ def generate(
         console.print(
             f"[info]Profile report generated:[/info] [path]{profile_output}[/path]"
         )
-
-

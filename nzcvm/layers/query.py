@@ -1,4 +1,5 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult

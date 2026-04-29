@@ -32,9 +32,8 @@ The functional form of the GTL is a stub.  The Vs30-to-velocity relation and
 the depth taper shape will be refined once the full dataset is available.
 """
 
-from __future__ import annotations
-
 import numpy as np
+import numpy.typing as npt
 import xarray as xr
 
 from nzcvm.model import BlendMode, ModelRange, ModelTree
@@ -56,10 +55,11 @@ REFERENCE_VS30: float = 500.0
 # Helper: Ely Vs profile
 # ---------------------------------------------------------------------------
 
+
 def _ely_vs_profile(
     z: np.ndarray,
-    vs30: float | np.ndarray,
-    vs_at_z_t: float | np.ndarray,
+    vs30: npt.ArrayLike,
+    vs_at_z_t: npt.ArrayLike,
     z_t: float = Z_T,
 ) -> np.ndarray:
     """Compute the Ely GTL Vs profile at depths ``z``.
@@ -101,6 +101,7 @@ def _ely_vs_profile(
 # ---------------------------------------------------------------------------
 # Main taper function
 # ---------------------------------------------------------------------------
+
 
 def apply_ely_taper(
     model: ModelTree,
@@ -187,7 +188,9 @@ def apply_ely_taper(
     # Step 3: blend basin models into the GTL buffer
     # ------------------------------------------------------------------
     blended_raw = model.query_many(
-        x_bc, y_bc, z_bc,
+        x_bc,
+        y_bc,
+        z_bc,
         buffer=gtl_buffer,
         model_range=ModelRange.BASINS,
         blend_mode=BlendMode.Over,
@@ -197,9 +200,7 @@ def apply_ely_taper(
     # Wrap in xarray.Dataset
     # ------------------------------------------------------------------
     var_names = ["rho", "vp", "vs", "qp", "qs"]
-    data_vars = {
-        name: (dims, blended_raw[..., i]) for i, name in enumerate(var_names)
-    }
+    data_vars = {name: (dims, blended_raw[..., i]) for i, name in enumerate(var_names)}
     return xr.Dataset(
         data_vars=data_vars,
         coords={"x": (dims, x_bc), "y": (dims, y_bc), "z": (dims, z_bc)},

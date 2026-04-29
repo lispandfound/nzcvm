@@ -59,12 +59,19 @@ def construct_surface_mesh(
 
 @app.command()
 def main(
-    topography: Annotated[Path, typer.Argument(help="Input HDF5 topography file.", exists=True, file_okay=True, dir_okay=False, readable=True)],
+    topography: Annotated[
+        Path,
+        typer.Argument(
+            help="Input HDF5 topography file.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
     output: Annotated[Path, typer.Argument(help="Output VTK surface mesh path.")],
 ) -> None:
     """Entry point for the ``nzcvm convert-topography`` command."""
     x, y, elevation = read_surface_file(topography)
     surface_mesh = construct_surface_mesh(x, y, elevation)
     surface_mesh.save(output)
-
-

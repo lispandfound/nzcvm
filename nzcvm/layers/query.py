@@ -9,16 +9,15 @@ from typing import Any
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
-from nzcvm.layers import helpers
 from nzcvm.model import Model
 
 
 class ModelLayer:
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
-    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/block/*``
-    node and writes the returned material properties as a ``qualities``
-    DataArray with a ``component`` coordinate dimension.
+    Calls :meth:`~nzcvm.model.Model.query_many_raw` and writes the returned
+    material properties as a ``qualities`` DataArray with a ``component``
+    coordinate dimension.
 
     Parameters
     ----------
@@ -61,8 +60,7 @@ class ModelLayer:
         """
         component_names = list(Component)
 
-        block = block.copy()
-
+        block = block.copy(deep=False)
         qualities = xr.apply_ufunc(
             self.model.query_many_raw,
             block[Coordinate.X.value],
@@ -75,7 +73,7 @@ class ModelLayer:
             output_dtypes=[np.float32],
             dask_gufunc_kwargs={"output_sizes": {"component": len(component_names)}},
         )
-        # Assign human-readable component coordinate labels.
+
         qualities = qualities.assign_coords({"component": component_names})
         block["qualities"] = qualities
 

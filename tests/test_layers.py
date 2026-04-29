@@ -26,7 +26,7 @@ from nzcvm.layers import DepthTransformLayer
 from nzcvm.layers.affine import AffineTransformLayer
 from nzcvm.layers.ely import ElyTaperLayer
 from nzcvm.layers.query import ModelLayer
-from nzcvm.model import Model
+from nzcvm.model import Model, ModelRange
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -327,11 +327,28 @@ class _ConstantLayer:
         qp: float = 200.0,
         qs: float = 100.0,
         alpha: float = 1.0,
+        model_range: ModelRange = ModelRange.ALL,
     ) -> None:
+        self.model_range = model_range
         # Ordered to match list(Component): rho, vp, vs, qp, qs, alpha
         self._values = [rho, vp, vs, qp, qs, alpha]
 
-    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def empty(self, block: xr.Dataset) -> xr.Dataset:
+        result = block.copy()
+        component_names = list(Component)
+        spatial = block[Coordinate.X.value]
+        arrays = [xr.full_like(spatial, 0.0) for _ in range(len(component_names))]
+        component_coord = xr.DataArray(
+            component_names,
+            dims=["component"],
+            name="component",
+        )
+        result["qualities"] = xr.concat(arrays, dim=component_coord).transpose(
+            *(spatial.dims + ("component",))
+        )
+        return result
+
+    def constant(self, block: xr.Dataset) -> xr.Dataset:
         result = block.copy()
         component_names = list(Component)
         spatial = block[Coordinate.X.value]
@@ -341,8 +358,21 @@ class _ConstantLayer:
             dims=["component"],
             name="component",
         )
-        result["qualities"] = xr.concat(arrays, dim=component_coord)
+        result["qualities"] = xr.concat(arrays, dim=component_coord).transpose(
+            *(spatial.dims + ("component",))
+        )
+
         return result
+
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        match (kwargs.get("model_range"), self.model_range):
+            case (ModelRange.BASINS, ModelRange.TOMOGRAPHY) | (
+                ModelRange.TOMOGRAPHY,
+                ModelRange.BASINS,
+            ):
+                return self.empty(block)
+            case _:
+                return self.constant(block)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions
@@ -358,17 +388,19 @@ class _ConstantLayer:
 class TestElyTaperLayerDimensions:
     """ElyTaperLayer must return a Dataset with qualities in (i, j, k, component) form."""
 
-    def test_fast_path_returns_dataset_with_qualities(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_fast_path_returns_dataset_with_qualities(self, model_range):
         """When z_top >= z_t, next_layer is called and result has a qualities variable."""
         z_t = 450.0
-        inner = _ConstantLayer()
+        inner = _ConstantLayer(model_range=model_range)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         # z_top=500.0 >= z_t=450.0 → fast path
         ds = _make_block_dataset(z_top=500.0)
         result = layer(ds)
         assert "qualities" in result, "Expected 'qualities' in result (fast path)"
 
-    def test_fast_path_forwards_kwargs(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_fast_path_forwards_kwargs(self, model_range):
         """Fast path must forward **kwargs to next_layer."""
         received_kwargs: dict[str, Any] = {}
 
@@ -378,46 +410,53 @@ class TestElyTaperLayerDimensions:
                 return super().__call__(block, **kwargs)
 
         z_t = 450.0
-        layer = ElyTaperLayer(DummySurface(500.0), z_t, _KwargsCapture())  # ty: ignore[invalid-argument-type]
+        layer = ElyTaperLayer(
+            DummySurface(500.0), z_t, _KwargsCapture(model_range=model_range)
+        )  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(z_top=500.0)
         layer(ds, sentinel=True)
         assert received_kwargs.get("sentinel") is True
 
-    def test_taper_path_returns_dataset_with_qualities(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_taper_path_returns_dataset_with_qualities(self, model_range):
         """When z_top < z_t, result must contain a qualities variable."""
         z_t = 450.0
-        inner = _ConstantLayer()
+        inner = _ConstantLayer(model_range=model_range)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         # z_top=0.0 < z_t → full taper path
         ds = _make_block_dataset(z_top=0.0, size=100.0)
         result = layer(ds)
         assert "qualities" in result, "Expected 'qualities' in result (taper path)"
 
-    def test_taper_path_qualities_has_component_coordinate(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_taper_path_qualities_has_component_coordinate(self, model_range):
         """qualities DataArray must carry the component coordinate."""
         z_t = 450.0
-        inner = _ConstantLayer()
+        inner = _ConstantLayer(model_range=model_range)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(z_top=0.0, size=100.0)
         result = layer(ds)
         assert "component" in result["qualities"].coords
 
-    def test_taper_path_qualities_shape(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_taper_path_qualities_shape(self, model_range: ModelRange):
         """qualities shape must be (ni, nj, nk, n_components) after the taper."""
         ni, nj, nk = 4, 3, 2
         z_t = 450.0
-        inner = _ConstantLayer()
+        inner = _ConstantLayer(model_range=model_range)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk, z_top=0.0, size=100.0)
         result = layer(ds)
         # Spatial dims of each component slice must match (ni, nj, nk)
-        assert result["qualities"].sel(component="rho").shape == (ni, nj, nk)
+        assert result["qualities"].shape == (ni, nj, nk, len(Component))
 
-    def test_below_taper_uses_background(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_below_taper_uses_background(self, model_range):
         """Points with z >= z_t (deeper than the taper zone) must use background values."""
         z_t = 10.0
-        # inner returns rho=9999 so we can detect when background is used
-        inner = _ConstantLayer(rho=9999.0)
+        # Inner returns rho=9999 so we can detect when background is used.
+        # It shouldn't matter if the layer is defined for tomography or basins.
+        inner = _ConstantLayer(rho=9999.0, model_range=model_range)
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         # Use z_top just below z_t so the taper path runs rather than the fast path,
         # then override z to place all points at z=15 (deeper than z_t=10) so
@@ -431,11 +470,23 @@ class TestElyTaperLayerDimensions:
             result["qualities"].sel(component="rho").values, 9999.0, rtol=1e-3
         )
 
-    def test_mixed_block_masks_correctly(self):
+    @pytest.mark.parametrize("model_range", list(ModelRange))
+    def test_mixed_block_masks_correctly(self, model_range):
         """In a block straddling z_t, points deeper than z_t use the background."""
         z_t = 10.0
-        # Background layer returns rho=9999 for easy detection.
-        inner = _ConstantLayer(rho=9999.0, vp=6000.0, vs=3500.0)
+        # Inner returns rho=9999 so we can detect when background is used.
+        # When model_range = TOMOGRAPHY, Ely taper is added to the top of the
+        # model but we should still values below z_t fall through to the
+        # background.
+        # When model_range = BASINS we should fast path out of here and see all
+        # values using the constant layer.
+        inner = _ConstantLayer(
+            rho=9999.0,
+            vp=6000.0,
+            vs=3500.0,
+            alpha=1.0,
+            model_range=model_range,
+        )
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         # Block with z_top < z_t so the full taper path executes.
         # We then override z so that:
@@ -451,4 +502,3 @@ class TestElyTaperLayerDimensions:
         rho = result["qualities"].sel(component="rho").values
         # k=1 slice (z=15, deeper than z_t=10) must use the background rho=9999
         np.testing.assert_allclose(rho[:, :, 1], 9999.0, rtol=1e-3)
-

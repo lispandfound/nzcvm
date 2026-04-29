@@ -68,7 +68,7 @@ class AffineTransformLayer:
         -------
         xarray.Dataset
         """
-        block = block.copy()
+        block = block.copy(deep=False)
         a = self.affine.astype(np.float32)
         x = block[Coordinate.X]
         y = block[Coordinate.Y]

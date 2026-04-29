@@ -4,6 +4,7 @@ from nzcvm.components import Component
 
 from nzcvm.model import ModelRange
 from typing import Any
+import dask.array as da
 
 import numpy as np
 import xarray as xr
@@ -18,7 +19,7 @@ from nzcvm.ely_taper import ely_vs_profile
 
 
 class ElyTaperLayer:
-    """Pipeline layer that converts depth-below-surface to absolute elevation.
+    """Pipeline layer that calculates the Ely tapered near-surface velocities outside of basins.
 
     The algorithm follows three steps:
 
@@ -59,37 +60,28 @@ class ElyTaperLayer:
         self.z_t = z_t
         self.next_layer = next_layer
 
-    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
-        """Apply the depth-to-elevation transform and delegate to the next layer.
+    def _transform(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        # If the whole chunk is below the taper, skip Ely entirely.
+        if np.all(chunk["z"] > self.z_t):
+            return self.next_layer(chunk, **kwargs)
 
-        Parameters
-        ----------
-        velocity_model :
-            Dataset with projected ``x``, ``y`` coordinates and depth ``z``
-            values.
+        # Ask the next layer *only* for the basins.
+        basin_kwargs = kwargs.copy()
+        basin_kwargs["model_range"] = ModelRange.BASINS
+        basins = self.next_layer(chunk, **basin_kwargs)
 
-        Returns
-        -------
-        xarray.Dataset
-            Same dataset with ``qualities`` calculated according to Ely taper relations.
-        """
+        alpha = basins["qualities"].sel(component=Component.ALPHA)
 
-        # 1. FAST PATH: If the whole block is below the taper, skip Ely entirely.
-        if block.attrs["z_top"] >= self.z_t:
-            return self.next_layer(block, **kwargs)
+        # Inside basins we don't have to compute the tomography or Ely taper.
+        if np.allclose(alpha, 1.0):
+            return basins
 
-        block = block.copy()
+        background = self.next_layer(chunk, **kwargs)
 
-        # 2. BACKGROUND: Query the standard next layer for the whole block.
-        # This will be used for any points in this block that are below z_t.
-        background = self.next_layer(block, **kwargs)
+        safe_z = chunk["z"].clip(max=self.z_t)
 
-        # 3. ELY TAPER PREP: Clip z to z_t so the profile math is numerically stable
-        # for deep points in this mixed block.
-        safe_z = block["z"].clip(max=self.z_t)
-
-        x_top = block[Coordinate.X.value].isel({Coordinate.K: 0})
-        y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
+        x_top = chunk[Coordinate.X.value].isel({Coordinate.K: 0})
+        y_top = chunk[Coordinate.Y.value].isel({Coordinate.K: 0})
 
         vs30 = xr.apply_ufunc(
             self.interpolator.transform,
@@ -100,15 +92,17 @@ class ElyTaperLayer:
             dask="parallelized",
             output_dtypes=[np.float32],
         )
+
         # Select a z-layer of the block
-        # The array [0] as the selection is important because it preserve the k
-        # coordinate for downstream layers.
-        surface_layer = block.isel({Coordinate.K: [0]}).copy()
+        # The array [0] as the selection is important because it preserves the k
+        # axis for downstream layers.
+        surface_layer = chunk.isel({Coordinate.K: [0]}).copy()
 
         # Set the z-level to be z_T
         surface_layer[Coordinate.Z.value] = xr.full_like(
             surface_layer[Coordinate.X.value], self.z_t
         )
+
         # Calculate bounding taper qualities using *ONLY* the tomography
         tomo_kwargs = kwargs.copy()
         tomo_kwargs["model_range"] = ModelRange.TOMOGRAPHY
@@ -143,13 +137,7 @@ class ElyTaperLayer:
             dim=component_coord,
         )
 
-        # 4. BASIN CAPTURE: Ask the next layer *only* for the basins.
-        basin_kwargs = kwargs.copy()
-        basin_kwargs["model_range"] = ModelRange.BASINS
-        basins = self.next_layer(block, **basin_kwargs)
-
-        # 5. XARRAY BLENDING
-        # Blend the basins over the Ely taper lazily. `basin_alpha` has the
+        # Blend the basins over the Ely taper. `basin_alpha` has the
         # same spatial dims as the block; xarray broadcasts it across the
         # component dimension automatically.
         basin_alpha = basins["qualities"].sel(component=Component.ALPHA.value)
@@ -157,10 +145,9 @@ class ElyTaperLayer:
             ely_qualities * (1 - basin_alpha)
         )
 
-        # 6. MASKING
         # Combine the Ely blend and the background model based on depth.
         # xr.where is applied element-wise across all variables in the dataset.
-        is_in_taper = block["z"] < self.z_t
+        is_in_taper = chunk["z"] < self.z_t
 
         # Build result: keep all background variables, overwrite only qualities.
         result = background.copy()
@@ -168,6 +155,38 @@ class ElyTaperLayer:
             is_in_taper, ely_blended_qualities, background["qualities"]
         )
         return result
+
+    def _template(self, block: xr.Dataset) -> xr.Dataset:
+        component_names = list(Component)
+        template = block.copy(deep=False)
+        # Lazily define the shape of the output qualities without actually
+        # computing anything. xr.map_blocks needs to know exactly what the
+        # output shapes will be.
+        template["qualities"] = template[Coordinate.X.value].expand_dims(
+            component=component_names, axis=-1
+        )
+        return template
+
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        """Apply the depth-to-elevation transform and delegate to the next layer.
+
+        Parameters
+        ----------
+        velocity_model :
+            Dataset with projected ``x``, ``y`` coordinates and depth ``z``
+            values.
+
+        Returns
+        -------
+        xarray.Dataset
+            Same dataset with ``qualities`` calculated according to Ely taper relations.
+        """
+        if block.attrs["z_top"] >= self.z_t:
+            return self.next_layer(block, **kwargs)
+
+        return xr.map_blocks(
+            self._transform, block, kwargs=kwargs, template=self._template(block)
+        )
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

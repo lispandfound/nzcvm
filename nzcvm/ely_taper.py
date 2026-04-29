@@ -4,44 +4,20 @@ This module implements the near-surface velocity taper described by Ely et al.
 (2010) to smoothly transition from a tomography-based velocity model to a
 near-surface geotechnical layer (GTL) defined by a Vs30-based relation.
 
-The taper blends the following three contributions in priority order:
-
-1. **Tomography background** — queried at the reference depth ``z_T`` (default
-   450 m) and used to anchor the GTL profile.  Only models in the
-   :attr:`~nzcvm.model.ModelRange.TOMOGRAPHY` priority range contribute to
-   this step so that multiple blended tomography models all participate.
-
-2. **GTL layer** — computed analytically at every point between the surface
-   and ``z_T`` using the Ely taper relations.  The default implementation uses
-   a constant reference Vs30.
-
-3. **Basin overprint** — models in the
-   :attr:`~nzcvm.model.ModelRange.BASINS` priority range are blended *into*
-   the GTL buffer, so that basin velocities replace the GTL inside basins and
-   blend with it at basin boundaries.
-
 References
 ----------
 Ely, G. P., Jordan, T. H., Small, P., & Maechling, P. J. (2010).
 A Vs30-derived near-surface seismic velocity model.
 *Abstracts, Annual Meeting of the Southern California Earthquake Center*, 174.
-
-Notes
------
-The functional form of the GTL is a stub.  The Vs30-to-velocity relation and
-the depth taper shape will be refined once the full dataset is available.
 """
 
 from dataclasses import dataclass
 
 import numpy as np
-import dask.array as da
 import functools
 
 import numpy.typing as npt
 import xarray as xr
-
-from nzcvm.model import ModelRange, ModelTree
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -52,12 +28,45 @@ from nzcvm.model import ModelRange, ModelTree
 Z_T: float = 450.0
 
 #: Fallback Vs30 used when site-specific values are unavailable.
-#: Units: m s⁻¹.
 REFERENCE_VS30: float = 500.0
 
 
-# Dask-aware horner polynomial evaluation
 def horner_relation(x: npt.ArrayLike, coeffs: np.ndarray):
+    """
+    Evaluate a polynomial at x using Horner's method (xarray-aware).
+
+    Parameters
+    ----------
+    x : array-like or xarray.DataArray
+        Input values at which to evaluate the polynomial. Can be a NumPy array,
+        or an xarray.DataArray. The return type will match the
+        type of `x`: if `x` is an xarray.DataArray, an xarray.DataArray is
+        returned; otherwise a NumPy/Dask-like array is returned.
+    coeffs : numpy.ndarray
+        1-D array of polynomial coefficients ordered from highest-degree term
+        to the constant term. For example, for a polynomial
+        p(x) = a0*x^n + a1*x^(n-1) + ... + an, pass coeffs = [a0, a1, ..., an].
+
+    Returns
+    -------
+    y : array-like or xarray.DataArray
+        The polynomial evaluated at `x`, with the same shape and array type as
+        the input `x`.
+
+    Notes
+    -----
+    Horner's method is used for numerical stability and computational
+    efficiency. This implementation handles xarray.DataArray inputs by using
+    xarray.zeros_like to construct the accumulator; for other array-like inputs
+    numpy.zeros_like is used, making it compatible with NumPy and Dask arrays.
+
+    Examples
+    --------
+    >>> import numpy as np
+    >>> coeffs = np.array([1, 0, -2, 3])  # Represents x^3 - 2*x + 3
+    >>> horner_relation(np.array([1, 2]), coeffs)
+    array([2, 9])
+    """
     if isinstance(x, xr.DataArray):
         y = xr.zeros_like(x)
     else:
@@ -69,20 +78,41 @@ def horner_relation(x: npt.ArrayLike, coeffs: np.ndarray):
     return y
 
 
-# Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s
+# Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s using sympy.
 BROCHER_VP_COEFFS = np.array(
-    [940.9, 2.0947, 0.0008206, 2.683e-7, -2.51e-11], dtype=np.float32
-)[::-1]
+    [-2.51e-11, 2.683e-07, 0.0008206, 2.0947, 940.9], dtype=np.float32
+)
 VP_FROM_VS_RELATION = functools.partial(horner_relation, coeffs=BROCHER_VP_COEFFS)
 
 BROCHER_DENSITY_COEFFS = np.array(
-    [0.0, 1.6612, -0.00047211, 6.71e-8, -4.3e-12, 1.06e-16], dtype=np.float32
-)[::-1]
+    [1.06e-16, -4.3e-12, 6.71e-08, -0.00047211, 1.6612, 0.0], dtype=np.float32
+)
 DENSITY_RELATION = functools.partial(horner_relation, coeffs=BROCHER_DENSITY_COEFFS)
 
 
 @dataclass
 class ElyProfile:
+    """ElyProfile dataclass holding.
+
+    Parameters
+    ----------
+    rho : ArrayLike
+        Density (kg/m^3).
+    vp : ArrayLike
+        P-wave velocity (m/s).
+    vs : ArrayLike
+        S-wave velocity (m/s).
+
+    Attributes
+    ----------
+    rho : ArrayLike
+        Mass density profile (kg/m^3).
+    vp : ArrayLike
+        P-wave velocity profile (m/s).
+    vs : ArrayLike
+        S-wave velocity profile (m/s).
+    """
+
     rho: npt.ArrayLike
     vp: npt.ArrayLike
     vs: npt.ArrayLike
@@ -125,114 +155,3 @@ def ely_vs_profile(
     vp = f * vp_at_z_t + g * vp_from_vs30
     rho = DENSITY_RELATION(vp)
     return ElyProfile(rho=rho, vp=vp, vs=vs)
-
-
-# ---------------------------------------------------------------------------
-# Main taper function
-# ---------------------------------------------------------------------------
-
-
-def apply_ely_taper(
-    model: ModelTree,
-    x: np.ndarray,
-    y: np.ndarray,
-    z: np.ndarray,
-    vs30: float = REFERENCE_VS30,
-    z_t: float = Z_T,
-) -> xr.Dataset:
-    """Apply the Ely near-surface velocity taper to a grid of points.
-
-    Parameters
-    ----------
-    model :
-        A :class:`~nzcvm.model.ModelTree` containing both tomography models
-        (priority 0–127) and optionally basin models (priority 128–255).
-    x, y :
-        Horizontal coordinates in the model's projected CRS (metres).
-    z :
-        Depths below the surface (metres, positive downwards).  Must be
-        broadcastable with ``x`` and ``y``.
-    vs30 :
-        Reference Vs30 value (m/s) used for the GTL.  Defaults to
-        :data:`REFERENCE_VS30`.  A spatially varying Vs30 array will be
-        accepted here once the spatial dataset is integrated.
-    z_t :
-        Reference depth for the tomography anchor (metres).  Defaults to
-        :data:`Z_T`.
-
-    Returns
-    -------
-    xarray.Dataset
-        Dataset with variables ``rho``, ``vp``, ``vs``, ``qp``, ``qs`` and
-        coordinates ``x``, ``y``, ``z``.
-
-    Notes
-    -----
-    The algorithm follows three steps:
-
-    1. Query tomography models at the reference depth ``z_T`` to obtain the
-       anchor velocity ``vs_at_z_t``.
-    2. Compute the GTL layer at all points above ``z_T`` using
-       :func:`_ely_vs_profile`.
-    3. Blend basin models (priority 128–255) into the GTL buffer so that basin
-       velocities replace the GTL inside basins and blend at boundaries.
-
-    This function is a **stub**.  The GTL and Vp/rho scaling relations will be
-    refined in a subsequent commit.
-    """
-    x_bc, y_bc, z_bc = np.broadcast_arrays(
-        np.asarray(x, dtype=np.float32),
-        np.asarray(y, dtype=np.float32),
-        np.asarray(z, dtype=np.float32),
-    )
-    ndim = x_bc.ndim
-    dims = tuple(f"d{i}" for i in range(ndim))
-
-    # ------------------------------------------------------------------
-    # Step 1: query tomography at reference depth z_T
-    # ------------------------------------------------------------------
-    z_ref = np.full_like(x_bc, z_t)
-    tomo_ds = model.query_many(x_bc, y_bc, z_ref, model_range=ModelRange.TOMOGRAPHY)
-    vs_at_z_t = tomo_ds["qualities"].sel(component="vs").values
-
-    # ------------------------------------------------------------------
-    # Step 2: build GTL buffer
-    # ------------------------------------------------------------------
-    gtl_vs = ely_vs_profile(z_bc, vs30, vs_at_z_t, z_t=z_t).vs
-
-    # Stub scaling relations for the other parameters.
-    # TODO: replace with physically motivated relations (e.g. Brocher 2005).
-    gtl_vp = gtl_vs * 1.73  # Vp ≈ √3 · Vs (Poisson solid)
-    gtl_rho = 1000.0 + 1.0 * gtl_vs * 0.26  # rough density proxy
-    gtl_qp = np.full_like(gtl_vs, 100.0)
-    gtl_qs = np.full_like(gtl_vs, 50.0)
-    gtl_alpha = np.ones_like(gtl_vs, dtype=np.float32)
-
-    # ------------------------------------------------------------------
-    # Step 3: blend basin models over the GTL using Porter-Duff "over"
-    # ------------------------------------------------------------------
-    basins_ds = model.query_many(x_bc, y_bc, z_bc, model_range=ModelRange.BASINS)
-    basin_alpha = basins_ds["qualities"].sel(component="alpha").values
-
-    blended_rho = basins_ds["qualities"].sel(component="rho").values * basin_alpha + gtl_rho * (1 - basin_alpha)
-    blended_vp  = basins_ds["qualities"].sel(component="vp").values  * basin_alpha + gtl_vp  * (1 - basin_alpha)
-    blended_vs  = basins_ds["qualities"].sel(component="vs").values  * basin_alpha + gtl_vs  * (1 - basin_alpha)
-    blended_qp  = basins_ds["qualities"].sel(component="qp").values  * basin_alpha + gtl_qp  * (1 - basin_alpha)
-    blended_qs  = basins_ds["qualities"].sel(component="qs").values  * basin_alpha + gtl_qs  * (1 - basin_alpha)
-
-    # ------------------------------------------------------------------
-    # Wrap in xarray.Dataset with a qualities DataArray
-    # ------------------------------------------------------------------
-    component_names = ["rho", "vp", "vs", "qp", "qs", "alpha"]
-    qualities = np.stack(
-        [blended_rho, blended_vp, blended_vs, blended_qp, blended_qs, gtl_alpha], axis=-1
-    ).astype(np.float32)
-    return xr.Dataset(
-        data_vars={"qualities": (dims + ("component",), qualities)},
-        coords={
-            "x": (dims, x_bc),
-            "y": (dims, y_bc),
-            "z": (dims, z_bc),
-            "component": component_names,
-        },
-    )

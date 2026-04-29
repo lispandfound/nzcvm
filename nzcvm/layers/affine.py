@@ -74,22 +74,27 @@ class AffineTransformLayer:
         y = block[Coordinate.Y]
         z = block[Coordinate.Z]
 
+        a02 = float(a[0, 2])
+        a12 = float(a[1, 2])
+        a20 = float(a[2, 0])
+        a21 = float(a[2, 1])
+
         # Compute each output component.  To avoid unnecessarily expanding 2-D
         # (i, j) arrays or the 1-D (k,) array to 3-D via xarray broadcasting,
         # we only add cross-dimension terms when the corresponding affine
         # coefficient is non-zero.  This preserves the reduced array shapes
         # (x/y as 2-D, z as 1-D) for standard horizontal-plane affines.
         new_x = a[0, 0] * x + a[0, 1] * y + float(a[0, 3])
-        if float(a[0, 2]) != 0:
-            new_x = new_x + float(a[0, 2]) * z
+        if a02 != 0:
+            new_x = new_x + a02 * z
 
         new_y = a[1, 0] * x + a[1, 1] * y + float(a[1, 3])
-        if float(a[1, 2]) != 0:
-            new_y = new_y + float(a[1, 2]) * z
+        if a12 != 0:
+            new_y = new_y + a12 * z
 
         new_z = a[2, 2] * z + float(a[2, 3])
-        if float(a[2, 0]) != 0 or float(a[2, 1]) != 0:
-            new_z = new_z + a[2, 0] * x + a[2, 1] * y
+        if a20 != 0 or a21 != 0:
+            new_z = new_z + a20 * x + a21 * y
 
         block[Coordinate.X] = new_x
         block[Coordinate.Y] = new_y

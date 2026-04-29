@@ -202,7 +202,7 @@ class TestAffineTransformLayerDimensions:
                 f"'{coord}' has dims {tuple(result[coord].dims)}, expected (i, j)"
             )
         assert tuple(result[Coordinate.Z].dims) == (Coordinate.K,), (
-            f"'z' has dims {tuple(result[Coordinate.Z].dims)}, expected (k,)"
+            f"'{Coordinate.Z}' has dims {tuple(result[Coordinate.Z].dims)}, expected (k,)"
         )
 
     def test_shape_preserved_after_transform(self):

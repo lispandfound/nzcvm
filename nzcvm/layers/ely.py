@@ -15,7 +15,6 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.layers.protocol import QueryLayer
 from nzcvm.surface import Surface
 from nzcvm.ely_taper import ely_vs_profile
-from nzcvm.nzcvm import BlendMode  # ty: ignore[unresolved-import]
 
 
 class ElyTaperLayer:
@@ -75,21 +74,19 @@ class ElyTaperLayer:
             Same dataset with ``rho``, ``vp`` and ``vs`` calculated according to Ely taper relations.
         """
 
-        # For all points at depth below GTL depth, fast-path out of Ely taper.
+        # 1. FAST PATH: If the whole block is below the taper, skip Ely entirely.
         if block.attrs["z_top"] >= self.z_t:
-            return self.next_layer(block)
+            return self.next_layer(block, **kwargs)
 
         block = block.copy()
 
-        def _validate_z(z: np.ndarray):
-            if z.max() > self.z_t:
-                raise ValueError(
-                    "Cannot apply Ely taper to blocks that have points below the Ely taper depth."
-                )
+        # 2. BACKGROUND: Query the standard next layer for the whole block.
+        # This will be used for any points in this block that are below z_t.
+        background = self.next_layer(block, **kwargs)
 
-            return z
-
-        block["z"] = xr.apply_ufunc(_validate_z, block["z"], dask="parallelized")
+        # 3. ELY TAPER PREP: Clip z to z_t so the profile math is numerically stable
+        # for deep points in this mixed block.
+        safe_z = block["z"].clip(max=self.z_t)
 
         x_top = block[Coordinate.X.value].isel({Coordinate.K: 0})
         y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
@@ -121,9 +118,9 @@ class ElyTaperLayer:
             {Coordinate.K: 0}
         )
 
-        # Calculate complete Vs profile interpolation.
+        # Calculate complete Vs profile interpolation using safe_z.
         ely_profile = ely_vs_profile(
-            block[Coordinate.Z.value],
+            safe_z,
             vs30,
             taper_qualities[Component.VP.value],
             taper_qualities[Component.VS.value],
@@ -143,16 +140,24 @@ class ElyTaperLayer:
                 Component.QS: qs,
                 Component.ALPHA: alpha,
             }
-        ).to_dataarray(dim="component")
-        # Blend in the basin values.
+        )
+
+        # 4. BASIN CAPTURE: Ask the next layer *only* for the basins.
         basin_kwargs = kwargs.copy()
-        basin_kwargs["buffer"] = ely_buffer
         basin_kwargs["model_range"] = ModelRange.BASINS
-        basin_kwargs["blend_mode"] = BlendMode.Over
+        basins = self.next_layer(block, **basin_kwargs)
 
-        qualities = self.next_layer(block, **basin_kwargs)
+        # 5. XARRAY BLENDING
+        # Blend the basins over the Ely taper lazily.
+        basin_alpha = basins[Component.ALPHA.value]
+        ely_blended = (basins * basin_alpha) + (ely_buffer * (1 - basin_alpha))
 
-        return qualities
+        # 6. MASKING
+        # Combine the Ely blend and the background model based on depth.
+        is_in_taper = block["z"] < self.z_t
+
+        # xarray.where(condition, x, y) -> if condition use x, else use y
+        return xr.where(is_in_taper, ely_blended, background)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

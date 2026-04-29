@@ -69,14 +69,14 @@ class ModelLayer:
             block[Coordinate.Y.value],
             block[Coordinate.Z.value],
             input_core_dims=[[], [], []],
-            output_core_dims=[[Coordinate.COMPONENT]],
+            output_core_dims=[["component"]],
             dask="parallelized",
             kwargs={key: kwargs[key] for key in self._MODEL_KWARGS if key in kwargs},
             output_dtypes=[np.float32],
-            dask_gufunc_kwargs={"output_sizes": {Coordinate.COMPONENT: len(component_names)}},
+            dask_gufunc_kwargs={"output_sizes": {"component": len(component_names)}},
         )
         # Assign human-readable component coordinate labels.
-        qualities = qualities.assign_coords({Coordinate.COMPONENT: component_names})
+        qualities = qualities.assign_coords({"component": component_names})
         block["qualities"] = qualities
 
         return block

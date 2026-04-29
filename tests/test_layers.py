@@ -112,15 +112,15 @@ class TestModelLayerDimensions:
         layer = ModelLayer(model)
         ds = _make_block_dataset()
         result = layer(ds)
-        assert Coordinate.COMPONENT in result["qualities"].coords
-        assert list(result["qualities"].coords[Coordinate.COMPONENT].values) == _COMPONENT_NAMES
+        assert "component" in result["qualities"].coords
+        assert list(result["qualities"].coords["component"].values) == _COMPONENT_NAMES
 
     def test_qualities_has_correct_dims(self):
         model = _make_constant_model()
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=4, nj=3, nk=2)
         result = layer(ds)
-        expected = (Coordinate.I, Coordinate.J, Coordinate.K, Coordinate.COMPONENT)
+        expected = (Coordinate.I, Coordinate.J, Coordinate.K, "component")
         assert tuple(result["qualities"].dims) == expected, (
             f"'qualities' has dims {tuple(result['qualities'].dims)}, expected {expected}"
         )
@@ -338,8 +338,8 @@ class _ConstantLayer:
         arrays = [xr.full_like(spatial, v) for v in self._values]
         component_coord = xr.DataArray(
             component_names,
-            dims=[Coordinate.COMPONENT],
-            name=Coordinate.COMPONENT,
+            dims=["component"],
+            name="component",
         )
         result["qualities"] = xr.concat(arrays, dim=component_coord)
         return result
@@ -400,7 +400,7 @@ class TestElyTaperLayerDimensions:
         layer = ElyTaperLayer(DummySurface(500.0), z_t, inner)  # ty: ignore[invalid-argument-type]
         ds = _make_block_dataset(z_top=0.0, size=100.0)
         result = layer(ds)
-        assert Coordinate.COMPONENT in result["qualities"].coords
+        assert "component" in result["qualities"].coords
 
     def test_taper_path_qualities_shape(self):
         """qualities shape must be (ni, nj, nk, n_components) after the taper."""

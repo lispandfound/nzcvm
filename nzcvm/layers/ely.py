@@ -135,8 +135,8 @@ class ElyTaperLayer:
         # xarray aligns by dimension name, so component-first order is fine.
         component_coord = xr.DataArray(
             list(Component),
-            dims=[Coordinate.COMPONENT],
-            name=Coordinate.COMPONENT,
+            dims=["component"],
+            name="component",
         )
         ely_qualities = xr.concat(
             [ely_profile.rho, ely_profile.vp, ely_profile.vs, qp, qs, alpha],

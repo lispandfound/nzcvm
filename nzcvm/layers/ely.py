@@ -1,4 +1,4 @@
-"""Pipeline layer for apply Ely et al. 2010 GTL techinical layer."""
+"""Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
 from nzcvm.components import Component
 

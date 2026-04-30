@@ -1,6 +1,6 @@
 """Structural protocol for pipeline layers."""
 
-from typing import Protocol
+from typing import Any, Protocol
 
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
@@ -21,8 +21,8 @@ class QueryLayer(Protocol):
     nzcvm.layers.ModelLayer : Queries a velocity model.
     """
 
-    def __call__(self, velocity_model: xr.Dataset) -> xr.Dataset:
-        """Apply this layer to *velocity_model* and return the result."""
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        """Apply this layer to *block* and return the result."""
         ...
 
     def __rich_console__(

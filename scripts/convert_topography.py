@@ -58,6 +58,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("topography", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_option("output", type=Path)
+
     args = parser.parse_args()
     x, y, elevation = read_surface_file(args.topography)
 

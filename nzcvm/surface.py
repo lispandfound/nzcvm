@@ -157,8 +157,8 @@ def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
 
     if mesh_data.active_scalars_name is None:
         # If no scalars are active, we use the Z coordinates themselves
-        mesh_data["Elevation"] = mesh_data.points[:, 2]
-        mesh_data.set_active_scalars("Elevation")
+        mesh_data["z"] = mesh_data.points[:, 2]
+        mesh_data.set_active_scalars("z")
 
     z = mesh_data.points[:, 2]
     z_min = z.min()

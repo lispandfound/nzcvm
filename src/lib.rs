@@ -11,7 +11,6 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::blend::{Blend, BlendDispatch, Erase, Over};
     use crate::mesh::MeshModel;
     use crate::model::{ConstantModel, InterpolateModel, Model};
     use crate::model_tree::ModelTree;
@@ -19,52 +18,21 @@ mod nzcvm {
     use crate::query::Query;
     use crate::real::Real;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
-    use ndarray::{array, azip, Axis};
-    use numpy::{IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2};
+    use ndarray::{array, azip, Array2, Axis};
+    use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
 
-    /// How the vectorised query result is composited into the output buffer.
+    /// Parameters controlling a vectorised query (priority range).
     ///
-    /// Passed to [`PyModelTree::query_many`] to select between overwriting
-    /// and Porter-Duff alpha blending.
-    ///
-    /// Internally converted to a [`BlendDispatch`] before entering the query
-    /// loop so that no `match` is needed inside the hot path.
-    #[pyclass(from_py_object)]
-    #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
-    #[serde(rename_all = "snake_case")]
-    pub enum BlendMode {
-        /// Overwrite each buffer row with the query result.
-        ///
-        /// Rows for points outside all matching models are left at their
-        /// current value (typically zeros if the caller zeroed the buffer).
-        Erase,
-        /// Blend the query result *over* the existing buffer row using the
-        /// Porter-Duff "over" operator.
-        Over,
-    }
-
-    impl From<BlendMode> for BlendDispatch {
-        fn from(mode: BlendMode) -> Self {
-            match mode {
-                BlendMode::Erase => BlendDispatch::Erase(Erase),
-                BlendMode::Over => BlendDispatch::Over(Over),
-            }
-        }
-    }
-
-    /// Parameters controlling a vectorised query (priority range + blend mode).
-    ///
-    /// Bundles `priority_lo`, `priority_hi`, and `blend_mode` into a single
-    /// object so that [`PyModelTree::query_many`] has a compact signature.
+    /// Bundles `priority_lo` and `priority_hi` into a single object so that
+    /// [`PyModelTree::query_many`] has a compact signature.
     #[pyclass(from_py_object)]
     #[derive(Debug, Clone, Copy)]
     pub struct QueryParams {
         pub priority_lo: u8,
         pub priority_hi: u8,
-        pub blend_mode: BlendMode,
     }
 
     #[pymethods]
@@ -77,14 +45,11 @@ mod nzcvm {
         ///     Inclusive priority bounds; only models whose priority falls in
         ///     ``[priority_lo, priority_hi]`` are queried.  Pass ``0, 255`` to
         ///     query all models.
-        /// blend_mode :
-        ///     How the query result is composited into the output buffer.
         #[new]
-        pub fn new(priority_lo: u8, priority_hi: u8, blend_mode: BlendMode) -> Self {
+        pub fn new(priority_lo: u8, priority_hi: u8) -> Self {
             QueryParams {
                 priority_lo,
                 priority_hi,
-                blend_mode,
             }
         }
     }
@@ -380,35 +345,33 @@ mod nzcvm {
             pythonize(py, &view).map_err(|e| e.into())
         }
 
-        /// Query the model for many points at once, writing results in-place.
-        ///
-        /// `buffer` is an `(N, 6)` float32 array with columns
-        /// `[rho, vp, vs, qp, qs, alpha]`.  It is modified **in-place**.
+        /// Query the model for many points at once, returning a new float32 array.
         ///
         /// `xyz` is an `(N, 3)` float32 array with columns `[x, y, z]`.
         ///
-        /// `params` bundles the priority bounds and blend mode.  Use
-        /// `QueryParams(0, 255, BlendMode.Erase)` to overwrite all rows.
-        pub fn query_many(
+        /// `params` bundles the priority bounds.  Use
+        /// `QueryParams(0, 255)` to query all models.
+        ///
+        /// Returns an `(N, 6)` float32 array with columns ordered as
+        /// `[rho, vp, vs, qp, qs, alpha]`.  Rows for points outside all
+        /// matching models are left as zeros.
+        pub fn query_many<'py>(
             &self,
-            py: Python<'_>,
-            mut buffer: PyReadwriteArray2<Real>,
+            py: Python<'py>,
             xyz: PyReadonlyArray2<Real>,
             params: QueryParams,
-        ) {
-            let blend: BlendDispatch = params.blend_mode.into();
+        ) -> Bound<'py, PyArray2<Real>> {
             let lo = params.priority_lo;
             let hi = params.priority_hi;
-            // Acquire array views while the GIL is held; the views themselves
-            // hold no Python token so they are Send and can cross detach.
-            let mut buf = buffer.as_array_mut();
+            // Acquire the coords view while the GIL is held; the view holds
+            // no Python token so it is Send and can cross detach.
             let coords = xyz.as_array();
+            let n = coords.nrows();
+            let mut buf = Array2::<Real>::zeros((n, 6));
             py.detach(|| {
                 azip!((mut out_lane in buf.rows_mut(), xyz_row in coords.rows()) {
                     let pt = Point3::new(xyz_row[0], xyz_row[1], xyz_row[2]);
-                    if let Some(new_q) = self.inner.query(pt, None, lo, hi) {
-                        let existing = Some(Quality::from(out_lane.view()));
-                        let q = blend.apply(existing, new_q);
+                    if let Some(q) = self.inner.query(pt, None, lo, hi) {
                         out_lane[0] = q.rho;
                         out_lane[1] = q.vp;
                         out_lane[2] = q.vs;
@@ -418,6 +381,7 @@ mod nzcvm {
                     }
                 });
             });
+            buf.into_pyarray(py)
         }
 
         /// Print a human-readable summary of the model tree to stdout.
@@ -430,7 +394,6 @@ mod nzcvm {
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyMeshModel>()?;
         m.add_class::<PyModelTree>()?;
-        m.add_class::<BlendMode>()?;
         m.add_class::<QueryParams>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;

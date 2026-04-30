@@ -10,7 +10,7 @@ import pytest
 import xarray as xr
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.model import BlendMode, Model, ModelRange
+from nzcvm.model import Model, ModelRange
 
 
 def _make_model(rho: float = 2700.0, vs: float = 3500.0, priority: int = 0) -> Model:
@@ -49,26 +49,31 @@ class TestQueryManyRaw:
         )
         assert abs(float(result[0, 2]) - 3500.0) < 1.0
 
-    def test_blend_mode_over(self):
-        x = np.array([0.1], dtype=np.float32)
-        buf = np.zeros((1, 6), dtype=np.float32)
-        assert _make_model().query_many_raw(
-            x, x, x, buffer=buf, blend_mode=BlendMode.Over
-        ).shape == (1, 6)
-
 
 class TestQueryMany:
-    """query_many returns a labelled xarray Dataset."""
+    """query_many returns a labelled xarray Dataset with a qualities DataArray."""
 
-    def test_variables_and_coords(self):
+    def test_qualities_variable_and_coords(self):
         x = np.array([0.1, 0.2], dtype=np.float32)
         z = np.zeros(2, dtype=np.float32)
         ds = _make_model(rho=2700.0).query_many(x, z, z)
-        expected = xr.Dataset(
-            {"rho": ("d0", [2700.0, 2700.0])},
-            coords={"x": ("d0", x), "y": ("d0", z), "z": ("d0", z)},
-        )
-        xr.testing.assert_allclose(ds[["rho"]], expected)
+        assert "qualities" in ds
+        assert "component" in ds.coords
+        rho_vals = ds["qualities"].sel(component="rho").values
+        assert np.allclose(rho_vals, 2700.0, rtol=1e-3)
+
+    def test_component_coordinate_labels(self):
+        x = np.array([0.1], dtype=np.float32)
+        z = np.zeros(1, dtype=np.float32)
+        ds = _make_model().query_many(x, z, z)
+        assert list(ds.coords["component"].values) == [
+            "rho",
+            "vp",
+            "vs",
+            "qp",
+            "qs",
+            "alpha",
+        ]
 
 
 class TestDask:

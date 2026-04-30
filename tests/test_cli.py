@@ -13,9 +13,9 @@ runner = CliRunner()
     [
         [],
         ["generate"],
-        ["construct-mesh"],
-        ["convert-tomography"],
-        ["convert-topography"],
+        ["basin"],
+        ["tomography"],
+        ["surface"],
         ["tree-stats"],
         ["view-basin"],
     ],

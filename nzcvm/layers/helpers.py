@@ -71,10 +71,10 @@ def map_over_datasets_with_glob(
     """
     expr = re.compile(glob.translate(pattern, recursive=True))
 
-    def _only_glob(path: NodePath, dset: xr.Dataset) -> xr.Dataset:
+    def _only_glob(path: NodePath, dset: xr.Dataset, **kwargs) -> xr.Dataset:
         # Translate a dataset path into an absolute path suitable for glob patterns
         if expr.match(str(path.absolute())):
-            return func(PurePosixPath(path), dset)
+            return func(PurePosixPath(path), dset, **kwargs)
         else:
             return dset
 

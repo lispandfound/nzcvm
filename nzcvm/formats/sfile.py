@@ -93,7 +93,7 @@ def to_sfile(dtree, filename):
             )
 
             for sfile_name, var_name in COMPONENT_MAP.items():
-                data = dataset[var_name].data
+                data = dataset["qualities"].sel(component=str(var_name)).data
                 z_data = dataset["z"].data
                 z_mins.append(z_data.min())
                 z_maxs.append(z_data.max())

@@ -1,12 +1,13 @@
 """Pipeline layer for applying a 4x4 affine transform to model coordinates."""
 
+from typing import Any
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm.coordinates import Affine, Coordinate
-from nzcvm.layers import helpers
 from nzcvm.layers.protocol import QueryLayer
 
 
@@ -56,31 +57,28 @@ class AffineTransformLayer:
         self.affine = affine
         self.next_layer = next_layer
 
-    def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         """Apply the affine transform and delegate to the next layer.
 
         Parameters
         ----------
         velocity_model :
-            DataTree with local-grid ``x``, ``y``, ``z`` coordinate variables.
+            Dataset with local-grid ``x``, ``y``, ``z`` coordinate variables.
 
         Returns
         -------
-        xarray.DataTree
+        xarray.Dataset
         """
+        block = block.copy(deep=False)
         a = self.affine.astype(np.float32)
+        x = block[Coordinate.X]
+        y = block[Coordinate.Y]
+        z = block[Coordinate.Z]
+        block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2] * z + a[0, 3]
+        block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2] * z + a[1, 3]
+        block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
 
-        def _apply_affine(_path, block: xr.Dataset) -> xr.Dataset:
-            block = block.copy()
-            x = block[Coordinate.X]
-            y = block[Coordinate.Y]
-            z = block[Coordinate.Z]
-            block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2] * z + a[0, 3]
-            block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2] * z + a[1, 3]
-            block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
-            return block
-
-        return self.next_layer(helpers.grid_map(velocity_model, _apply_affine))
+        return self.next_layer(block, **kwargs)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

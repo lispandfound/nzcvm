@@ -130,11 +130,17 @@ class ElyTaperLayer:
 
         # Blend the basins over the Ely taper. `basin_alpha` has the
         # same spatial dims as the block; xarray broadcasts it across the
-        # component dimension automatically.
+        # component dimension automatically for non-alpha components.
         basin_alpha = basins["qualities"].sel(component=Component.ALPHA.value)
         ely_blended_qualities = (basins["qualities"] * basin_alpha) + (
             ely_qualities * (1 - basin_alpha)
         )
+
+        # Handle alpha separately using Porter-Duff "over":
+        # a_out = a_basin + (1 - a_basin) * a_ely
+        ely_alpha = ely_qualities.sel(component=Component.ALPHA.value)
+        blended_alpha = basin_alpha + ((1 - basin_alpha) * ely_alpha)
+        ely_blended_qualities.loc[{"component": Component.ALPHA.value}] = blended_alpha
 
         # Combine the Ely blend and the background model based on depth.
         # xr.where is applied element-wise across all variables in the dataset.

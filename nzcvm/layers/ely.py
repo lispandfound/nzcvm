@@ -159,7 +159,7 @@ class ElyTaperLayer:
         return template
 
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
-        """Apply the depth-to-elevation transform and delegate to the next layer.
+        """Apply the Ely taper and delegate to the next layer.
 
         Parameters
         ----------

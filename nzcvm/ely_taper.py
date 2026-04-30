@@ -64,7 +64,7 @@ def ely_vs_profile(
         Ely GTL computed velocities and densities.
     """
     z_norm = z / z_t
-    z_norm_sq = np.square(z)
+    z_norm_sq = np.square(z_norm)
     f = z_norm + (2 / 3) * (z_norm - z_norm_sq)
     g = 0.5 - 5 * z_norm + 1.5 * z_norm_sq + 3 * np.sqrt(z_norm)
 

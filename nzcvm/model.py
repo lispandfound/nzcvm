@@ -582,7 +582,7 @@ class ModelTree:
         Parameters
         ----------
         x, y, z :
-            Arrays of coordinates; must be broadcastable to the same shape.
+            Arrays of coordinates.
         model_range :
             Restricts the query to models whose priority falls within this
             range.  Defaults to :attr:`ModelRange.ALL`.

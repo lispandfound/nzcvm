@@ -17,7 +17,8 @@ from rich.table import Table
 from tqdm.dask import TqdmCallback
 
 from nzcvm import formats, surface
-from nzcvm.geomodelgrid import VelocityModelSpec, VelocityModelSpecFormat
+from nzcvm.generate import skeleton_velocity_model
+from nzcvm.model_spec import VelocityModelSpec, VelocityModelSpecFormat
 from nzcvm.layers import AffineTransformLayer, DepthTransformLayer, ModelLayer
 from nzcvm.model import Model
 from nzcvm.scripts import (
@@ -144,13 +145,13 @@ def generate(
 
     geo_model_grid = VelocityModelSpec.read_config(config, config_format)
     affine = geo_model_grid.metadata.affine
-    velocity_model = geo_model_grid.to_datatree()
+    velocity_model = skeleton_velocity_model(geo_model_grid)
 
     summary = Table(show_header=False, box=rich.box.SIMPLE)
     summary.add_row(
         "Model Title", f"[bold]{geo_model_grid.metadata.title or 'N/A'}[/bold]"
     )
-    summary.add_row("Blocks", str(len(geo_model_grid.blocks)))
+    summary.add_row("Refinements", str(len(geo_model_grid.grid.mesh_refinements)))
 
     console.print(summary)
 

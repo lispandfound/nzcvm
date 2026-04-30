@@ -67,7 +67,7 @@ class CrsTransformLayer:
             block[Coordinate.Y] = y_out
             return block
 
-        return self.next_layer(helpers.block_map(velocity_model, _apply_crs))
+        return self.next_layer(helpers.grid_map(velocity_model, _apply_crs))
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

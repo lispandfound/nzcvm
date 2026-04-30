@@ -81,20 +81,20 @@ def map_over_datasets_with_glob(
     return map_over_datasets_with_path(data_tree, _only_glob, kwargs)
 
 
-def block_map(
+def grid_map(
     velocity_model: xr.DataTree,
     func: DatasetTransform,
     kwargs: Mapping[str, Any] | None = None,
 ) -> xr.DataTree:
-    """Apply *func* to every ``/block/*`` node in *velocity_model*.
+    """Apply *func* to every ``/grid/*`` node in *velocity_model*.
 
     Convenience wrapper around :func:`map_over_datasets_with_glob` using the
-    fixed pattern ``/block/*``.
+    fixed pattern ``/grid/*``.
 
     Parameters
     ----------
     velocity_model :
-        DataTree produced by :meth:`~nzcvm.geomodelgrid.VelocityModelSpec.to_datatree`.
+        DataTree produced by :func:`~nzcvm.generate.skeleton_velocity_model`.
     func :
         Callable ``(path, dataset) -> xr.Dataset``.
     kwargs :
@@ -103,6 +103,6 @@ def block_map(
     Returns
     -------
     xarray.DataTree
-        A new datatree where *func* is applied at all nodes with a path matching *glob*.
+        A new datatree where *func* is applied at all nodes with a path matching ``/grid/*``.
     """
-    return map_over_datasets_with_glob(velocity_model, "/block/*", func, kwargs)
+    return map_over_datasets_with_glob(velocity_model, "/grid/*", func, kwargs)

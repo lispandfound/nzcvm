@@ -15,7 +15,7 @@ from nzcvm.model import Model
 class ModelLayer:
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
-    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/block/*``
+    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/grid/*``
     node and writes the returned material properties (``rho``, ``vp``,
     ``vs``, ``qp``, ``qs``, ``alpha``) as dataset variables.
 
@@ -77,7 +77,7 @@ class ModelLayer:
 
             return ds
 
-        return helpers.block_map(velocity_model, process_node)
+        return helpers.grid_map(velocity_model, process_node)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

@@ -1,13 +1,16 @@
-"""Grid configuration and empty-dataset construction for velocity models.
+"""Grid configuration for velocity models.
 
 :class:`VelocityModelSpec` is the top-level configuration object, typically
-loaded from a TOML/YAML/JSON config file. It drives :meth:`VelocityModelSpec.to_datatree`,
-which builds an empty :class:`xarray.DataTree` that pipeline layers fill in.
+loaded from a TOML/YAML/JSON config file. Pass it to
+:func:`~nzcvm.generate.skeleton_velocity_model` to build a metadata
+:class:`xarray.DataTree`, then to :func:`~nzcvm.grid.generate_grids` to
+populate the curvilinear meshgrids.
 
 See Also
 --------
-nzcvm.layers : Pipeline layers that populate the datatree produced here.
-nzcvm.coordinates.CoordinateSystem : Coordinate transformation used by the metadata.
+nzcvm.generate.skeleton_velocity_model : Build a metadata DataTree from this spec.
+nzcvm.grid.generate_grids : Populate the DataTree with curvilinear meshgrids.
+nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
 """
 
 from dataclasses import dataclass, field
@@ -15,9 +18,6 @@ from enum import StrEnum, auto
 from pathlib import Path
 from typing import Any, Self
 
-import dask.array as da
-import numpy as np
-import xarray as xr
 from mashumaro.codecs.json import JSONDecoder
 from mashumaro.codecs.toml import TOMLDecoder
 from mashumaro.codecs.yaml import YAMLDecoder
@@ -27,12 +27,10 @@ from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.toml import DataClassTOMLMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 
-from nzcvm.components import Component
 from nzcvm.coordinates import (
     NO_ORIGIN,
     WGS84_CRS,
     Affine,
-    Coordinate,
     rotate,
     translate,
 )
@@ -186,14 +184,17 @@ class VelocityModelSpecFormat(StrEnum):
 class VelocityModelSpec(ConfigObject):
     """Top-level configuration for an NZCVM velocity model grid.
 
-    Holds the coordinate metadata plus lists of :class:`Block`. Call
-    :meth:`to_datatree` to create the empty :class:`xarray.DataTree` that
-    pipeline layers will fill in.
+    Holds the coordinate metadata and a :class:`Grid` describing the
+    curvilinear mesh structure.  Pass this object to
+    :func:`~nzcvm.generate.skeleton_velocity_model` to obtain a metadata
+    :class:`xarray.DataTree`, then to :func:`~nzcvm.grid.generate_grids` to
+    generate the full curvilinear meshgrids.
 
     See Also
     --------
     VelocityModelSpec.read_config : Load from a TOML, YAML, or JSON file.
-    VelocityModelSpec.to_datatree : Create the corresponding empty DataTree.
+    nzcvm.generate.skeleton_velocity_model : Build a metadata DataTree.
+    nzcvm.grid.generate_grids : Populate the DataTree with meshgrids.
     """
 
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
@@ -221,70 +222,3 @@ class VelocityModelSpec(ConfigObject):
             else DECODER_MAP.get(config_path.suffix, TOMLDecoder)
         )
         return decoder(cls).decode(config_path.read_text())
-
-
-def empty_block(block: Block) -> xr.Dataset:
-    """Create an empty coordinate-only :class:`xarray.Dataset` for *block*.
-
-    Produces a 3-D grid with ``x``, ``y``, ``z`` data variables and
-    ``i``, ``j``, ``k`` dimension coordinates.  All material-property
-    variables (``rho``, ``vp``, …) are absent; pipeline layers add them.
-
-    Parameters
-    ----------
-    block :
-        Block specification defining shape, resolution, and chunk sizes.
-
-    Returns
-    -------
-    xarray.Dataset
-
-    Examples
-    --------
-    >>> from nzcvm.geomodelgrid import Block, empty_block
-    >>> from nzcvm.coordinates import Coordinate
-    >>> b = Block(resolution_horiz=100.0, resolution_vert=50.0, z_top=0.0,
-    ...           shape={Coordinate.I: 3, Coordinate.J: 3, Coordinate.K: 3}, name="b")
-    >>> ds = empty_block(b)
-    >>> [str(k) for k in ds.sizes.keys()]
-    ['i', 'j', 'k']
-    """
-    # 1. Extract dimensions
-    ni = block.shape[Coordinate.I]
-    nj = block.shape[Coordinate.J]
-    nk = block.shape[Coordinate.K]
-
-    chunks_i = block.chunks[Coordinate.I]
-    chunks_j = block.chunks[Coordinate.J]
-    chunks_k = block.chunks[Coordinate.K]
-
-    x_arr = da.arange(ni, chunks=chunks_i, dtype=np.float32) * np.float32(
-        block.resolution_horiz
-    )
-    y_arr = da.arange(nj, chunks=chunks_j, dtype=np.float32) * np.float32(
-        block.resolution_horiz
-    )
-    z_arr = (
-        da.arange(nk, chunks=chunks_k, dtype=np.float32) * block.resolution_vert
-    ) + np.float32(block.z_top)
-
-    grid_x, grid_y, grid_z = da.meshgrid(x_arr, y_arr, z_arr, indexing="ij")
-
-    # 5. Build the Dataset
-    return xr.Dataset(
-        data_vars={
-            Coordinate.X: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_x),
-            Coordinate.Y: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_y),
-            Coordinate.Z: ([Coordinate.I, Coordinate.J, Coordinate.K], grid_z),
-        },
-        coords={
-            Coordinate.I: np.arange(ni),
-            Coordinate.J: np.arange(nj),
-            Coordinate.K: np.arange(nk),
-        },
-        attrs=dict(
-            resolution_horiz=block.resolution_horiz,
-            resolution_vert=block.resolution_vert,
-            z_top=block.z_top,
-        ),
-    )

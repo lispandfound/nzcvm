@@ -4,38 +4,41 @@ import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from xarray.core.treenode import NodePath
 
 from nzcvm.coordinates import Coordinate
 from nzcvm.layers import helpers
 from nzcvm.layers.protocol import QueryLayer
-from typing import Any
 
 
 class DepthTransformLayer:
     """Pipeline layer that converts depth-below-surface to absolute elevation.
 
-    Replaces the ``z`` coordinate with ``elevation + z``.
+    For each ``/grid/*`` node, evaluates the topography surface at the node's
+    ``x`` and ``y`` coordinates and replaces ``z`` (depth below surface) with
+    ``surface_elevation + z`` (absolute elevation).
 
     Parameters
     ----------
+    surface :
+        Surface elevation interpolator exposing a ``transform(x, y)`` method.
     next_layer :
         Downstream layer to invoke after the depth transform.
 
     See Also
     --------
-    nzcvm.layers.CoordinateTransformLayer : Typically applied upstream.
+    nzcvm.layers.AffineTransformLayer : Typically applied upstream.
     """
 
-    def __init__(self, next_layer: QueryLayer) -> None:
+    def __init__(self, surface: object, next_layer: QueryLayer) -> None:
         """
         Parameters
         ----------
-        interpolator :
+        surface :
             Surface elevation interpolator.
         next_layer :
             Downstream layer invoked after the transform.
         """
+        self.surface = surface
         self.next_layer = next_layer
 
     def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
@@ -45,7 +48,7 @@ class DepthTransformLayer:
         ----------
         velocity_model :
             DataTree with projected ``x``, ``y`` coordinates and depth ``z``
-            values (positive downward from the surface, e.g. +100m is 100m below the surface).
+            values (positive downward from the surface).
 
         Returns
         -------
@@ -53,18 +56,34 @@ class DepthTransformLayer:
             Same tree with ``z`` replaced by absolute elevation.
         """
 
-        block = block.copy(deep=False)
+        def process_block(_path, block: xr.Dataset) -> xr.Dataset:
+            if Coordinate.X not in block or Coordinate.Z not in block:
+                return block
+            block = block.copy()
+            x = block[Coordinate.X]
+            y = block[Coordinate.Y]
+            z_depth = block[Coordinate.Z]
 
-        # In this repository, ``z`` is depth below the surface with +z pointing
-        # downward. Adding that depth to the interpolated surface elevation
-        # converts depth-below-surface to absolute ``z`` / elevation.
-        block[Coordinate.Z.value] = (
-            block[Coordinate.ELEVATION] + block[Coordinate.Z.value]
-        )
+            # Use the k=0 slice for surface evaluation since x and y do not
+            # vary along the k (vertical) dimension.
+            x_2d = x.isel({Coordinate.K: 0})
+            y_2d = y.isel({Coordinate.K: 0})
 
-            return ds
+            elevation = xr.apply_ufunc(
+                self.surface.transform,
+                x_2d,
+                y_2d,
+                dask="parallelized",
+                output_dtypes=[np.float64],
+            )  # shape (ni, nj)
 
-        elevation_transformed = helpers.block_map(velocity_model, process_block)
+            # Expand elevation to 3-D to match z_depth
+            nk = z_depth.sizes[Coordinate.K]
+            elevation_3d = elevation.expand_dims({Coordinate.K: nk}, axis=-1)
+            block[Coordinate.Z] = elevation_3d + z_depth
+            return block
+
+        elevation_transformed = helpers.grid_map(velocity_model, process_block)
         return self.next_layer(elevation_transformed)
 
     def __rich_console__(

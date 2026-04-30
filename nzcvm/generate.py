@@ -1,49 +1,66 @@
-"""Generates a skeleton :class:`xarray.DataTree` from a :class:`~nzcvm.geomodelgrid.VelocityModelSpec`."""
+"""Generate a metadata :class:`xarray.DataTree` from a :class:`~nzcvm.model_spec.VelocityModelSpec`.
 
-from nzcvm.geomodelgrid import VelocityModelSpec
+The output tree carries only grid-specification attributes and dimension
+coordinates.  Pass it to :func:`~nzcvm.grid.generate_grids` together with
+a loaded :class:`~nzcvm.surface.Surface` to obtain the full curvilinear
+meshgrids.
+"""
+
+import numpy as np
 import xarray as xr
+
+from nzcvm.coordinates import Coordinate
+from nzcvm.model_spec import VelocityModelSpec
 
 
 def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTree:
-    """Build an empty :class:`xarray.DataTree` from this grid configuration.
+    """Build a metadata-only :class:`xarray.DataTree` from a grid configuration.
 
-    The returned tree has nodes at ``/grid/<name>`` which pipeline layers
-    fill those in.
+    Each ``/grid/<name>`` node in the returned tree holds ``i`` and ``j``
+    dimension coordinates (grid-point indices) and three scalar attributes:
+
+    ``resolution``
+        Horizontal and nominal vertical spacing in metres.
+    ``bottom``
+        Target bottom elevation of this refinement level.
+    ``deformation``
+        Blend factor between terrain-following (0) and flat-bottom (1).
+
+    Global grid metadata (CRS, title, …) is stored in ``root.attrs``, and
+    the topography surface path is stored as ``root.attrs["surface"]``.
+
+    Parameters
+    ----------
+    velocity_model_spec :
+        Top-level grid configuration loaded from a config file.
 
     Returns
     -------
     xarray.DataTree
-
-    Examples
-    --------
-    >>> from nzcvm.geomodelgrid import GeoModelGrid, ModelMetadata, Grid
-    >>> from nzcvm.coordinates import Coordinate
-    >>> meta = ModelMetadata(target_crs=2193, origin_lon=172.0, origin_lat=-43.0, azimuth=0.0)
-    >>> grid = Grid(resolution_horiz=100.0, resolution_vert=50.0, z_top=0.0,
-    ...               shape={Coordinate.I: 2, Coordinate.J: 2, Coordinate.K: 2}, name="g0")
-    >>> grid = GeoModelGrid(metadata=meta, grids=[grid])
-    >>> dt = grid.to_datatree()
-    >>> dt["grid/g0"].name
-    'g0'
+        Metadata tree ready for :func:`~nzcvm.grid.generate_grids`.
     """
     name = velocity_model_spec.metadata.title or "model"
+    grid = velocity_model_spec.grid
 
-    # These
-    grids = {
-        refinement.name: empty_grid(refinement)
-        for refinement in velocity_model_spec.grid.mesh_refinements
-    }
+    nodes: dict[str, xr.Dataset] = {}
+    for refinement in grid.mesh_refinements:
+        ni = int(np.ceil(grid.extent_x / refinement.resolution)) + 1
+        nj = int(np.ceil(grid.extent_y / refinement.resolution)) + 1
 
-    root = xr.DataTree.from_dict({"grid": grids}, name=name, nested=True)
+        ds = xr.Dataset(
+            coords={
+                Coordinate.I: np.arange(ni, dtype=np.int64),
+                Coordinate.J: np.arange(nj, dtype=np.int64),
+            },
+            attrs={
+                "resolution": float(refinement.resolution),
+                "bottom": float(refinement.bottom),
+                "deformation": float(refinement.deformation),
+            },
+        )
+        nodes[f"grid/{refinement.name}"] = ds
 
+    root = xr.DataTree.from_dict(nodes, name=name)
     root.attrs.update(velocity_model_spec.metadata.to_dict())
-
+    root.attrs["surface"] = str(grid.surface)
     return root
-
-
-def empty_grid(g):
-    # Will return a dataset where using the refinement to specify the i and j
-    # dimensions *only* at this stage. The MeshGeneration layer will take these
-    # abstract descriptions and produce the complete meshgrid using the
-    # curvilinear mesh function because this is more complicated.
-    pass

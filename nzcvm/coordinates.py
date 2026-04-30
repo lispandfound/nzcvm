@@ -21,7 +21,7 @@ See Also
 --------
 nzcvm.layers.affine.AffineTransformLayer : Pipeline layer that applies an affine.
 nzcvm.layers.crs.CrsTransformLayer : Pipeline layer that applies a CRS transform.
-nzcvm.geomodelgrid.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
+nzcvm.model_spec.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
 """
 
 from enum import StrEnum, auto

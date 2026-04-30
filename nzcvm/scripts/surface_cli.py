@@ -16,20 +16,22 @@ app = typer.Typer(help="Convert an HDF5 topography surface to a VTK structured g
 
 
 def read_surface_file(
-    surface_path: Path,
+    surface_path: Path, scalar_key: str, flip: bool
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     with h5py.File(surface_path, "r") as f:
         latitude = np.array(f["latitude"])
         longitude = np.array(f["longitude"])
-        elevation = np.array(f["elevation"])
+        scalars = np.array(f[scalar_key])
 
-    # Ethan convention has +z = above sea level, we swap that here.
-    elevation *= -1
+    if flip:
+        # Ethan convention has +z = above sea level, we swap that here.
+        scalars *= -1
+
     x_lon, x_lat = np.meshgrid(longitude, latitude)
 
     x, y = TRANSFORMER.transform(x_lon, x_lat)
 
-    return x, y, elevation
+    return x, y, scalars
 
 
 @numba.njit(cache=True)
@@ -48,21 +50,21 @@ def connectivity_indices(nx: int, ny: int) -> np.ndarray:
 
 
 def construct_surface_mesh(
-    x: np.ndarray, y: np.ndarray, elevation: np.ndarray
+    x: np.ndarray, y: np.ndarray, scalars: np.ndarray
 ) -> pv.StructuredGrid:
     return pv.StructuredGrid(
         x.reshape(x.shape[0], x.shape[1], 1),
         y.reshape(y.shape[0], y.shape[1], 1),
-        elevation.reshape(elevation.shape[0], elevation.shape[1], 1),
+        scalars.reshape(scalars.shape[0], scalars.shape[1], 1),
     )
 
 
 @app.command()
-def main(
-    topography: Annotated[
+def convert(
+    surface: Annotated[
         Path,
         typer.Argument(
-            help="Input HDF5 topography file.",
+            help="Input HDF5 surface file.",
             exists=True,
             file_okay=True,
             dir_okay=False,
@@ -70,8 +72,11 @@ def main(
         ),
     ],
     output: Annotated[Path, typer.Argument(help="Output VTK surface mesh path.")],
+    scalar_key: str = "elevation",
+    flip: bool = True,
 ) -> None:
     """Entry point for the ``nzcvm convert-topography`` command."""
-    x, y, elevation = read_surface_file(topography)
-    surface_mesh = construct_surface_mesh(x, y, elevation)
+    x, y, scalars = read_surface_file(surface, scalar_key, flip)
+    surface_mesh = construct_surface_mesh(x, y, scalars)
+
     surface_mesh.save(output)

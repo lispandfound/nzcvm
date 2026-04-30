@@ -18,12 +18,18 @@ from tqdm.dask import TqdmCallback
 
 from nzcvm import formats, surface
 from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
-from nzcvm.layers import AffineTransformLayer, DepthTransformLayer, ModelLayer
+from nzcvm.layers import (
+    AffineTransformLayer,
+    DepthTransformLayer,
+    ModelLayer,
+    block_map_no_path,
+)
+from nzcvm.layers.ely import ElyTaperLayer
 from nzcvm.model import Model
 from nzcvm.scripts import (
     construct_mesh,
     convert_tomography,
-    convert_topography,
+    surface_cli,
     tree_stats,
     view_basin,
 )
@@ -55,9 +61,9 @@ def determine_model_path() -> Path:
 
 
 app = typer.Typer(help="NZCVM velocity model toolkit.")
-app.add_typer(construct_mesh.app, name="construct-mesh")
-app.add_typer(convert_tomography.app, name="convert-tomography")
-app.add_typer(convert_topography.app, name="convert-topography")
+app.add_typer(construct_mesh.app, name="basin")
+app.add_typer(convert_tomography.app, name="tomography")
+app.add_typer(surface_cli.app, name="surface")
 app.add_typer(tree_stats.app, name="tree-stats")
 app.add_typer(view_basin.app, name="view-basin")
 
@@ -81,6 +87,16 @@ def generate(
         Path,
         typer.Option(
             help="Topography surface file.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    vs30_path: Annotated[
+        Path,
+        typer.Option(
+            help="Vs30 surface file.",
             exists=True,
             file_okay=True,
             dir_okay=False,
@@ -163,13 +179,16 @@ def generate(
     with console.status("Reading surface topography"):
         topo = surface.read_surface_from_path(topography)
 
+    with console.status("Reading surface vs30"):
+        vs30 = surface.read_surface_from_path(vs30_path)
+
     model_pipeline = AffineTransformLayer(
         affine,
-        DepthTransformLayer(topo, ModelLayer(model)),  # ty: ignore[invalid-argument-type]
+        ElyTaperLayer(vs30, 450.0, DepthTransformLayer(topo, ModelLayer(model))),  # ty: ignore[invalid-argument-type]
     )
     rich.print(model_pipeline)
 
-    velocity_model = model_pipeline(velocity_model)
+    velocity_model = block_map_no_path(velocity_model, model_pipeline)
 
     dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
 

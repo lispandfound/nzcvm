@@ -1,12 +1,13 @@
 """Pipeline layer for applying a pyproj CRS transform to model coordinates."""
 
+from typing import Any
+
 import xarray as xr
 from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm.coordinates import Coordinate, crs_transform
-from nzcvm.layers import helpers
 from nzcvm.layers.protocol import QueryLayer
 
 
@@ -45,29 +46,27 @@ class CrsTransformLayer:
         self.transformer = transformer
         self.next_layer = next_layer
 
-    def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         """Apply the CRS transform and delegate to the next layer.
 
         Parameters
         ----------
         velocity_model :
-            DataTree with ``x``, ``y`` coordinate variables in the source CRS.
+            Dataset with ``x``, ``y`` coordinate variables in the source CRS.
 
         Returns
         -------
-        xarray.DataTree
+        xarray.Dataset
         """
 
-        def _apply_crs(_path, block: xr.Dataset) -> xr.Dataset:
-            block = block.copy()
-            x_out, y_out = crs_transform(
-                block[Coordinate.X], block[Coordinate.Y], transformer=self.transformer
-            )
-            block[Coordinate.X] = x_out
-            block[Coordinate.Y] = y_out
-            return block
+        block = block.copy()
+        x_out, y_out = crs_transform(
+            block[Coordinate.X], block[Coordinate.Y], transformer=self.transformer
+        )
+        block[Coordinate.X] = x_out
+        block[Coordinate.Y] = y_out
 
-        return self.next_layer(helpers.block_map(velocity_model, _apply_crs))
+        return self.next_layer(block, **kwargs)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

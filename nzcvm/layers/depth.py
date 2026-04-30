@@ -1,13 +1,13 @@
 """Pipeline layer for converting depth-below-surface to absolute elevation."""
 
+from typing import Any
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from xarray.core.treenode import NodePath
 
 from nzcvm.coordinates import Coordinate
-from nzcvm.layers import helpers
 from nzcvm.layers.protocol import QueryLayer
 from nzcvm.surface import Surface
 
@@ -43,46 +43,41 @@ class DepthTransformLayer:
         self.interpolator = interpolator
         self.next_layer = next_layer
 
-    def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         """Apply the depth-to-elevation transform and delegate to the next layer.
 
         Parameters
         ----------
         velocity_model :
-            DataTree with projected ``x``, ``y`` coordinates and depth ``z``
+            Dataset with projected ``x``, ``y`` coordinates and depth ``z``
             values (positive downward from the surface, e.g. +100m is 100m below the surface).
 
         Returns
         -------
-        xarray.DataTree
-            Same tree with ``z`` replaced by absolute elevation.
+        xarray.Dataset
+            Same dataset with ``z`` replaced by absolute elevation.
         """
 
-        def process_block(_path: NodePath, ds: xr.Dataset) -> xr.Dataset:
-            """Replace depth ``z`` with absolute elevation for one block."""
-            ds = ds.copy()
-            x_top = ds[Coordinate.X.value].isel({Coordinate.K: 0})
-            y_top = ds[Coordinate.Y.value].isel({Coordinate.K: 0})
+        block = block.copy()
+        x_top = block[Coordinate.X.value].isel({Coordinate.K: 0})
+        y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
 
-            surface_elevation = xr.apply_ufunc(
-                self.interpolator.transform,
-                x_top,
-                y_top,
-                input_core_dims=[[], []],
-                output_core_dims=[[]],
-                dask="parallelized",
-                output_dtypes=[np.float32],
-            )
+        surface_elevation = xr.apply_ufunc(
+            self.interpolator.transform,
+            x_top,
+            y_top,
+            input_core_dims=[[], []],
+            output_core_dims=[[]],
+            dask="parallelized",
+            output_dtypes=[np.float32],
+        )
 
-            # In this repository, ``z`` is depth below the surface with +z pointing
-            # downward. Adding that depth to the interpolated surface elevation
-            # converts depth-below-surface to absolute ``z`` / elevation.
-            ds[Coordinate.Z.value] = surface_elevation + ds[Coordinate.Z.value]
+        # In this repository, ``z`` is depth below the surface with +z pointing
+        # downward. Adding that depth to the interpolated surface elevation
+        # converts depth-below-surface to absolute ``z`` / elevation.
+        block[Coordinate.Z.value] = surface_elevation + block[Coordinate.Z.value]
 
-            return ds
-
-        elevation_transformed = helpers.block_map(velocity_model, process_block)
-        return self.next_layer(elevation_transformed)
+        return self.next_layer(block, **kwargs)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

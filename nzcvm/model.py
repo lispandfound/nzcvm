@@ -28,9 +28,10 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
+from nzcvm.components import Component
 from nzcvm.mesh import read_vtkhdf
 
-from .nzcvm import BlendMode, PyModelTree, QueryParams  # ty: ignore[unresolved-import]
+from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 
@@ -574,32 +575,24 @@ class ModelTree:
         x: Any,
         y: Any,
         z: Any,
-        *,
-        buffer: np.ndarray | None = None,
         model_range: ModelRange = ModelRange.ALL,
-        blend_mode: BlendMode = BlendMode.Erase,
     ) -> np.ndarray:
         """Vectorised query returning a raw float32 array.
 
         Parameters
         ----------
         x, y, z :
-            Arrays of coordinates; must be broadcastable to the same shape.
-        buffer :
-            Optional float32 array of shape ``(*x.shape, 6)`` to composite
-            into.  When ``None`` a zero-filled buffer is created.
+            Arrays of coordinates.
         model_range :
             Restricts the query to models whose priority falls within this
             range.  Defaults to :attr:`ModelRange.ALL`.
-        blend_mode :
-            :attr:`BlendMode.Erase` overwrites the buffer;
-            :attr:`BlendMode.Over` composites using Porter-Duff "over".
 
         Returns
         -------
         numpy.ndarray
             Float32 array of shape ``(*x.shape, 6)`` with columns ordered as
-            ``[rho, vp, vs, qp, qs, alpha]``.
+            ``[rho, vp, vs, qp, qs, alpha]``.  Rows for points outside all
+            matching models are zeros.
 
         See Also
         --------
@@ -608,15 +601,10 @@ class ModelTree:
         x = np.asarray(x, dtype=np.float32)
         y = np.asarray(y, dtype=np.float32)
         z = np.asarray(z, dtype=np.float32)
-        n = x.ravel().shape[0]
-        if buffer is None:
-            buf = np.zeros((n, 6), dtype=np.float32)
-        else:
-            buf = np.ascontiguousarray(buffer, dtype=np.float32).reshape(-1, 6)
         xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
         lo, hi = model_range.value
-        params = QueryParams(lo, hi, blend_mode)
-        self._raw.query_many(buf, xyz, params)
+        params = QueryParams(lo, hi)
+        buf = self._raw.query_many(xyz, params)
         return buf.reshape(x.shape + (6,))
 
     def query_many(
@@ -625,9 +613,7 @@ class ModelTree:
         y: Any,
         z: Any,
         *,
-        buffer: np.ndarray | None = None,
         model_range: ModelRange = ModelRange.ALL,
-        blend_mode: BlendMode = BlendMode.Erase,
     ) -> xr.Dataset:
         """Vectorised query returning a labelled :class:`xarray.Dataset`.
 
@@ -635,35 +621,34 @@ class ModelTree:
         ----------
         x, y, z :
             Arrays of coordinates; broadcastable to a common shape.
-        buffer :
-            Optional float32 array of shape ``(*x.shape, 6)`` to composite
-            into.  When ``None`` a zero-filled buffer is created.
         model_range :
             Restricts the query to models whose priority falls within this
             range.  Defaults to :attr:`ModelRange.ALL`.
-        blend_mode :
-            :attr:`BlendMode.Erase` overwrites the buffer;
-            :attr:`BlendMode.Over` composites using Porter-Duff "over".
 
         Returns
         -------
         xarray.Dataset
-            Dataset with variables ``rho``, ``vp``, ``vs``, ``qp``, ``qs``
-            and coordinates ``x``, ``y``, ``z``.
+            Dataset with a ``qualities`` variable of shape
+            ``(*x.shape, n_components)`` and a ``component`` coordinate
+            (``["rho", "vp", "vs", "qp", "qs", "alpha"]``), plus spatial
+            coordinates ``x``, ``y``, ``z``.
 
         See Also
         --------
         ModelTree.query_many_raw : Same query as an unlabelled float32 array.
         """
         x, y, z = np.broadcast_arrays(x, y, z)
-        raw = self.query_many_raw(
-            x, y, z, buffer=buffer, model_range=model_range, blend_mode=blend_mode
-        )
+        raw = self.query_many_raw(x, y, z, model_range=model_range)
         dims = tuple(f"d{i}" for i in range(x.ndim))
-        var_names = ["rho", "vp", "vs", "qp", "qs"]
+        component_names = list(Component)
         return xr.Dataset(
-            data_vars={name: (dims, raw[..., i]) for i, name in enumerate(var_names)},
-            coords={"x": (dims, x), "y": (dims, y), "z": (dims, z)},
+            data_vars={"qualities": (dims + ("component",), raw)},
+            coords={
+                "x": (dims, x),
+                "y": (dims, y),
+                "z": (dims, z),
+                "component": component_names,
+            },
         )
 
     def view(self) -> Tree:

@@ -1,23 +1,23 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
+from typing import Any
+
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from xarray.core.treenode import NodePath
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
-from nzcvm.layers import helpers
 from nzcvm.model import Model
 
 
 class ModelLayer:
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
-    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/block/*``
-    node and writes the returned material properties (``rho``, ``vp``,
-    ``vs``, ``qp``, ``qs``, ``alpha``) as dataset variables.
+    Calls :meth:`~nzcvm.model.Model.query_many_raw` and writes the returned
+    material properties as a ``qualities`` DataArray with a ``component``
+    coordinate dimension.
 
     Parameters
     ----------
@@ -32,6 +32,8 @@ class ModelLayer:
         z-values are depths below the surface.
     """
 
+    _MODEL_KWARGS = ["model_range"]
+
     def __init__(self, model: Model) -> None:
         """
         Parameters
@@ -41,43 +43,41 @@ class ModelLayer:
         """
         self.model = model
 
-    def __call__(self, velocity_model: xr.DataTree) -> xr.DataTree:
-        """Query the model for every block node and add material variables.
+    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        """Query the model for every block node and add a ``qualities`` variable.
 
         Parameters
         ----------
-        velocity_model :
-            DataTree with ``x``, ``y``, ``z`` coordinates already in the
+        block :
+            Dataset with ``x``, ``y``, ``z`` coordinates already in the
             model's projected CRS.
 
         Returns
         -------
-        xarray.DataTree
+        xarray.Dataset
+            The input dataset with a ``qualities`` DataArray added, having
+            dims ``(i, j, k, component)`` and a ``component`` coordinate.
         """
-        var_names = list(Component)
+        component_names = list(Component)
 
-        def process_node(_path: NodePath, ds: xr.Dataset) -> xr.Dataset:
-            """Query the model for a single block dataset."""
-            ds = ds.copy()
+        block = block.copy(deep=False)
+        qualities = xr.apply_ufunc(
+            self.model.query_many_raw,
+            block[Coordinate.X.value],
+            block[Coordinate.Y.value],
+            block[Coordinate.Z.value],
+            input_core_dims=[[], [], []],
+            output_core_dims=[["component"]],
+            dask="parallelized",
+            kwargs={key: kwargs[key] for key in self._MODEL_KWARGS if key in kwargs},
+            output_dtypes=[np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"component": len(component_names)}},
+        )
 
-            qualities = xr.apply_ufunc(
-                self.model.query_many_raw,
-                ds[Coordinate.X.value],
-                ds[Coordinate.Y.value],
-                ds[Coordinate.Z.value],
-                input_core_dims=[[], [], []],
-                output_core_dims=[["quality_dim"]],
-                dask="parallelized",
-                output_dtypes=[np.float32],
-                dask_gufunc_kwargs={"output_sizes": {"quality_dim": len(var_names)}},
-            )
+        qualities = qualities.assign_coords({"component": component_names})
+        block["qualities"] = qualities
 
-            for i, name in enumerate(var_names):
-                ds[name] = qualities.isel(quality_dim=i)
-
-            return ds
-
-        return helpers.block_map(velocity_model, process_node)
+        return block
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

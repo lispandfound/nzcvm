@@ -71,10 +71,10 @@ def map_over_datasets_with_glob(
     """
     expr = re.compile(glob.translate(pattern, recursive=True))
 
-    def _only_glob(path: NodePath, dset: xr.Dataset) -> xr.Dataset:
+    def _only_glob(path: NodePath, dset: xr.Dataset, **kwargs) -> xr.Dataset:
         # Translate a dataset path into an absolute path suitable for glob patterns
         if expr.match(str(path.absolute())):
-            return func(PurePosixPath(path), dset)
+            return func(PurePosixPath(path), dset, **kwargs)
         else:
             return dset
 
@@ -106,3 +106,34 @@ def block_map(
         A new datatree where *func* is applied at all nodes with a path matching *glob*.
     """
     return map_over_datasets_with_glob(velocity_model, "/block/*", func, kwargs)
+
+
+def block_map_no_path(
+    velocity_model: xr.DataTree,
+    func: Callable[..., xr.Dataset],
+    kwargs: Mapping[str, Any] | None = None,
+) -> xr.DataTree:
+    """Apply *func* to every ``/block/*`` node in *velocity_model*.
+
+    Convenience wrapper around :func:`map_over_datasets_with_glob` using the
+    fixed pattern ``/block/*``.
+
+    Parameters
+    ----------
+    velocity_model :
+        DataTree produced by :meth:`~nzcvm.geomodelgrid.GeoModelGrid.to_datatree`.
+    func :
+        Callable ``dataset -> xr.Dataset``.
+    kwargs :
+        Extra keyword arguments forwarded to *func*.
+
+    Returns
+    -------
+    xarray.DataTree
+        A new datatree where *func* is applied at all nodes with a path matching *glob*.
+    """
+
+    def wrapper(_path: NodePath, dset: xr.Dataset, **kwargs) -> xr.Dataset:
+        return func(dset, **kwargs)
+
+    return map_over_datasets_with_glob(velocity_model, "/block/*", wrapper, kwargs)

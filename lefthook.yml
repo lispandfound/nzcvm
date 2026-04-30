@@ -2,22 +2,32 @@
 pre-push:
   parallel: true
   commands:
-    # Python Linters (Ruff and Ty)
-    python-lint:
-      glob: "*.{py,pyi}"
-      run: just ruff && just ty
+    ty:
+      # Use uv run when you want a command to run in your environment.
+      # Here we want ty to have access to the stubs packages installed
+      # for type checking.
+      run: uv run ty check {staged_files}
+      glob: "*.py"
 
-    # Rust Linters (Clippy)
-    rust-lint:
-      glob: "*.{rs,toml}"
-      run: just clippy
+    ruff:
+      # Use uvx here because it is independent of the environment.
+      # can also use uv run it is just more portable.
+      run: uvx ruff check --fix {staged_files}
+      glob: "*.py"
+      # Automatically stage the changes that ruff suggests (e.g.
+      # deleting/rearranging unused imports)
+      stage_fixed: true
 
-    # Python Tests
-    python-test:
-      glob: "*.{py,pyi}"
-      run: just pytest
+    yaml:
+      run: uvx yamllint {staged_files}
+      glob: "*.{yaml, yml}"
 
-    # Rust Tests
-    rust-test:
-      glob: "*.{rs,toml}"
-      run: just cargo
+    clippy:
+      # Unless you have a rust package in the repo this is skipped
+      glob: "*.rs"
+      env:
+        RUSTFLAGS: "-Dwarnings"
+      run: cargo clippy --fix --allow-dirty --allow-staged
+      # Once again, clippy will auto fix some problems, so we
+      # automatically stage the changes.
+      stage_fixed: true

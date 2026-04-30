@@ -18,7 +18,7 @@ mod nzcvm {
     use crate::query::Query;
     use crate::real::Real;
     use nalgebra::{Affine3, Matrix4, Point3, Point4};
-    use ndarray::{azip, Array2, Axis};
+    use ndarray::{array, azip, Array2, Axis};
     use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;

@@ -80,7 +80,7 @@ class AffineTransformLayer:
             block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
             return block
 
-        return self.next_layer(helpers.block_map(velocity_model, _apply_affine))
+        return self.next_layer(helpers.grid_map(velocity_model, _apply_affine))
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

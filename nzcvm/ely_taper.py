@@ -12,7 +12,6 @@ A Vs30-derived near-surface seismic velocity model.
 """
 
 import functools
-from dataclasses import dataclass
 
 import numpy as np
 import xarray as xr

@@ -2,7 +2,6 @@
 
 from typing import Any
 
-import dask.array as da
 import numpy as np
 import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult

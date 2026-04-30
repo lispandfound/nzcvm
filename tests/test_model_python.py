@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-import xarray as xr
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.mesh import make_mesh

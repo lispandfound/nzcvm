@@ -7,6 +7,6 @@ backend for fast spatial queries.
 See Also
 --------
 nzcvm.model.Model : High-level velocity-model interface.
-nzcvm.geomodelgrid.GeoModelGrid : Grid configuration for model evaluation.
+nzcvm.geomodelgrid.VelocityModelSpec : Grid configuration for model evaluation.
 nzcvm.layers : Pipeline layers that transform and query models.
 """

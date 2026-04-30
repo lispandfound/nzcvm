@@ -1,4 +1,4 @@
-"""Tests for GeoModelGrid and dask laziness of empty_block / empty_surface."""
+"""Tests for VelocityModelSpec and dask laziness of empty_block / empty_surface."""
 
 import dask.array as da
 import numpy as np

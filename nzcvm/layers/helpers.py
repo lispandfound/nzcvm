@@ -94,7 +94,7 @@ def block_map(
     Parameters
     ----------
     velocity_model :
-        DataTree produced by :meth:`~nzcvm.geomodelgrid.GeoModelGrid.to_datatree`.
+        DataTree produced by :meth:`~nzcvm.geomodelgrid.VelocityModelSpec.to_datatree`.
     func :
         Callable ``(path, dataset) -> xr.Dataset``.
     kwargs :

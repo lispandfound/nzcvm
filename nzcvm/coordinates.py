@@ -53,6 +53,7 @@ class Coordinate(StrEnum):
     X = auto()
     Y = auto()
     Z = auto()
+    ELEVATION = auto()
     I = auto()  # noqa: E741
     J = auto()
     K = auto()

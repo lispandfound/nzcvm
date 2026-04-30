@@ -1,7 +1,7 @@
 """Grid configuration and empty-dataset construction for velocity models.
 
-:class:`GeoModelGrid` is the top-level configuration object, typically
-loaded from a TOML/YAML/JSON config file. It drives :meth:`GeoModelGrid.to_datatree`,
+:class:`VelocityModelSpec` is the top-level configuration object, typically
+loaded from a TOML/YAML/JSON config file. It drives :meth:`VelocityModelSpec.to_datatree`,
 which builds an empty :class:`xarray.DataTree` that pipeline layers fill in.
 
 See Also
@@ -58,7 +58,7 @@ class ModelMetadata(ConfigObject):
     """Coordinate, descriptive, attribution, and repository metadata for a model.
 
     This is the flattened metadata stored at the root of a
-    :class:`GeoModelGrid` config. It doubles as the xarray dataset
+    :class:`VelocityModelSpec` config. It doubles as the xarray dataset
     attribute dictionary (``root.attrs``) when serialised.
 
     Parameters
@@ -142,72 +142,39 @@ class ModelMetadata(ConfigObject):
 
 
 @dataclass
-class Block(ConfigObject):
-    """A single uniform-resolution 3-D block in the velocity model grid.
-
-    Parameters
-    ----------
-    resolution_horiz :
-        Horizontal grid spacing in metres.
-    resolution_vert :
-        Vertical grid spacing in metres.
-    z_top :
-        Z coordinate of the topmost layer before depth transformation.
-    shape :
-        Grid dimensions keyed by :class:`~nzcvm.coordinates.Coordinate`.
-    name :
-        Identifier used as the DataTree node name.
-    chunks :
-        Dask chunk sizes; auto-computed from ``target_chunksize`` when
-        omitted.
-    target_chunksize :
-        Desired chunk size in MiB (used only when ``chunks`` is not set).
-
-    Examples
-    --------
-    >>> from nzcvm.coordinates import Coordinate
-    >>> from nzcvm.geomodelgrid import Block
-    >>> block = Block(
-    ...     resolution_horiz=100.0,
-    ...     resolution_vert=50.0,
-    ...     z_top=0.0,
-    ...     shape={Coordinate.I: 4, Coordinate.J: 4, Coordinate.K: 4},
-    ...     name="block_0",
-    ... )
-    >>> block.resolution_horiz
-    100.0
-    """
-
-    resolution_horiz: float
-    resolution_vert: float
-    z_top: float
-    shape: dict[Coordinate, int]
+class MeshRefinement(ConfigObject):
+    # Horizontal and (nominal) vertical resolution.
+    resolution: float
+    # Bottom of interface layer in *elevation*. Interpretation depends on
+    # deformation. The invariant maintained is that the bottom surface of this
+    # layers mesh refinement has a minimum elevation of this value. When
+    # deformation = 1.0 this means the surface terminates exactly at the
+    # boundary.
+    bottom: float
+    # Name for the mesh refinement (useful for debugging only)
     name: str
-    chunks: dict[Coordinate, int] = field(default_factory=dict)
-    target_chunksize: float = 100.0
+    # Deformation of this layer, floating point between 0 and 1 with 0
+    # representing curvilinear surface following the topography of the top
+    # surface, and 1 meaning the mesh boundary is flat against the bottom.
+    deformation: float
 
-    def __post_init__(self):
-        """Auto-compute ``chunks`` from ``target_chunksize`` when not provided."""
-        if not self.chunks:
-            num_components = len(list(Component))
-            bytes_per_element = 4 * num_components
 
-            target_bytes = self.target_chunksize * 1024 * 1024
-            total_elements_per_chunk = target_bytes / bytes_per_element
-
-            side_length = int(np.floor(np.cbrt(total_elements_per_chunk)))
-
-            self.chunks = {
-                coord: min(side_length, dim_size)
-                for coord, dim_size in self.shape.items()
-            }
+@dataclass
+class Grid(ConfigObject):
+    # Topographic surface path. Used to translate depth to elevation and must be provided.
+    surface: Path
+    # Extents in x and y.
+    extent_x: float
+    extent_y: float
+    # Mesh refinements. You must have at least one, the bottom of the last layer provides the bottom of the velocity model
+    mesh_refinements: list[MeshRefinement]
 
 
 DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
 
 
-class GeoModelGridFormat(StrEnum):
-    """Supported serialisation formats for :class:`GeoModelGrid` configs."""
+class VelocityModelSpecFormat(StrEnum):
+    """Supported serialisation formats for :class:`VelocityModelSpec` configs."""
 
     INFERRED = auto()
     YAML = auto()
@@ -216,7 +183,7 @@ class GeoModelGridFormat(StrEnum):
 
 
 @dataclass
-class GeoModelGrid(ConfigObject):
+class VelocityModelSpec(ConfigObject):
     """Top-level configuration for an NZCVM velocity model grid.
 
     Holds the coordinate metadata plus lists of :class:`Block`. Call
@@ -225,64 +192,32 @@ class GeoModelGrid(ConfigObject):
 
     See Also
     --------
-    GeoModelGrid.read_config : Load from a TOML, YAML, or JSON file.
-    GeoModelGrid.to_datatree : Create the corresponding empty DataTree.
+    VelocityModelSpec.read_config : Load from a TOML, YAML, or JSON file.
+    VelocityModelSpec.to_datatree : Create the corresponding empty DataTree.
     """
 
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
-    blocks: list[Block] = field(default_factory=list)
-
-    def to_datatree(self) -> xr.DataTree:
-        """Build an empty :class:`xarray.DataTree` from this grid configuration.
-
-        The returned tree has nodes at ``/block/<name>`` which pipeline layers
-        fill those in.
-
-        Returns
-        -------
-        xarray.DataTree
-
-        Examples
-        --------
-        >>> from nzcvm.geomodelgrid import GeoModelGrid, ModelMetadata, Block
-        >>> from nzcvm.coordinates import Coordinate
-        >>> meta = ModelMetadata(target_crs=2193, origin_lon=172.0, origin_lat=-43.0, azimuth=0.0)
-        >>> block = Block(resolution_horiz=100.0, resolution_vert=50.0, z_top=0.0,
-        ...               shape={Coordinate.I: 2, Coordinate.J: 2, Coordinate.K: 2}, name="b0")
-        >>> grid = GeoModelGrid(metadata=meta, blocks=[block])
-        >>> dt = grid.to_datatree()
-        >>> dt["block/b0"].name
-        'b0'
-        """
-        name = self.metadata.title or "model"
-
-        blocks = {b.name: empty_block(b) for b in self.blocks}
-
-        root = xr.DataTree.from_dict({"block": blocks}, name=name, nested=True)
-
-        root.attrs.update(self.metadata.to_dict())
-
-        return root
+    grid: Grid = field(default_factory=list)
 
     @classmethod
-    def read_config(cls, config_path: Path, format: GeoModelGridFormat) -> Self:
-        """Load a :class:`GeoModelGrid` from a TOML, YAML, or JSON file.
+    def read_config(cls, config_path: Path, format: VelocityModelSpecFormat) -> Self:
+        """Load a :class:`VelocityModelSpec` from a TOML, YAML, or JSON file.
 
         Parameters
         ----------
         config_path :
             Path to the configuration file.
         format :
-            Explicit file format, or ``GeoModelGridFormat.INFERRED`` to
+            Explicit file format, or ``VelocityModelSpecFormat.INFERRED`` to
             detect from the file extension.
 
         Returns
         -------
-        GeoModelGrid
+        VelocityModelSpec
         """
         decoder = (
             DECODER_MAP[format]
-            if format != GeoModelGridFormat.INFERRED
+            if format != VelocityModelSpecFormat.INFERRED
             else DECODER_MAP.get(config_path.suffix, TOMLDecoder)
         )
         return decoder(cls).decode(config_path.read_text())

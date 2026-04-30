@@ -8,7 +8,7 @@ import dask.array as da
 import h5py
 import numpy as np
 
-from nzcvm.components import Component
+from nzcvm.components import Component, Coordinate
 
 # Global attributes
 ATTENUATION_ATTR = "Attenuation"
@@ -29,6 +29,7 @@ COMPONENT_MAP = {
     "Qs": Component.QS,
     "Rho": Component.RHO,
 }
+SURFACE_GROUP = "Z_interfaces"
 
 
 def to_sfile(dtree, filename):
@@ -53,12 +54,31 @@ def to_sfile(dtree, filename):
         f.attrs.create(NGRIDS_ATTR, data=np.int32(len(dtree["block"])), dtype=np.int32)
 
         mat_group = f.create_group(MATERIAL_GROUP)
+        surface_group = f.create_group(SURFACE_GROUP)
 
         sources = []
         targets = []
         z_mins = []
         z_maxs = []
-        for grid_name, dataset in dtree["block"].children.items():
+        # Sort blocks in vertical order
+        blocks = sorted(
+            dtree["block"].children.values(), key=lambda block: block.attrs["z_top"]
+        )
+
+        top_block = blocks[0]
+        topography = top_block[Coordinate.Z].sel({Coordinate.K: 0})
+        topography_surface = surface_group.create_dataset(
+            "z_values_0",
+            shape=topography.shape,
+            chunks=topography.chunks,
+            dtype=topography.dtype,
+        )
+        sources.append(topography)
+        targets.append(topography_surface)
+
+        for i, dataset in enumerate(blocks):
+            # SW4 expects blocks in the format "grid_i".
+            grid_name = f"grid_{i}"
             grid_h5 = mat_group.create_group(grid_name)
 
             grid_h5.attrs.create(
@@ -87,6 +107,17 @@ def to_sfile(dtree, filename):
 
                 sources.append(data)
                 targets.append(dset)
+
+            nz = dataset[Coordinate.Z].sizes[Coordinate.K]
+            bottom = dataset[Coordinate.Z].sel({Coordinate.K: nz - 1})
+            bottom_surface = surface_group.create_dataset(
+                f"z_values_{i}",
+                shape=bottom.shape,
+                chunks=bottom.chunks,
+                dtype=bottom.dtype,
+            )
+            sources.append(bottom)
+            targets.append(bottom_surface)
 
         # The sfile format specifies the `MIN_MAX_DEPTH_ATTR` attribute should
         # contain the minimum and maximum z elevation over the whole dataset.

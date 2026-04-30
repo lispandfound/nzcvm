@@ -17,7 +17,7 @@ from rich.table import Table
 from tqdm.dask import TqdmCallback
 
 from nzcvm import formats, surface
-from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
+from nzcvm.geomodelgrid import VelocityModelSpec, VelocityModelSpecFormat
 from nzcvm.layers import AffineTransformLayer, DepthTransformLayer, ModelLayer
 from nzcvm.model import Model
 from nzcvm.scripts import (
@@ -116,11 +116,11 @@ def generate(
         ),
     ] = formats.Format.INFERRED,
     config_format: Annotated[
-        GeoModelGridFormat,
+        VelocityModelSpecFormat,
         typer.Option(
             help="Config format to read. You can usually leave this as inferred."
         ),
-    ] = GeoModelGridFormat.INFERRED,
+    ] = VelocityModelSpecFormat.INFERRED,
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
@@ -142,7 +142,7 @@ def generate(
         )
         return
 
-    geo_model_grid = GeoModelGrid.read_config(config, config_format)
+    geo_model_grid = VelocityModelSpec.read_config(config, config_format)
     affine = geo_model_grid.metadata.affine
     velocity_model = geo_model_grid.to_datatree()
 

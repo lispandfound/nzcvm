@@ -41,7 +41,7 @@ from nzcvm.grid import generate_grids
 class _FlatSurface:
     """Stub Surface that returns a constant elevation."""
 
-    z_value: float = -100.0  # e.g. 100 m above sea level in +z-down convention
+    z_value: float = -100.0  # negative = above sea level in the +z-down convention
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         return np.full(x.shape, self.z_value, dtype=np.float64)

@@ -78,7 +78,7 @@ class DepthTransformLayer:
             )  # shape (ni, nj)
 
             # Expand elevation to 3-D to match z_depth
-            nk = z_depth.sizes.get(Coordinate.K, z_depth.sizes.get("k", 1))
+            nk = z_depth.sizes[Coordinate.K]
             elevation_3d = elevation.expand_dims({Coordinate.K: nk}, axis=-1)
             block[Coordinate.Z] = elevation_3d + z_depth
             return block

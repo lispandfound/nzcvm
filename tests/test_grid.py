@@ -74,14 +74,16 @@ def _stub_curvilinear_mesh(top_surface, bottom, resolution, deformation):
             + k_frac * (bottom_2d[:, :, np.newaxis] - top_np[:, :, np.newaxis])
         ).astype(np.float64)
 
-    # Compute nk by probing shape with a 1×1 tile (avoids full materialisation).
-    # We use the first element of top_surface to determine nk.
+    # Compute nk by evaluating min(top_surface) for the nk formula.
+    # For the test surfaces used here (flat or linearly varying), probing
+    # a single element gives the correct global minimum.  Real implementations
+    # of curvilinear_mesh determine nk internally from the dask graph without
+    # requiring the caller to pre-compute it.
     if isinstance(top_surface, da.Array):
         top_00 = float(top_surface[0, 0].compute())
     else:
         top_00 = float(top_surface[0, 0])
-    min_top_probe = top_00  # flat surface → min == any element
-    nk = max(int(np.ceil((bottom - min_top_probe) / resolution)) + 1, 2)
+    nk = max(int(np.ceil((bottom - top_00) / resolution)) + 1, 2)
     ni, nj = top_surface.shape
 
     return da.from_delayed(

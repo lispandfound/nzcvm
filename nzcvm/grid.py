@@ -152,11 +152,11 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
 
         # ── Lazy 3-D x and y (no large allocations) ─────────────────────────
         x_da = da.broadcast_to(
-            da.from_array(x_1d, chunks=ni)[:, None, None],
+            da.from_array(x_1d, chunks=-1)[:, None, None],
             (ni, nj, nk),
         )
         y_da = da.broadcast_to(
-            da.from_array(y_1d, chunks=nj)[None, :, None],
+            da.from_array(y_1d, chunks=-1)[None, :, None],
             (ni, nj, nk),
         )
 

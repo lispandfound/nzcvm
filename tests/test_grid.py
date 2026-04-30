@@ -23,6 +23,7 @@ if "nzcvm.curvilinear_mesh" not in sys.modules:
     _stub_mod.curvilinear_mesh = MagicMock()  # type: ignore[attr-defined]
     sys.modules["nzcvm.curvilinear_mesh"] = _stub_mod
 
+import dask
 import dask.array as da
 import numpy as np
 import pytest
@@ -55,18 +56,39 @@ class _FlatSurface:
 def _stub_curvilinear_mesh(top_surface, bottom, resolution, deformation):
     """Minimal stand-in for nzcvm.curvilinear_mesh.curvilinear_mesh.
 
+    Accepts a dask or numpy 2-D ``top_surface`` and returns a **dask** 3-D
+    array, matching the contract that curvilinear_mesh must return a dask
+    array so that the full 3-D result is never materialised in memory.
+
     Produces a (ni, nj, nk) array where z linearly interpolates between
-    top_surface and a deformation-blended bottom surface, matching the
-    invariant: min(result[:, :, -1]) == bottom.
+    top_surface and a deformation-blended bottom surface.
     """
-    min_top = float(np.min(top_surface))
-    bottom_2d = bottom + (1.0 - deformation) * (top_surface - min_top)
-    nk = max(int(np.ceil((bottom - min_top) / resolution)) + 1, 2)
-    k_frac = np.linspace(0.0, 1.0, nk)
-    z = top_surface[:, :, np.newaxis] + k_frac * (
-        bottom_2d[:, :, np.newaxis] - top_surface[:, :, np.newaxis]
+
+    def _compute(top_np):
+        min_top = float(np.min(top_np))
+        bottom_2d = bottom + (1.0 - deformation) * (top_np - min_top)
+        nk = max(int(np.ceil((bottom - min_top) / resolution)) + 1, 2)
+        k_frac = np.linspace(0.0, 1.0, nk)
+        return (
+            top_np[:, :, np.newaxis]
+            + k_frac * (bottom_2d[:, :, np.newaxis] - top_np[:, :, np.newaxis])
+        ).astype(np.float64)
+
+    # Compute nk by probing shape with a 1×1 tile (avoids full materialisation).
+    # We use the first element of top_surface to determine nk.
+    if isinstance(top_surface, da.Array):
+        top_00 = float(top_surface[0, 0].compute())
+    else:
+        top_00 = float(top_surface[0, 0])
+    min_top_probe = top_00  # flat surface → min == any element
+    nk = max(int(np.ceil((bottom - min_top_probe) / resolution)) + 1, 2)
+    ni, nj = top_surface.shape
+
+    return da.from_delayed(
+        dask.delayed(_compute)(top_surface),
+        shape=(ni, nj, nk),
+        dtype=np.float64,
     )
-    return z.astype(np.float64)
 
 
 def _make_spec_tree(

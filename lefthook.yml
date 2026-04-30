@@ -20,7 +20,7 @@ pre-push:
 
     yaml:
       run: uvx yamllint {staged_files}
-      glob: "*.yaml"
+      glob: "*.{yaml, yml}"
 
     clippy:
       # Unless you have a rust package in the repo this is skipped

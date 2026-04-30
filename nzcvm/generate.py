@@ -42,5 +42,8 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
 
 
 def empty_grid(g):
-    # Will return a dataset where the
+    # Will return a dataset where using the refinement to specify the i and j
+    # dimensions *only* at this stage. The MeshGeneration layer will take these
+    # abstract descriptions and produce the complete meshgrid using the
+    # curvilinear mesh function because this is more complicated.
     pass

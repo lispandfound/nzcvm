@@ -133,13 +133,13 @@ class TestGenerateGridsDaskBacking:
         """Patch curvilinear_mesh with the stub before each test."""
         import nzcvm.grid as _grid_mod
 
-        self._original = _grid_mod.curvilinear_mesh
-        _grid_mod.curvilinear_mesh = _stub_curvilinear_mesh
+        self._original = _grid_mod.curvilinear_mesh_boundary
+        _grid_mod.curvilinear_mesh_boundary = _stub_curvilinear_mesh
 
     def teardown_method(self):
         import nzcvm.grid as _grid_mod
 
-        _grid_mod.curvilinear_mesh = self._original
+        _grid_mod.curvilinear_mesh_boundary = self._original
 
     def test_x_is_dask(self):
         spec = _make_spec_tree(
@@ -192,20 +192,30 @@ class TestGenerateGridsScanl:
     def setup_method(self):
         import nzcvm.grid as _grid_mod
 
-        self._original = _grid_mod.curvilinear_mesh
-        _grid_mod.curvilinear_mesh = _stub_curvilinear_mesh
+        self._original = _grid_mod.curvilinear_mesh_boundary
+        _grid_mod.curvilinear_mesh_boundary = _stub_curvilinear_mesh
 
     def teardown_method(self):
         import nzcvm.grid as _grid_mod
 
-        _grid_mod.curvilinear_mesh = self._original
+        _grid_mod.curvilinear_mesh_boundary = self._original
 
     def test_bottom_of_first_equals_top_of_second(self):
         """z[..., -1] of layer 0 must equal z[..., 0] of layer 1."""
         spec = _make_spec_tree(
             [
-                {"name": "r0", "resolution": 100.0, "bottom": 500.0, "deformation": 0.5},
-                {"name": "r1", "resolution": 100.0, "bottom": 1500.0, "deformation": 0.5},
+                {
+                    "name": "r0",
+                    "resolution": 100.0,
+                    "bottom": 500.0,
+                    "deformation": 0.5,
+                },
+                {
+                    "name": "r1",
+                    "resolution": 100.0,
+                    "bottom": 1500.0,
+                    "deformation": 0.5,
+                },
             ]
         )
         result = generate_grids(spec, _FlatSurface())
@@ -227,9 +237,24 @@ class TestGenerateGridsScanl:
         """Continuity must hold across all consecutive pairs."""
         spec = _make_spec_tree(
             [
-                {"name": "r0", "resolution": 100.0, "bottom": 300.0, "deformation": 1.0},
-                {"name": "r1", "resolution": 100.0, "bottom": 800.0, "deformation": 0.5},
-                {"name": "r2", "resolution": 100.0, "bottom": 2000.0, "deformation": 0.0},
+                {
+                    "name": "r0",
+                    "resolution": 100.0,
+                    "bottom": 300.0,
+                    "deformation": 1.0,
+                },
+                {
+                    "name": "r1",
+                    "resolution": 100.0,
+                    "bottom": 800.0,
+                    "deformation": 0.5,
+                },
+                {
+                    "name": "r2",
+                    "resolution": 100.0,
+                    "bottom": 2000.0,
+                    "deformation": 0.0,
+                },
             ]
         )
         result = generate_grids(spec, _FlatSurface(z_value=-50.0))

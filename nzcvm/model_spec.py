@@ -36,6 +36,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
+import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
@@ -49,10 +50,16 @@ from mashumaro.mixins.toml import DataClassTOMLMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 from mashumaro.types import Discriminator
 
+from nzcvm.components import Component
 from nzcvm.coordinates import (
     NO_ORIGIN,
     WGS84_CRS,
 )
+from nzcvm.layers.clamp import ClampLayer
+from nzcvm.layers.ely import ElyTaperLayer
+from nzcvm.layers.query import ModelLayer
+from nzcvm.model import ModelTree
+from nzcvm.surface import read_surface_from_path
 
 
 class ConfigObject(
@@ -68,6 +75,13 @@ class ConfigObject(
     class Meta(BaseConfig):
         serialize_by_alias = True
         omit_none = True
+
+
+class CellRegistration(StrEnum):
+    """Whether grid points represent cell corners or cell centres."""
+
+    CORNER = "corner"
+    CENTER = "center"
 
 
 @dataclass
@@ -199,7 +213,7 @@ class Grid(ConfigObject):
     # Mesh refinements.
     mesh_refinements: list[MeshRefinement]
 
-    cell_registration: Literal["corner", "center"] = "corner"
+    cell_registration: CellRegistration = CellRegistration.CORNER
     transpose: bool = False
     origin_crs: Any = WGS84_CRS
     origin_x: float = NO_ORIGIN
@@ -233,13 +247,8 @@ class BoundsConfig(ConfigObject):
 class ClampLayerConfig(ConfigObject):
     """Configuration DTO for a :class:`~nzcvm.layers.clamp.ClampLayer`.
 
-    Each optional field specifies per-component velocity bounds.  Components
-    not listed are left unclamped.
-
-    Parameters
-    ----------
-    rho, vp, vs, qp, qs :
-        Optional :class:`BoundsConfig` for each seismic component.
+    The *clamps* mapping associates each velocity component with its
+    ``(min, max)`` bounds.  Components not listed are left unclamped.
 
     Examples
     --------
@@ -247,16 +256,12 @@ class ClampLayerConfig(ConfigObject):
 
         [[layers]]
         type = "clamp"
-        [layers.vs]
+        [layers.clamps.vs]
         min = 500.0
     """
 
     type: Literal["clamp"] = "clamp"
-    rho: BoundsConfig | None = None
-    vp: BoundsConfig | None = None
-    vs: BoundsConfig | None = None
-    qp: BoundsConfig | None = None
-    qs: BoundsConfig | None = None
+    clamps: dict[Component, BoundsConfig] = field(default_factory=dict)
 
     def build(self, next_layer: Any) -> Any:
         """Instantiate a :class:`~nzcvm.layers.clamp.ClampLayer`.
@@ -270,20 +275,10 @@ class ClampLayerConfig(ConfigObject):
         -------
         nzcvm.layers.clamp.ClampLayer
         """
-        from nzcvm.components import Component
-        from nzcvm.layers.clamp import ClampLayer
-
-        clamps: dict[Component, tuple[float | None, float | None]] = {}
-        for comp, cfg in (
-            (Component.RHO, self.rho),
-            (Component.VP, self.vp),
-            (Component.VS, self.vs),
-            (Component.QP, self.qp),
-            (Component.QS, self.qs),
-        ):
-            if cfg is not None:
-                clamps[comp] = (cfg.min, cfg.max)
-        return ClampLayer(clamps, next_layer)
+        clamp_spec: dict[Component, tuple[float | None, float | None]] = {
+            comp: (cfg.min, cfg.max) for comp, cfg in self.clamps.items()
+        }
+        return ClampLayer(clamp_spec, next_layer)
 
 
 @dataclass
@@ -323,9 +318,6 @@ class ElyLayerConfig(ConfigObject):
         -------
         nzcvm.layers.ely.ElyTaperLayer
         """
-        from nzcvm.layers.ely import ElyTaperLayer
-        from nzcvm.surface import read_surface_from_path
-
         vs30_surface = read_surface_from_path(self.vs30)
         return ElyTaperLayer(vs30_surface, self.z_t, next_layer)
 

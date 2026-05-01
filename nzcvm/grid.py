@@ -120,6 +120,13 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
         if "/" in str(path) and str(path).split("/")[0] == "grid"
     ]
 
+    # Determine the finest resolution for cell-centre offset calculation.
+    min_resolution = (
+        min(float(node.dataset.attrs["resolution"]) for _, node in grid_items)
+        if grid_items
+        else 1.0
+    )
+
     # scanl state: lazy 2-D dask carry from the previous level.
     prev_bottom_da: da.Array | None = None
     prev_x_1d: np.ndarray | None = None  # 1-D local coords — small
@@ -142,8 +149,10 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
         y_phys_2d = ds[Coordinate.Y].values  # (ni, nj) numpy
 
         # ── Local 1-D coordinate arrays for inter-level resampling ──────────
-        # Cell-corner offsets use integer steps; cell-centre adds half step.
-        _off = 0.5 * resolution if cell_reg == "center" else 0.0
+        # Cell centres are offset by half of the *minimum* resolution so that
+        # the local coordinates are consistent across all refinement levels and
+        # align correctly when coarser levels are resampled onto finer ones.
+        _off = 0.5 * min_resolution if cell_reg == "center" else 0.0
         x_1d = np.arange(ni, dtype=np.float64) * resolution + _off
         y_1d = np.arange(nj, dtype=np.float64) * resolution + _off
         x_2d_np, y_2d_np = np.meshgrid(x_1d, y_1d, indexing="ij")  # (ni, nj)

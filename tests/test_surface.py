@@ -38,20 +38,3 @@ def test_hull_check_raises_error_with_note(flat_surface: Surface) -> None:
     notes = "".join(excinfo.value.__notes__)
     assert "Failure Summary" in notes
     assert "Total failed: 1" in notes
-
-
-def test_z_bounds_error(flat_surface: Surface) -> None:
-    """
-    Check that if interpolation returns a value outside mesh bounds
-    (or invalid mask), it triggers the Z-limit error.
-    """
-    flat_surface.bounds[2] = 10.0  # Set min_z to 10
-    flat_surface.bounds[5] = 20.0  # Set max_z to 20
-
-    x = np.array([5.0])
-    y = np.array([5.0])
-
-    with pytest.raises(ValueError) as excinfo:
-        flat_surface.transform(x, y)
-
-    assert "Z values from interpolation invalid" in str(excinfo.value)

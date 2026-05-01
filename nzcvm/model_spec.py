@@ -510,6 +510,6 @@ class VelocityModelSpec(ConfigObject):
         decoder = (
             DECODER_MAP[format]
             if format != VelocityModelSpecFormat.INFERRED
-            else DECODER_MAP.get(config_path.suffix, TOMLDecoder)
+            else DECODER_MAP.get(config_path.suffix.lstrip("."), TOMLDecoder)
         )
         return decoder(cls).decode(config_path.read_text())

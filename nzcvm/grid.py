@@ -3,7 +3,8 @@
 The public entry point is :func:`generate_grids`.  It processes
 ``/grid/*`` nodes sequentially in a *scanl*-like pass: the bottom
 interface (``k = -1``) of each level becomes the top interface of the
-next, preserving geometric continuity across refinement levels.
+next, preserving geometric continuity across refinement levels and making
+the full grid stack watertight.
 
 All output coordinate arrays (``x``, ``y``, ``z``, ``depth``) are
 dask-backed with a **single chunk** per array so that a downstream
@@ -13,9 +14,17 @@ computation.
 **Memory contract**: the full 3-D arrays are never materialised as
 numpy arrays inside this module.  ``top_surface`` is passed to
 :func:`~nzcvm.curvilinear_mesh.curvilinear_mesh` as a dask 2-D array;
-the function is expected to return a dask 3-D array.  All other 3-D
-arrays (``x``, ``y``, ``depth``) are built from 1-D dask primitives
-without intermediate full-sized allocations.
+the function returns a dask 3-D array without intermediate allocation.
+
+**Coordinate conventions**:
+
+* The ``x`` and ``y`` output variables contain the **physical** projected
+  coordinates taken from the spec tree (as produced by
+  :func:`~nzcvm.generate.skeleton_velocity_model`).  No additional affine
+  transform is needed in the query pipeline.
+* Resampling of the bottom surface between consecutive refinements at
+  different resolutions uses **local** (rectilinear) coordinates so that
+  :class:`scipy.interpolate.RegularGridInterpolator` can be applied.
 """
 
 from __future__ import annotations
@@ -38,7 +47,23 @@ def _resample_2d(
     new_x_2d: np.ndarray,
     new_y_2d: np.ndarray,
 ) -> np.ndarray:
-    """Bilinearly resample a 2-D field from one rectilinear grid to another."""
+    """Bilinearly resample a 2-D field from one rectilinear grid to another.
+
+    Parameters
+    ----------
+    bottom_2d :
+        Source 2-D array of shape ``(ni_old, nj_old)``.
+    old_x_1d, old_y_1d :
+        1-D coordinate vectors of the source grid (local coordinates).
+    new_x_2d, new_y_2d :
+        2-D coordinate arrays of the target grid (local coordinates),
+        each of shape ``(ni_new, nj_new)``.
+
+    Returns
+    -------
+    numpy.ndarray
+        Resampled array of shape ``(ni_new, nj_new)``.
+    """
     interp = RegularGridInterpolator(
         (old_x_1d, old_y_1d),
         bottom_2d,
@@ -55,20 +80,22 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
 
     For each ``/grid/<name>`` node the function:
 
-    1. Builds a uniform 2-D ``(x, y)`` grid at the refinement's resolution.
-    2. Constructs a lazy dask 2-D ``top_surface`` array and passes it to
+    1. Reads the physical ``x`` and ``y`` coordinates from the spec tree
+       (produced by :func:`~nzcvm.generate.skeleton_velocity_model`) and
+       evaluates the topography surface at those coordinates.
+    2. Passes the 2-D top surface to
        :func:`~nzcvm.curvilinear_mesh.curvilinear_mesh`, which returns a
-       lazy dask 3-D elevation array — no full 3-D numpy array is ever
-       created inside this function.
-    3. Derives ``x``, ``y`` lazily from 1-D ``da.arange`` via broadcasting.
+       lazy dask 3-D elevation array.
+    3. Broadcasts the physical ``x`` and ``y`` arrays across the K
+       dimension.
     4. Derives ``depth`` lazily as ``z - surface_elevation``.
-    5. Enforces a single-chunk layout (no chunking strategy applied here).
+    5. Enforces a single-chunk layout per node.
 
-    The *scanl* invariant is maintained by carrying the last k-slice of
-    each level (``z_da[:, :, -1]``, a lazy 2-D dask array) forward as the
-    ``top_surface`` input for the next level.  When consecutive refinements
-    have different horizontal resolutions the carry is resampled lazily via
-    a ``dask.delayed`` bilinear interpolation step.
+    The *scanl* invariant is maintained by carrying ``z_da[:, :, -1]``
+    (the bottom k-slice) forward as the ``top_surface`` for the next
+    level.  When consecutive refinements have different horizontal
+    resolutions the carry is resampled lazily via
+    :func:`_resample_2d` using local (rectilinear) coordinates.
 
     Parameters
     ----------
@@ -76,15 +103,15 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
         Metadata DataTree produced by
         :func:`~nzcvm.generate.skeleton_velocity_model`.
     surface :
-        Loaded topography surface (used to set the first level's top
-        interface and to compute per-level depth).
+        Loaded topography surface used to set the first level's top
+        interface and to compute per-level depth.
 
     Returns
     -------
     xarray.DataTree
-        The same tree structure with each ``/grid/*`` node augmented with
-        ``x``, ``y``, ``z``, and ``depth`` data variables plus a ``k``
-        dimension coordinate.  Non-grid nodes are preserved unchanged.
+        Same tree with each ``/grid/*`` node augmented with ``x``, ``y``,
+        ``z``, and ``depth`` data variables plus a ``k`` dimension
+        coordinate.  Non-grid nodes are preserved unchanged.
     """
     # Collect /grid/* direct children in iteration order (top → bottom).
     grid_items = [
@@ -95,8 +122,8 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
 
     # scanl state: lazy 2-D dask carry from the previous level.
     prev_bottom_da: da.Array | None = None
-    prev_x_1d: np.ndarray | None = None  # 1-D numpy — small
-    prev_y_1d: np.ndarray | None = None  # 1-D numpy — small
+    prev_x_1d: np.ndarray | None = None  # 1-D local coords — small
+    prev_y_1d: np.ndarray | None = None  # 1-D local coords — small
 
     result_datasets: dict[str, xr.Dataset] = {}
 
@@ -105,24 +132,30 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
         resolution: float = float(ds.attrs["resolution"])
         bottom: float = float(ds.attrs["bottom"])
         deformation: float = float(ds.attrs["deformation"])
+        cell_reg: str = ds.attrs.get("cell_registration", "corner")
 
         ni = int(ds.sizes[Coordinate.I])
         nj = int(ds.sizes[Coordinate.J])
 
-        # ── 1-D coordinate arrays (numpy, tiny) ────────────────────────────
-        x_1d = np.arange(ni, dtype=np.float64) * resolution
-        y_1d = np.arange(nj, dtype=np.float64) * resolution
-        # 2-D grids are only created for surface evaluation (2-D, not 3-D).
+        # ── Physical x, y from the spec tree (already in target CRS) ────────
+        x_phys_2d = ds[Coordinate.X].values  # (ni, nj) numpy
+        y_phys_2d = ds[Coordinate.Y].values  # (ni, nj) numpy
+
+        # ── Local 1-D coordinate arrays for inter-level resampling ──────────
+        # Cell-corner offsets use integer steps; cell-centre adds half step.
+        _off = 0.5 * resolution if cell_reg == "center" else 0.0
+        x_1d = np.arange(ni, dtype=np.float64) * resolution + _off
+        y_1d = np.arange(nj, dtype=np.float64) * resolution + _off
         x_2d_np, y_2d_np = np.meshgrid(x_1d, y_1d, indexing="ij")  # (ni, nj)
 
-        # ── Lazy 2-D topography for depth computation ───────────────────────
+        # ── Lazy 2-D topography for depth computation ────────────────────────
         surface_z_2d_da: da.Array = da.from_delayed(
-            dask.delayed(surface.transform)(x_2d_np, y_2d_np),
+            dask.delayed(surface.transform)(x_phys_2d, y_phys_2d),
             shape=(ni, nj),
             dtype=np.float64,
         )
 
-        # ── Lazy 2-D top surface for curvilinear_mesh ───────────────────────
+        # ── Lazy 2-D top surface for curvilinear_mesh ────────────────────────
         if prev_bottom_da is None:
             # First level: top is the topography surface.
             top_z_da = surface_z_2d_da
@@ -131,7 +164,8 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
             if prev_bottom_da.shape == (ni, nj):
                 top_z_da = prev_bottom_da
             else:
-                # Grids have different resolutions: resample lazily.
+                # Different horizontal resolutions: resample lazily using
+                # local (rectilinear) coordinates.
                 top_z_da = da.from_delayed(
                     dask.delayed(_resample_2d)(
                         prev_bottom_da,
@@ -144,26 +178,24 @@ def generate_grids(spec_tree: xr.DataTree, surface: Surface) -> xr.DataTree:
                     dtype=np.float64,
                 )
 
-        # ── 3-D elevation via curvilinear_mesh (must return a dask array) ───
-        # top_z_da is a 2-D dask array; curvilinear_mesh is responsible for
-        # keeping the computation lazy and returning a dask 3-D array.
+        # ── 3-D elevation via curvilinear_mesh ───────────────────────────────
         z_da: da.Array = curvilinear_mesh(top_z_da, bottom, resolution, deformation)
         nk = z_da.shape[2]
 
-        # ── Lazy 3-D x and y (no large allocations) ─────────────────────────
+        # ── Lazy 3-D physical x and y (broadcast from 2-D) ──────────────────
         x_da = da.broadcast_to(
-            da.from_array(x_1d, chunks=-1)[:, None, None],
+            da.from_array(x_phys_2d, chunks=-1)[:, :, None],
             (ni, nj, nk),
         )
         y_da = da.broadcast_to(
-            da.from_array(y_1d, chunks=-1)[None, :, None],
+            da.from_array(y_phys_2d, chunks=-1)[:, :, None],
             (ni, nj, nk),
         )
 
         # ── Lazy 3-D depth (positive below surface) ─────────────────────────
         depth_da: da.Array = z_da - surface_z_2d_da[:, :, np.newaxis]
 
-        # ── Enforce single-chunk layout (caller applies chunking strategy) ───
+        # ── Enforce single-chunk layout ──────────────────────────────────────
         _chunks = (ni, nj, nk)
         z_da = z_da.rechunk(_chunks)
         x_da = x_da.rechunk(_chunks)

@@ -1,6 +1,5 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-from nzcvm.components import Component
 
 from nzcvm.graph import export_datatree_graph
 
@@ -23,12 +22,9 @@ from tqdm.dask import TqdmCallback
 
 from nzcvm import formats, surface
 from nzcvm.generate import skeleton_velocity_model
+from nzcvm.grid import generate_grids
 from nzcvm.model_spec import VelocityModelSpec, VelocityModelSpecFormat
-from nzcvm.layers.query import ModelLayer
-from nzcvm.layers.ely import ElyTaperLayer
-from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.helpers import execute_model_pipeline
-from nzcvm.model import Model
 from nzcvm.scripts import (
     construct_mesh,
     convert_tomography,
@@ -97,7 +93,7 @@ app.add_typer(construct_mesh.app, name="basin")
 app.add_typer(convert_tomography.app, name="tomography")
 app.add_typer(surface_cli.app, name="surface")
 app.add_typer(tree_stats.app, name="tree-stats")
-app.add_typer(view.app, name="view")
+app.add_typer(view.app, name="view-basin")
 
 
 @app.command()
@@ -114,26 +110,6 @@ def generate(
     ],
     output: Annotated[
         Path, typer.Argument(help="Output path to write velocity model to.")
-    ],
-    topography: Annotated[
-        Path,
-        typer.Option(
-            help="Topography surface file.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    vs30_path: Annotated[
-        Path,
-        typer.Option(
-            help="Vs30 surface file.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
     ],
     n_threads: Annotated[
         int | None,
@@ -153,16 +129,6 @@ def generate(
     graph_output: Annotated[
         Path, typer.Option(help="Dask graph output location.")
     ] = Path("dask_graph.svg"),
-    model_path: Annotated[
-        Path | None,
-        typer.Option(
-            help="Path containing models.", exists=True, file_okay=False, dir_okay=True
-        ),
-    ] = None,
-    model_glob: Annotated[
-        str,
-        typer.Option(help="Glob for models, set this to load only a subset of models."),
-    ] = "*.vtkhdf",
     output_format: Annotated[
         formats.Format,
         typer.Option(
@@ -176,12 +142,13 @@ def generate(
         ),
     ] = VelocityModelSpecFormat.INFERRED,
 ) -> None:
-    """Generate a NZCVM velocity model from a config file."""
+    """Generate a NZCVM velocity model from a config file.
+
+    The layer pipeline (model files, Vs30 surface, clamping, etc.) is
+    specified entirely within the config file via ``[[layers]]`` entries.
+    """
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
-    resolved_model_path = (
-        model_path if model_path is not None else determine_model_path()
-    )
 
     console.print(
         Panel.fit(
@@ -191,39 +158,28 @@ def generate(
         )
     )
 
-    if not resolved_model_path.exists():
-        console.print(
-            f"[error]Error:[/error] Model path [path]{resolved_model_path}[/path] not found."
-        )
-        return
-
     velocity_model_spec = VelocityModelSpec.read_config(config, config_format)
-
-    with console.status("Initialising model"):
-        velocity_model = skeleton_velocity_model(velocity_model_spec)
-
-    print(velocity_model)
 
     summary = Table(show_header=False, box=rich.box.SIMPLE)
     summary.add_row(
         "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
     )
     summary.add_row("Refinements", str(len(velocity_model_spec.grid.mesh_refinements)))
-
     console.print(summary)
 
-    models = list(resolved_model_path.rglob(model_glob))
-    console.print(f"[info]Found {len(models)} model components in search path.[/info]")
+    with console.status("Initialising model skeleton"):
+        velocity_model = skeleton_velocity_model(velocity_model_spec)
 
-    with console.status("Loading basin models"):
-        model = Model.load_models(*models)
+    with console.status("Loading topography surface"):
+        topographic_surface = surface.read_surface_from_path(
+            velocity_model_spec.grid.surface
+        )
 
-    with console.status("Reading surface vs30"):
-        vs30 = surface.read_surface_from_path(vs30_path)
+    with console.status("Generating curvilinear grids"):
+        velocity_model = generate_grids(velocity_model, topographic_surface)
 
-    model_pipeline = ClampLayer(
-        {Component.VS: (500.0, None)}, ElyTaperLayer(vs30, 450.0, ModelLayer(model))
-    )  # ty: ignore[invalid-argument-type]
+    with console.status("Building layer pipeline"):
+        model_pipeline = velocity_model_spec.build_pipeline()
     rich.print(model_pipeline)
 
     velocity_model = execute_model_pipeline(velocity_model, model_pipeline)

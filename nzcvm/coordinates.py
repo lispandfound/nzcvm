@@ -25,6 +25,7 @@ nzcvm.model_spec.ModelMetadata : Stores coordinate-system parameters alongside m
 """
 
 from enum import StrEnum, auto
+from typing import Literal
 
 import numpy as np
 import xarray as xr

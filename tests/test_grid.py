@@ -26,7 +26,6 @@ if "nzcvm.curvilinear_mesh" not in sys.modules:
 import dask
 import dask.array as da
 import numpy as np
-import pytest
 import xarray as xr
 
 from nzcvm.coordinates import Coordinate
@@ -105,7 +104,16 @@ def _make_spec_tree(
     for r in refinements:
         ni = int(np.ceil(extent_x / r["resolution"])) + 1
         nj = int(np.ceil(extent_y / r["resolution"])) + 1
+        x_2d, y_2d = np.meshgrid(
+            np.arange(ni, dtype=np.float64) * r["resolution"],
+            np.arange(nj, dtype=np.float64) * r["resolution"],
+            indexing="ij",
+        )
         ds = xr.Dataset(
+            data_vars={
+                Coordinate.X: ([Coordinate.I, Coordinate.J], x_2d),
+                Coordinate.Y: ([Coordinate.I, Coordinate.J], y_2d),
+            },
             coords={
                 Coordinate.I: np.arange(ni, dtype=np.int64),
                 Coordinate.J: np.arange(nj, dtype=np.int64),
@@ -133,13 +141,13 @@ class TestGenerateGridsDaskBacking:
         """Patch curvilinear_mesh with the stub before each test."""
         import nzcvm.grid as _grid_mod
 
-        self._original = _grid_mod.curvilinear_mesh_boundary
-        _grid_mod.curvilinear_mesh_boundary = _stub_curvilinear_mesh
+        self._original = _grid_mod.curvilinear_mesh
+        _grid_mod.curvilinear_mesh = _stub_curvilinear_mesh
 
     def teardown_method(self):
         import nzcvm.grid as _grid_mod
 
-        _grid_mod.curvilinear_mesh_boundary = self._original
+        _grid_mod.curvilinear_mesh = self._original
 
     def test_x_is_dask(self):
         spec = _make_spec_tree(
@@ -192,13 +200,13 @@ class TestGenerateGridsScanl:
     def setup_method(self):
         import nzcvm.grid as _grid_mod
 
-        self._original = _grid_mod.curvilinear_mesh_boundary
-        _grid_mod.curvilinear_mesh_boundary = _stub_curvilinear_mesh
+        self._original = _grid_mod.curvilinear_mesh
+        _grid_mod.curvilinear_mesh = _stub_curvilinear_mesh
 
     def teardown_method(self):
         import nzcvm.grid as _grid_mod
 
-        _grid_mod.curvilinear_mesh_boundary = self._original
+        _grid_mod.curvilinear_mesh = self._original
 
     def test_bottom_of_first_equals_top_of_second(self):
         """z[..., -1] of layer 0 must equal z[..., 0] of layer 1."""

@@ -18,7 +18,11 @@ import xarray as xr
 from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 
-from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+try:
+    from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+except ImportError:
+    _nzcvm = None  # type: ignore[assignment]
+
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate, rotate, translate
 from nzcvm.layers import DepthTransformLayer
@@ -36,6 +40,8 @@ _COMPONENT_NAMES = [str(c) for c in Component]
 
 def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
     """Return a constant-quality Model spanning a [0, size]^3 cube."""
+    if _nzcvm is None:
+        pytest.skip("Requires compiled Rust extension")
     s = size
     vertices = np.array(
         [
@@ -100,6 +106,48 @@ def _make_grid_datatree(
     return xr.DataTree.from_dict({"/grid/test": ds}, name="root")
 
 
+def _make_block_dataset(
+    ni: int = 4,
+    nj: int = 3,
+    nk: int = 2,
+    size: float = 5.0,
+    z_top: float = 0.0,
+) -> xr.Dataset:
+    """Dataset with dask-backed x, y, z, depth and minimum_top_depth attribute.
+
+    *depth* equals *z* (both start at *z_top* and increase downward), matching
+    the real data convention where ``depth = z - surface_elevation`` and the
+    surface elevation is assumed to be 0.
+    """
+    resolution_h = size / ni
+    resolution_v = size / nk
+
+    x_1d = da.arange(ni, dtype=np.float32) * resolution_h
+    y_1d = da.arange(nj, dtype=np.float32) * resolution_h
+    z_1d = da.arange(nk, dtype=np.float32) * resolution_v + z_top
+
+    grid_x, grid_y, grid_z = da.meshgrid(x_1d, y_1d, z_1d, indexing="ij")
+
+    dims = (Coordinate.I, Coordinate.J, Coordinate.K)
+    return xr.Dataset(
+        data_vars={
+            Coordinate.X: (dims, grid_x),
+            Coordinate.Y: (dims, grid_y),
+            Coordinate.Z: (dims, grid_z),
+            "depth": (dims, grid_z),
+        },
+        coords={
+            Coordinate.I: np.arange(ni),
+            Coordinate.J: np.arange(nj),
+            Coordinate.K: np.arange(nk),
+        },
+        attrs={
+            "minimum_top_depth": float(z_top),
+            "maximum_top_depth": float(z_top + size),
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # ModelLayer dimension contract
 # ---------------------------------------------------------------------------
@@ -107,27 +155,6 @@ def _make_grid_datatree(
 
 class TestModelLayerDimensions:
     """ModelLayer must attach a ``qualities`` DataArray with dims (i, j, k, component)."""
-
-    def test_output_contains_qualities(self):
-        model = _make_constant_model()
-        layer = ModelLayer(model)
-        tree = _make_grid_datatree()
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert var in block_ds, f"Expected '{var}' in block dataset"
-
-    def test_qualities_has_component_coordinate(self):
-        model = _make_constant_model()
-        layer = ModelLayer(model)
-        tree = _make_grid_datatree(ni=4, nj=3, nk=2)
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
-        expected = (Coordinate.I, Coordinate.J, Coordinate.K)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert tuple(block_ds[var].dims) == expected, (
-                f"'{var}' has dims {tuple(block_ds[var].dims)}, expected {expected}"
-            )
 
     def test_qualities_has_correct_dims(self):
         model = _make_constant_model()
@@ -143,21 +170,18 @@ class TestModelLayerDimensions:
         ni, nj, nk = 4, 3, 2
         model = _make_constant_model()
         layer = ModelLayer(model)
-        tree = _make_grid_datatree(ni=ni, nj=nj, nk=nk)
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert block_ds[var].shape == (ni, nj, nk), (
-                f"'{var}' shape {block_ds[var].shape} ≠ ({ni},{nj},{nk})"
-            )
+        ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
+        result = layer(ds)
+        assert result["qualities"].shape == (ni, nj, nk, len(Component)), (
+            f"'qualities' shape {result['qualities'].shape} ≠ ({ni},{nj},{nk},{len(Component)})"
+        )
 
     def test_coordinate_variables_preserved(self):
         """x, y, z must still be present after applying ModelLayer."""
         model = _make_constant_model()
         layer = ModelLayer(model)
-        tree = _make_grid_datatree()
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
+        ds = _make_block_dataset()
+        result = layer(ds)
         for coord in (Coordinate.X, Coordinate.Y, Coordinate.Z):
             assert coord in result
 
@@ -165,45 +189,20 @@ class TestModelLayerDimensions:
         """Spatial dims of each component slice must match the x-coordinate dims."""
         model = _make_constant_model()
         layer = ModelLayer(model)
-        tree = _make_grid_datatree(ni=4, nj=3, nk=2)
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
-        x_dims = tuple(block_ds[Coordinate.X].dims)
-        for var in ("rho", "vp", "vs", "qp", "qs"):
-            assert tuple(block_ds[var].dims) == x_dims
-
-    def test_non_grid_nodes_not_modified(self):
-        """Nodes outside /grid/* must not receive velocity components."""
-        model = _make_constant_model()
-        layer = ModelLayer(model)
-        dims = (Coordinate.I, Coordinate.J, Coordinate.K)
-        ds_grid = xr.Dataset(
-            data_vars={
-                Coordinate.X: (dims, da.zeros((2, 2, 2))),
-                Coordinate.Y: (dims, da.zeros((2, 2, 2))),
-                Coordinate.Z: (dims, da.zeros((2, 2, 2))),
-            },
-            coords={
-                Coordinate.I: np.arange(2),
-                Coordinate.J: np.arange(2),
-                Coordinate.K: np.arange(2),
-            },
-        )
-        ds_other = xr.Dataset({"value": (["x_other"], np.array([1.0, 2.0]))})
-        tree = xr.DataTree.from_dict(
-            {"/grid/b": ds_grid, "/other/node": ds_other}, name="root"
-        )
-        result = layer(tree)
-        other_ds = result["/other/node"].dataset
-        assert "rho" not in other_ds
+        ds = _make_block_dataset(ni=4, nj=3, nk=2)
+        result = layer(ds)
+        x_dims = tuple(result[Coordinate.X].dims)
+        for comp in _COMPONENT_NAMES:
+            comp_dims = tuple(result["qualities"].sel(component=comp).dims)
+            assert comp_dims == x_dims
 
     def test_computed_rho_value(self):
         """After compute(), the rho component must equal the model's constant value."""
         model = _make_constant_model(rho=1111.0)
         layer = ModelLayer(model)
-        tree = _make_grid_datatree(ni=2, nj=2, nk=2, size=8.0)
-        result = layer(tree)
-        rho_computed = result["/grid/test"].dataset["rho"].values
+        ds = _make_block_dataset(ni=2, nj=2, nk=2, size=8.0)
+        result = layer(ds)
+        rho_computed = result["qualities"].sel(component="rho").values
         assert rho_computed == pytest.approx(1111.0, rel=1e-3)
 
 
@@ -236,8 +235,8 @@ class TestAffineTransformLayerDimensions:
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_grid_datatree(ni=3, nj=2, nk=2)
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
+        block_ds = tree["/grid/test"].dataset
+        result = layer(block_ds)
         expected = (Coordinate.I, Coordinate.J, Coordinate.K)
         for coord in (Coordinate.X, Coordinate.Y, Coordinate.Z):
             assert tuple(result[coord].dims) == expected, (
@@ -249,28 +248,29 @@ class TestAffineTransformLayerDimensions:
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_grid_datatree(ni=ni, nj=nj, nk=nk)
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
-        assert block_ds[Coordinate.X].shape == (ni, nj, nk)
-        assert block_ds[Coordinate.Y].shape == (ni, nj, nk)
-        assert block_ds[Coordinate.Z].shape == (ni, nj, nk)
+        block_ds = tree["/grid/test"].dataset
+        result = layer(block_ds)
+        assert result[Coordinate.X].shape == (ni, nj, nk)
+        assert result[Coordinate.Y].shape == (ni, nj, nk)
+        assert result[Coordinate.Z].shape == (ni, nj, nk)
 
     def test_x_y_z_remain_dask_backed(self):
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_grid_datatree(ni=3, nj=2, nk=2)
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
-        assert isinstance(block_ds[Coordinate.X].data, da.Array)
-        assert isinstance(block_ds[Coordinate.Y].data, da.Array)
+        block_ds = tree["/grid/test"].dataset
+        result = layer(block_ds)
+        assert isinstance(result[Coordinate.X].data, da.Array)
+        assert isinstance(result[Coordinate.Y].data, da.Array)
 
     def test_z_passthrough_after_transform(self):
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         tree = _make_grid_datatree(ni=2, nj=2, nk=3, size=6.0)
-        original_z = tree["/grid/test"].dataset[Coordinate.Z].values.copy()
-        result = layer(tree)
-        transformed_z = result["/grid/test"].dataset[Coordinate.Z].values
+        block_ds = tree["/grid/test"].dataset
+        original_z = block_ds[Coordinate.Z].values.copy()
+        result = layer(block_ds)
+        transformed_z = result[Coordinate.Z].values
         assert transformed_z == pytest.approx(original_z, rel=1e-5)
 
     def test_transpose_xy_swaps_x_and_y_outputs(self):
@@ -290,13 +290,12 @@ class TestAffineTransformLayerDimensions:
         ds_swapped = block_ds.copy()
         ds_swapped[Coordinate.X] = (block_ds[Coordinate.X].dims, y0)
         ds_swapped[Coordinate.Y] = (block_ds[Coordinate.Y].dims, x0)
-        tree_swapped = xr.DataTree.from_dict({"/grid/test": ds_swapped}, name="root")
 
-        result_transposed = layer_transposed(ds)
+        result_transposed = layer_transposed(block_ds)
         result_normal_swapped = layer_normal(ds_swapped)
 
-        xt = result_transposed["/grid/test"].dataset[Coordinate.X]
-        xn = result_normal_swapped["/grid/test"].dataset[Coordinate.X]
+        xt = result_transposed[Coordinate.X]
+        xn = result_normal_swapped[Coordinate.X]
         xr.testing.assert_allclose(xt, xn, rtol=1e-6)
 
 
@@ -314,11 +313,10 @@ class TestDepthTransformLayer:
     def test_dimensions_and_shapes_preserved(self):
         """Verify that i, j, k dimensions remain intact after transform."""
         ni, nj, nk = 4, 3, 2
-        tree = _make_grid_datatree(ni=ni, nj=nj, nk=nk)
+        ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
         layer = DepthTransformLayer(DummySurface(), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
-        result = layer(tree)
-        block_ds = result["/grid/test"].dataset
+        result = layer(ds)
 
         expected_dims = (Coordinate.I.value, Coordinate.J.value, Coordinate.K.value)
         for coord in [Coordinate.X, Coordinate.Y, Coordinate.Z]:
@@ -328,25 +326,26 @@ class TestDepthTransformLayer:
     def test_z_math_calculation(self):
         """Verify the arithmetic: Elevation = Surface + Depth."""
         surface_val = 500.0
-        tree = _make_grid_datatree(ni=1, nj=1, nk=2, size=20.0)
+        # z_top=0 so z (and depth) go from 0 to 10, matching the expected output.
+        ds = _make_block_dataset(ni=1, nj=1, nk=2, size=20.0, z_top=0.0)
 
         layer = DepthTransformLayer(DummySurface(surface_val), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         result = layer(ds)
 
-        transformed_z = result["/grid/test"].dataset[Coordinate.Z.value].values
+        transformed_z = result[Coordinate.Z.value].values
 
-        # z_depth = [0.0, 10.0] (from size=20, nk=2 → resolution_v=10)
+        # z = [0.0, 10.0] (from size=20, nk=2 → resolution_v=10)
         # expected: 500.0 + [0.0, 10.0] = [500.0, 510.0]
         expected_z = np.array([500.0, 510.0]).reshape(1, 1, 2)
         np.testing.assert_allclose(transformed_z, expected_z)
 
     def test_maintains_dask_laziness(self):
         """Ensure the Z coordinate stays as a dask array after the transform."""
-        tree = _make_grid_datatree()
+        ds = _make_block_dataset()
         layer = DepthTransformLayer(DummySurface(), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
-        result = layer(tree)
-        z_data = result["/grid/test"].dataset[Coordinate.Z.value].data
+        result = layer(ds)
+        z_data = result[Coordinate.Z.value].data
 
         assert isinstance(z_data, da.Array), "Z coordinate was eagerly computed!"
 
@@ -503,7 +502,7 @@ class TestElyTaperLayerDimensions:
         # is_in_taper is False everywhere and background values should dominate.
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=9.0, size=10.0)
         ds = ds.copy()
-        ds["z"] = (ds["z"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
+        ds["depth"] = (ds["depth"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
         result = layer(ds)
         # All points are deeper than the taper zone → background (rho=9999) should be used
         np.testing.assert_allclose(
@@ -533,11 +532,11 @@ class TestElyTaperLayerDimensions:
         #   k=0 → z=5  (in the taper zone: z < z_t=10)
         #   k=1 → z=15 (deeper than the taper zone: z >= z_t=10)
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=0.0, size=10.0)
-        z_arr = np.zeros((2, 2, 2), dtype=np.float32)
-        z_arr[:, :, 0] = 5.0
-        z_arr[:, :, 1] = 15.0
+        depth_arr = np.zeros((2, 2, 2), dtype=np.float32)
+        depth_arr[:, :, 0] = 5.0
+        depth_arr[:, :, 1] = 15.0
         ds = ds.copy()
-        ds["z"] = (ds["z"].dims, z_arr)
+        ds["depth"] = (ds["depth"].dims, depth_arr)
         result = layer(ds)
         rho = result["qualities"].sel(component="rho").values
         # k=1 slice (z=15, deeper than z_t=10) must use the background rho=9999

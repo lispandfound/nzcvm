@@ -68,7 +68,6 @@ class ElyTaperLayer:
         if not np.any(is_in_taper):
             logger.info("Chunk outside taper, skipping Ely taper calculation.")
             return self.next_layer(chunk, **kwargs)
-        print("I'm actually in the chunk?")
         # Ask the next layer *only* for the basins.
         basin_kwargs = kwargs.copy()
         basin_kwargs["model_range"] = ModelRange.BASINS
@@ -191,7 +190,7 @@ class ElyTaperLayer:
             Same dataset with ``qualities`` calculated according to Ely taper relations.
         """
         if block.attrs["minimum_top_depth"] >= self.z_t:
-            self.next_layer(block, **kwargs)
+            return self.next_layer(block, **kwargs)
 
         return xr.map_blocks(
             self._ely_transform, block, kwargs=kwargs, template=self._template(block)

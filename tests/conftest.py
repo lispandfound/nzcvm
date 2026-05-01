@@ -3,12 +3,25 @@
 import numpy as np
 import pytest
 
-from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+try:
+    from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+
+    HAS_RUST_EXT = True
+except ImportError:
+    _nzcvm = None  # type: ignore[assignment]
+    HAS_RUST_EXT = False
+
+requires_rust = pytest.mark.skipif(
+    not HAS_RUST_EXT,
+    reason="Requires compiled Rust extension (nzcvm.nzcvm)",
+)
 
 
 @pytest.fixture()
 def unit_tetrahedron_model():
     """A minimal ModelTree with one tetrahedron of constant quality."""
+    if not HAS_RUST_EXT:
+        pytest.skip("Requires compiled Rust extension")
     vertices = np.array(
         [
             [0.0, 0.0, 0.0],

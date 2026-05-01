@@ -30,9 +30,6 @@ from mashumaro.mixins.yaml import DataClassYAMLMixin
 from nzcvm.coordinates import (
     NO_ORIGIN,
     WGS84_CRS,
-    Affine,
-    rotate,
-    translate,
 )
 
 
@@ -74,18 +71,6 @@ class ModelMetadata(ConfigObject):
     ModelMetadata.coordinate_system : Extracts a :class:`~nzcvm.coordinates.CoordinateSystem`.
     """
 
-    # Coordinate metadata
-    target_crs: Any
-    origin_lon: float
-    origin_lat: float
-
-    azimuth: float
-
-    transpose: bool = False
-    origin_crs: Any = WGS84_CRS
-    origin_x: float = NO_ORIGIN
-    origin_y: float = NO_ORIGIN
-
     # Basic Descriptive Metadata
     title: str | None = None
     id: str | None = None
@@ -109,34 +94,6 @@ class ModelMetadata(ConfigObject):
     repository_doi: str | None = None
     repository_name: str | None = None
     repository_url: str | None = None
-
-    @property
-    def affine(self) -> Affine:
-        """Build a 4×4 affine matrix mapping local model space to *target_crs*.
-
-        The origin is projected from *origin_crs* to *target_crs* to obtain
-        the translation component.  The rotation uses the clockwise-from-north
-        convention (``ccw=False``) to match NZ CVM grid conventions.
-
-        Returns
-        -------
-        Affine
-            4×4 homogeneous affine matrix.  Compose with
-            :class:`~nzcvm.layers.affine.AffineTransformLayer` to apply in a
-            pipeline.
-
-        See Also
-        --------
-        nzcvm.layers.affine.AffineTransformLayer : Apply this affine in a pipeline.
-        nzcvm.layers.crs.CrsTransformLayer : Follow with a CRS layer when needed.
-        """
-        from pyproj import Transformer
-
-        origin_tr = Transformer.from_crs(
-            self.origin_crs, self.target_crs, always_xy=True
-        )
-        ox, oy = origin_tr.transform(self.origin_lon, self.origin_lat)
-        return translate(ox, oy) @ rotate(self.azimuth, ccw=False)
 
 
 @dataclass
@@ -164,8 +121,21 @@ class Grid(ConfigObject):
     # Extents in x and y.
     extent_x: float
     extent_y: float
+
+    azimuth: float
+
+    # Coordinate metadata
+    target_crs: Any
+    origin_lon: float
+    origin_lat: float
+
     # Mesh refinements. You must have at least one, the bottom of the last layer provides the bottom of the velocity model
     mesh_refinements: list[MeshRefinement]
+
+    transpose: bool = False
+    origin_crs: Any = WGS84_CRS
+    origin_x: float = NO_ORIGIN
+    origin_y: float = NO_ORIGIN
 
 
 DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
@@ -198,10 +168,12 @@ class VelocityModelSpec(ConfigObject):
     """
 
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
-    grid: Grid = field(default_factory=list)
+    grid: Grid = field(default_factory=Grid)  # ty: ignore[no-matching-overload]
 
     @classmethod
-    def read_config(cls, config_path: Path, format: VelocityModelSpecFormat) -> Self:
+    def read_config(
+        cls, config_path: Path | str, format: VelocityModelSpecFormat
+    ) -> Self:
         """Load a :class:`VelocityModelSpec` from a TOML, YAML, or JSON file.
 
         Parameters
@@ -216,6 +188,7 @@ class VelocityModelSpec(ConfigObject):
         -------
         VelocityModelSpec
         """
+        config_path = Path(config_path)
         decoder = (
             DECODER_MAP[format]
             if format != VelocityModelSpecFormat.INFERRED

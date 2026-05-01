@@ -73,10 +73,9 @@ class AffineTransformLayer:
         a = self.affine.astype(np.float32)
         x = block[Coordinate.X]
         y = block[Coordinate.Y]
-        z = block[Coordinate.Z]
-        block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2] * z + a[0, 3]
-        block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2] * z + a[1, 3]
-        block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
+        block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 3]
+        block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 3]
+        block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 3]
 
         return self.next_layer(block, **kwargs)
 

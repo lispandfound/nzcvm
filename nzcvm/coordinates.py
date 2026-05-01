@@ -68,167 +68,258 @@ WGS84_CRS = 4326
 # ---------------------------------------------------------------------------
 
 
-def identity() -> Affine:
-    """Return the 4×4 identity affine matrix.
-
-    Returns
-    -------
-    Affine
-        4×4 identity matrix.
-    """
-    return np.eye(4, dtype=np.float32)
-
-
-def translate(x: float = 0.0, y: float = 0.0, z: float = 0.0) -> Affine:
-    """Return a 4×4 translation matrix.
+def identity(dims: int = 2) -> Affine:
+    """Return the identity affine matrix.
 
     Parameters
     ----------
-    x, y, z :
-        Translation offsets along each axis.
+    dims :
+        Spatial dimensionality.  ``2`` → 3×3 matrix; ``3`` → 4×4 matrix.
 
     Returns
     -------
     Affine
+        (dims+1)×(dims+1) identity matrix.
+    """
+    return np.eye(dims + 1, dtype=np.float32)
+
+
+def translate(x: float = 0.0, y: float = 0.0, z: float | None = None) -> Affine:
+    """Return a translation matrix.
+
+    Parameters
+    ----------
+    x, y :
+        Translation offsets in the x-y plane.
+    z :
+        If given, operate in 3-D and translate by this amount along z.
+        Passing ``z=0.0`` still selects the 4×4 form.
+
+    Returns
+    -------
+    Affine
+        3×3 when *z* is ``None``; 4×4 otherwise.
 
     Examples
     --------
     >>> import numpy as np
     >>> T = translate(100.0, 200.0)
-    >>> (T @ np.array([0.0, 0.0, 0.0, 1.0]))[:3]
-    array([100., 200.,   0.])
+    >>> (T @ np.array([0.0, 0.0, 1.0]))[:2]
+    array([100., 200.])
+    >>> T3 = translate(1.0, 2.0, z=3.0)
+    >>> (T3 @ np.array([0.0, 0.0, 0.0, 1.0]))[:3]
+    array([1., 2., 3.])
     """
-    m = np.eye(4, dtype=np.float32)
-    m[0, 3] = x
-    m[1, 3] = y
-    m[2, 3] = z
+    if z is None:
+        m = np.eye(3, dtype=np.float32)
+        m[0, 2] = x
+        m[1, 2] = y
+    else:
+        m = np.eye(4, dtype=np.float32)
+        m[0, 3] = x
+        m[1, 3] = y
+        m[2, 3] = z
     return m
 
 
 def rotate(
     angle_deg: float,
-    origin: tuple[float, float] = (0.0, 0.0),
     ccw: bool = True,
+    axis: Literal["x", "y", "z"] | None = None,
 ) -> Affine:
-    """Return a 4×4 rotation matrix for a rotation in the x-y plane.
+    """Return a rotation matrix.
+
+    In 2-D the rotation is always in the x-y plane.  In 3-D pass a
+    3-element *origin* and choose an *axis*.
 
     Parameters
     ----------
     angle_deg :
         Rotation angle in degrees.  When ``ccw=True`` (default) this is a
-        counter-clockwise angle measured from the +x (east) axis.  When
+        counter-clockwise angle measured from the +x axis.  When
         ``ccw=False`` this is a **clockwise azimuth from north** (geographic
-        convention used by NZ CVM grids): at azimuth 0° the local x-axis
-        points north (+y_CRS) and the local y-axis points east (+x_CRS).
+        convention).  The ``ccw`` flag only affects z-axis rotation.
     origin :
-        Centre of rotation as ``(x, y)``.  Defaults to ``(0, 0)``.
+        Centre of rotation.  ``(x, y)`` selects 2-D (3×3 output);
+        ``(x, y, z)`` selects 3-D (4×4 output).
     ccw :
-        If ``True`` (default), counter-clockwise from east (mathematical).
-        If ``False``, clockwise azimuth from north (geographic).
+        ``True`` → counter-clockwise from east (mathematical).
+        ``False`` → clockwise azimuth from north (geographic).
+        Ignored for x- and y-axis rotations.
+    axis :
+        Rotation axis for 3-D mode: ``'x'``, ``'y'``, or ``'z'`` (default None).
+        If set, enables 3-D mode.
 
     Returns
     -------
     Affine
+        3×3 for 2-D; 4×4 for 3-D.
 
     Examples
     --------
     >>> import numpy as np
-    >>> R = rotate(90.0)   # 90° CCW: (1, 0) → (0, 1)
-    >>> np.allclose((R @ [1.0, 0.0, 0.0, 1.0])[:2], [0.0, 1.0], atol=1e-10)
+    >>> R = rotate(90.0)           # 2-D, 90° CCW: (1,0) → (0,1)
+    >>> np.allclose((R @ [1.0, 0.0, 1.0])[:2], [0.0, 1.0], atol=1e-6)
+    True
+    >>> R3 = rotate(90.0, origin=(0.0, 0.0, 0.0), axis='z')
+    >>> np.allclose((R3 @ [1.0, 0.0, 0.0, 1.0])[:3], [0.0, 1.0, 0.0], atol=1e-6)
     True
     """
     theta = np.radians(angle_deg)
-    st, ct = np.sin(theta), np.cos(theta)
-    if ccw:
-        r: Affine = np.array(
-            [
-                [ct, -st, 0.0, 0.0],
-                [st, ct, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-    else:
-        # CW azimuth from north:
-        #   column 0 → (sin(az), cos(az))   local x points toward azimuth
-        #   column 1 → (cos(az), -sin(az))  local y is 90° CCW from x
-        r = np.array(
-            [
-                [st, ct, 0.0, 0.0],
-                [ct, -st, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-    ox, oy = origin
-    if ox == 0.0 and oy == 0.0:
+    st, ct = float(np.sin(theta)), float(np.cos(theta))
+    dims = 3 if axis else 2
+
+    if dims == 2:
+        if ccw:
+            r: Affine = np.array(
+                [[ct, -st, 0.0], [st, ct, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
+            )
+        else:
+            r = np.array(
+                [[st, ct, 0.0], [ct, -st, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
+            )
         return r
-    return translate(ox, oy) @ r @ translate(-ox, -oy)
+    elif dims == 3 and axis:
+        # ── 3-D ──────────────────────────────────────────────────────────────
+        ax = axis.lower()
+        if ax == "z":
+            if ccw:
+                r = np.array(
+                    [
+                        [ct, -st, 0.0, 0.0],
+                        [st, ct, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                )
+            else:
+                r = np.array(
+                    [
+                        [st, ct, 0.0, 0.0],
+                        [ct, -st, 0.0, 0.0],
+                        [0.0, 0.0, 1.0, 0.0],
+                        [0.0, 0.0, 0.0, 1.0],
+                    ],
+                    dtype=np.float32,
+                )
+        elif ax == "x":
+            r = np.array(
+                [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, ct, -st, 0.0],
+                    [0.0, st, ct, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+        elif ax == "y":
+            r = np.array(
+                [
+                    [ct, 0.0, st, 0.0],
+                    [0.0, 1.0, 0.0, 0.0],
+                    [-st, 0.0, ct, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+        else:
+            raise ValueError(f"axis must be 'x', 'y', or 'z'; got {axis!r}")
+
+        return r
 
 
-def scale(sx: float = 1.0, sy: float = 1.0, sz: float = 1.0) -> Affine:
-    """Return a 4×4 anisotropic scale matrix.
+def scale(sx: float = 1.0, sy: float = 1.0, sz: float | None = None) -> Affine:
+    """Return an anisotropic scale matrix.
 
     Parameters
     ----------
-    sx, sy, sz :
-        Scale factors along each axis.
+    sx, sy :
+        Scale factors along x and y.
+    sz :
+        If given, operate in 3-D and scale by this amount along z.
+        Passing ``sz=1.0`` still selects the 4×4 form.
 
     Returns
     -------
     Affine
+        3×3 when *sz* is ``None``; 4×4 otherwise.
 
     Examples
     --------
     >>> import numpy as np
     >>> S = scale(2.0, 3.0)
-    >>> (S @ np.array([1.0, 1.0, 1.0, 1.0]))[:3]
-    array([2., 3., 1.])
+    >>> (S @ np.array([1.0, 1.0, 1.0]))[:2]
+    array([2., 3.])
+    >>> S3 = scale(2.0, 3.0, sz=4.0)
+    >>> (S3 @ np.array([1.0, 1.0, 1.0, 1.0]))[:3]
+    array([2., 3., 4.])
     """
-    m = np.eye(4, dtype=np.float32)
-    m[0, 0] = sx
-    m[1, 1] = sy
-    m[2, 2] = sz
+    if sz is None:
+        m = np.eye(3, dtype=np.float32)
+        m[0, 0] = sx
+        m[1, 1] = sy
+    else:
+        m = np.eye(4, dtype=np.float32)
+        m[0, 0] = sx
+        m[1, 1] = sy
+        m[2, 2] = sz
     return m
 
 
-def reflect_x() -> Affine:
-    """Return a 4×4 matrix that negates the x axis.
+def reflect_x(dims: int = 2) -> Affine:
+    """Return a matrix that negates the x axis.
 
-    Returns
-    -------
-    Affine
+    Parameters
+    ----------
+    dims :
+        ``2`` → 3×3 (default); ``3`` → 4×4.
     """
-    return scale(sx=-1.0)
+    return scale(sx=-1.0) if dims == 2 else scale(sx=-1.0, sy=1.0, sz=1.0)
 
 
-def reflect_y() -> Affine:
-    """Return a 4×4 matrix that negates the y axis.
+def reflect_y(dims: int = 2) -> Affine:
+    """Return a matrix that negates the y axis.
 
-    Returns
-    -------
-    Affine
+    Parameters
+    ----------
+    dims :
+        ``2`` → 3×3 (default); ``3`` → 4×4.
     """
-    return scale(sy=-1.0)
+    return scale(sy=-1.0) if dims == 2 else scale(sx=1.0, sy=-1.0, sz=1.0)
 
 
-def transpose_xy() -> Affine:
-    """Return a 4×4 matrix that swaps the x and y axes.
+def reflect_z() -> Affine:
+    """Return a 4×4 matrix that negates the z axis (3-D only).
 
     Returns
     -------
     Affine
+        4×4 matrix.
+    """
+    return scale(sx=1.0, sy=1.0, sz=-1.0)
+
+
+def transpose_xy(dims: int = 2) -> Affine:
+    """Return a matrix that swaps the x and y axes.
+
+    Parameters
+    ----------
+    dims :
+        ``2`` → 3×3 (default); ``3`` → 4×4.
 
     Examples
     --------
     >>> import numpy as np
     >>> T = transpose_xy()
-    >>> (T @ np.array([1.0, 2.0, 3.0, 1.0]))[:3]
+    >>> (T @ np.array([1.0, 2.0, 1.0]))[:2]
+    array([2., 1.])
+    >>> T3 = transpose_xy(dims=3)
+    >>> (T3 @ np.array([1.0, 2.0, 3.0, 1.0]))[:3]
     array([2., 1., 3.])
     """
-    m = np.eye(4, dtype=np.float32)
+    n = dims + 1
+    m = np.eye(n, dtype=np.float32)
     m[0, 0] = 0.0
     m[1, 1] = 0.0
     m[0, 1] = 1.0

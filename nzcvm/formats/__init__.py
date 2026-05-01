@@ -59,16 +59,15 @@ def from_path(path: Path) -> Format:
     >>> from_path(Path("model.h5"))
     <Format.NETCDF: 'netcdf'>
     """
-    if path.is_dir() or not path.suffix:
-        return Format.EMOD3D
-
     format_map = {".sfile": Format.SFILE, ".h5": Format.NETCDF, ".zarr": Format.ZARR}
     ext = path.suffix
 
-    if ext not in format_map:
+    if ext in format_map:
+        return format_map[ext]
+    elif path.is_dir() or not path.suffix:
+        return Format.EMOD3D
+    else:
         raise ValueError(f"Could not infer a format for {path=}")
-
-    return format_map[ext]
 
 
 def write_velocity_model(
@@ -91,6 +90,6 @@ def write_velocity_model(
         case Format.SFILE:
             sfile.to_sfile(velocity_model, path)
         case Format.NETCDF:
-            velocity_model.to_netcdf(path, engine="h5netcdf")
+            velocity_model.to_netcdf(path, engine="h5netcdf", mode="w")
         case Format.ZARR:
-            velocity_model.to_zarr(path)
+            velocity_model.to_zarr(path, mode="w")

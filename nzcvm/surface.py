@@ -14,7 +14,7 @@ import shapely
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
-DEFAULT_TOLERANCE = 1e-6
+DEFAULT_TOLERANCE = 1e-4
 
 
 @dataclass
@@ -65,6 +65,7 @@ class Surface:
         """
 
         pts = np.stack((x.flatten(), y.flatten(), np.zeros(x.size)), axis=-1)
+
         outside_hull = ~shapely.contains_xy(self.hull, pts[:, :2])
 
         if outside_hull.any():
@@ -77,6 +78,7 @@ class Surface:
                 f"- Total failed: {len(bad_coords)}\n"
                 f"- Failure Rate: {len(bad_coords) / x.size:.2%}\n"
             )
+            print(note)
             e = ValueError("Points not in convex hull of surface boundary.")
             e.add_note(note)
 
@@ -90,13 +92,9 @@ class Surface:
             snap_to_closest_point=True,
         )
 
-        z = sampled.point_data[self.mesh.active_scalars_name]
-        min_z = self.bounds[2]
-        max_z = self.bounds[-1]
+        z = np.array(sampled.point_data[self.mesh.active_scalars_name])
 
-        mask = (
-            (sampled.point_data["vtkValidPointMask"] == 0) | (z > max_z) | (z < min_z)
-        )
+        mask = sampled.point_data["vtkValidPointMask"] == 0
         if mask.any():
             bad_indices = np.where(mask)[0]
             bad_coords = pts[bad_indices, :2]
@@ -113,7 +111,7 @@ class Surface:
             e.add_note(note)
             raise e
 
-        return z.reshape(x.shape)
+        return z.reshape(x.shape).astype(x.dtype)
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

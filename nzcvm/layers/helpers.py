@@ -1,5 +1,7 @@
 """Helpers for mapping functions over DataTree nodes."""
 
+from nzcvm.layers.protocol import QueryLayer
+
 import glob
 import re
 from collections.abc import Callable, Mapping
@@ -81,28 +83,10 @@ def map_over_datasets_with_glob(
     return map_over_datasets_with_path(data_tree, _only_glob, kwargs)
 
 
-def grid_map(
-    velocity_model: xr.DataTree,
-    func: DatasetTransform,
-    kwargs: Mapping[str, Any] | None = None,
+def execute_model_pipeline(
+    velocity_model: xr.DataTree, pipeline: QueryLayer
 ) -> xr.DataTree:
-    """Apply *func* to every ``/grid/*`` node in *velocity_model*.
+    def func(_path: NodePath, block: xr.Dataset, **_kwargs) -> xr.Dataset:
+        return pipeline(block)
 
-    Convenience wrapper around :func:`map_over_datasets_with_glob` using the
-    fixed pattern ``/grid/*``.
-
-    Parameters
-    ----------
-    velocity_model :
-        DataTree produced by :func:`~nzcvm.generate.skeleton_velocity_model`.
-    func :
-        Callable ``(path, dataset) -> xr.Dataset``.
-    kwargs :
-        Extra keyword arguments forwarded to *func*.
-
-    Returns
-    -------
-    xarray.DataTree
-        A new datatree where *func* is applied at all nodes with a path matching ``/grid/*``.
-    """
-    return map_over_datasets_with_glob(velocity_model, "/grid/*", func, kwargs)
+    return map_over_datasets_with_glob(velocity_model, "/grid/*", func, dict())

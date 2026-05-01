@@ -9,13 +9,7 @@ import numpy as np
 import pytest
 import xarray as xr
 
-try:
-    from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-except ImportError:
-    pytest.skip(
-        "Requires compiled Rust extension (nzcvm.nzcvm)",
-        allow_module_level=True,
-    )
+from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 
 from nzcvm.model import Model, ModelRange
 

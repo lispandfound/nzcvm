@@ -17,7 +17,7 @@ runner = CliRunner()
         ["tomography"],
         ["surface"],
         ["tree-stats"],
-        ["view-basin"],
+        ["view"],
     ],
 )
 def test_help(args: list[str]):

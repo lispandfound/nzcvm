@@ -18,10 +18,7 @@ import xarray as xr
 from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 
-try:
-    from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-except ImportError:
-    _nzcvm = None  # type: ignore[assignment]
+from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate, rotate, translate
@@ -40,8 +37,6 @@ _COMPONENT_NAMES = [str(c) for c in Component]
 
 def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
     """Return a constant-quality Model spanning a [0, size]^3 cube."""
-    if _nzcvm is None:
-        pytest.skip("Requires compiled Rust extension")
     s = size
     vertices = np.array(
         [

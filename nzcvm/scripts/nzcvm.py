@@ -20,9 +20,8 @@ from rich.panel import Panel
 from rich.table import Table
 from tqdm.dask import TqdmCallback
 
-from nzcvm import formats, surface
+from nzcvm import formats
 from nzcvm.generate import skeleton_velocity_model
-from nzcvm.grid import generate_grids
 from nzcvm.model_spec import VelocityModelSpec, VelocityModelSpecFormat
 from nzcvm.layers.helpers import execute_model_pipeline
 from nzcvm.scripts import (
@@ -93,7 +92,7 @@ app.add_typer(construct_mesh.app, name="basin")
 app.add_typer(convert_tomography.app, name="tomography")
 app.add_typer(surface_cli.app, name="surface")
 app.add_typer(tree_stats.app, name="tree-stats")
-app.add_typer(view.app, name="view-basin")
+app.add_typer(view.app, name="view")
 
 
 @app.command()
@@ -142,11 +141,7 @@ def generate(
         ),
     ] = VelocityModelSpecFormat.INFERRED,
 ) -> None:
-    """Generate a NZCVM velocity model from a config file.
-
-    The layer pipeline (model files, Vs30 surface, clamping, etc.) is
-    specified entirely within the config file via ``[[layers]]`` entries.
-    """
+    """Generate a NZCVM velocity model from a config file."""
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
 
@@ -167,16 +162,8 @@ def generate(
     summary.add_row("Refinements", str(len(velocity_model_spec.grid.mesh_refinements)))
     console.print(summary)
 
-    with console.status("Initialising model skeleton"):
+    with console.status("Initialising velocity model"):
         velocity_model = skeleton_velocity_model(velocity_model_spec)
-
-    with console.status("Loading topography surface"):
-        topographic_surface = surface.read_surface_from_path(
-            velocity_model_spec.grid.surface
-        )
-
-    with console.status("Generating curvilinear grids"):
-        velocity_model = generate_grids(velocity_model, topographic_surface)
 
     with console.status("Building layer pipeline"):
         model_pipeline = velocity_model_spec.build_pipeline()

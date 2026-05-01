@@ -3,13 +3,7 @@
 import numpy as np
 import pytest
 
-try:
-    from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-except ImportError:
-    pytest.skip(
-        "Requires compiled Rust extension (nzcvm.nzcvm)",
-        allow_module_level=True,
-    )
+from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 
 from nzcvm.mesh import make_mesh
 from nzcvm.model import MeshModel, Model, ModelTree

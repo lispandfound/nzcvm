@@ -28,16 +28,8 @@ from mashumaro.mixins.dict import DataClassDictMixin
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
-try:
-    from nzcvm import nzcvm  # ty: ignore[unresolved-import]
-    from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
-
-    _RUST_EXT_AVAILABLE = True
-except ImportError:
-    nzcvm = None  # type: ignore[assignment]
-    PyModelTree = None  # type: ignore[assignment]
-    QueryParams = None  # type: ignore[assignment]
-    _RUST_EXT_AVAILABLE = False
+from nzcvm import nzcvm  # ty: ignore[unresolved-import]
+from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 from nzcvm.components import Component
 from nzcvm.mesh import read_vtkhdf

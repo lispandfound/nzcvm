@@ -1,10 +1,9 @@
 """Grid configuration for velocity models.
 
 :class:`VelocityModelSpec` is the top-level configuration object, typically
-loaded from a TOML/YAML/JSON config file. Pass it to
-:func:`~nzcvm.generate.skeleton_velocity_model` to build a metadata
-:class:`xarray.DataTree`, then to :func:`~nzcvm.grid.generate_grids` to
-populate the curvilinear meshgrids.
+loaded from a TOML/YAML/JSON config file.  Pass it to
+:func:`~nzcvm.generate.skeleton_velocity_model` to build and populate an
+:class:`xarray.DataTree` with 3-D curvilinear meshgrids.
 
 Layers are configured as an ordered list of :data:`LayerConfig` objects under
 the ``layers`` key of the config file.  The list defines the pipeline
@@ -29,8 +28,7 @@ actual velocity-model queries.  A minimal TOML example::
 
 See Also
 --------
-nzcvm.generate.skeleton_velocity_model : Build a metadata DataTree from this spec.
-nzcvm.grid.generate_grids : Populate the DataTree with curvilinear meshgrids.
+nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree from this spec.
 nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
 """
 
@@ -437,21 +435,56 @@ class VelocityModelSpec(ConfigObject):
 
         spec = VelocityModelSpec.read_config("model.toml", VelocityModelSpecFormat.INFERRED)
         tree = skeleton_velocity_model(spec)
-        topography = read_surface_from_path(spec.grid.surface)
-        tree = generate_grids(tree, topography)
         pipeline = spec.build_pipeline()
 
     See Also
     --------
     VelocityModelSpec.read_config : Load from a TOML, YAML, or JSON file.
     VelocityModelSpec.build_pipeline : Construct the query pipeline.
-    nzcvm.generate.skeleton_velocity_model : Build a metadata DataTree.
-    nzcvm.grid.generate_grids : Populate the DataTree with meshgrids.
+    nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree.
     """
 
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
     grid: Grid = field(default_factory=Grid)  # ty: ignore[no-matching-overload]
     layers: list[LayerConfig] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        """Validate that mesh refinement resolutions are mutually divisible.
+
+        All resolutions must be integer multiples of the finest (minimum)
+        resolution, and resolutions must be non-decreasing when refinements are
+        ordered by ascending ``bottom`` (fine near the surface, coarser at
+        depth).  These invariants are required by :func:`~nzcvm.generate.fill_grid`
+        which resamples between refinement levels using xarray
+        :meth:`~xarray.DataArray.isel`.
+
+        Raises
+        ------
+        ValueError
+            If any resolution is not an integer multiple of the minimum, or if
+            resolutions decrease with depth.
+        """
+        refinements = self.grid.mesh_refinements
+        if len(refinements) < 2:
+            return
+        by_depth = sorted(refinements, key=lambda r: r.bottom)
+        minimum_resolution = min(r.resolution for r in by_depth)
+        for r in by_depth:
+            ratio = r.resolution / minimum_resolution
+            if abs(ratio - round(ratio)) > 1e-9:
+                raise ValueError(
+                    f"Mesh refinement {r.name!r}: resolution {r.resolution} is "
+                    f"not an integer multiple of the finest resolution "
+                    f"{minimum_resolution}.  All resolutions must divide each other."
+                )
+        for a, b in zip(by_depth, by_depth[1:]):
+            if a.resolution > b.resolution:
+                raise ValueError(
+                    f"Mesh refinements must go from finer to coarser resolution "
+                    f"as depth increases.  Refinement {a.name!r} ({a.resolution} m) "
+                    f"at bottom {a.bottom} is coarser than {b.name!r} "
+                    f"({b.resolution} m) at bottom {b.bottom}."
+                )
 
     def build_pipeline(self) -> Any:
         """Construct a query pipeline from the :attr:`layers` list.

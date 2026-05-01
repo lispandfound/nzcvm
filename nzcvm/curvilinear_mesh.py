@@ -1,88 +1,17 @@
-"""Curvilinear mesh generation with configurable vertical deformation.
+"""Curvilinear mesh boundary computation and fill-between interpolation.
 
-The public API has three functions:
+The public API has two functions:
 
-* :func:`curvilinear_mesh` — primary entry point for :mod:`nzcvm.grid`;
-  takes a 2-D dask top-surface and returns a 3-D dask elevation array.
 * :func:`curvilinear_mesh_boundary` — compute the bottom surface and the
-  number of vertical levels for a single layer (xarray-based, used by
-  the legacy :mod:`nzcvm.generate` path).
+  number of vertical levels for a single layer.
 * :func:`fill_between` — linearly interpolate between two xarray surfaces
-  along the K dimension (used by the legacy path).
+  along the K dimension.
 """
 
-import dask.array as da
-import numpy as np
 import xarray as xr
+import numpy as np
 
 from nzcvm.coordinates import Coordinate
-
-
-def curvilinear_mesh(
-    top_surface: da.Array,
-    bottom: float,
-    resolution: float,
-    deformation: float,
-) -> da.Array:
-    """Construct a 3-D curvilinear mesh from a 2-D top surface.
-
-    Combines :func:`curvilinear_mesh_boundary` and :func:`fill_between`
-    into a single dask-native operation.  The number of vertical levels
-    ``nk`` is determined by computing the minimum of *top_surface* (one
-    small :func:`dask.array.Array.compute` call); all subsequent
-    operations are lazy.
-
-    Parameters
-    ----------
-    top_surface :
-        2-D dask array of shape ``(ni, nj)`` holding the top-surface
-        elevation at each grid point.
-    bottom :
-        Nominal bottom elevation of the layer (metres).
-    resolution :
-        Nominal vertical resolution (metres).  Controls the number of
-        k-levels via ``nk = round((bottom - min(top)) / resolution) + 1``.
-    deformation :
-        Blend factor in ``[0, 1]`` between a curvilinear bottom surface
-        that follows topography (``0``) and a flat bottom at *bottom* (``1``).
-
-    Returns
-    -------
-    dask.array.Array
-        3-D array of shape ``(ni, nj, nk)`` holding elevation values at
-        every grid node.  The array is fully lazy; no large numpy
-        allocations occur inside this function.
-
-    Examples
-    --------
-    >>> import dask.array as da, numpy as np
-    >>> top = da.from_array(np.full((3, 2), -100.0))
-    >>> z = curvilinear_mesh(top, bottom=500.0, resolution=100.0, deformation=1.0)
-    >>> z.shape  # nk = round(600/100) + 1 = 7
-    (3, 2, 7)
-    >>> float(z[:, :, 0].mean().compute())
-    -100.0
-    >>> float(z[:, :, -1].mean().compute())
-    500.0
-    """
-    # A single small compute to determine the number of vertical levels.
-    top_min = float(top_surface.min().compute())
-    thickness = bottom - top_min
-    nk = int(np.round(thickness / resolution)) + 1
-    k_max = float((nk - 1) * resolution)
-
-    # Bottom surface: blend between flat (deformation=1) and curvilinear (0).
-    zeta = np.float64(deformation)
-    z_no_deformation = top_surface + k_max  # (ni, nj) — lazy
-    bottom_surface = zeta * bottom + (1.0 - zeta) * z_no_deformation  # (ni, nj)
-
-    # Linear interpolation from top (k=0) to bottom (k=nk-1).
-    k_frac = np.linspace(0.0, 1.0, nk, dtype=np.float64)  # (nk,)
-    z_3d = (
-        top_surface[:, :, np.newaxis] * (1.0 - k_frac)
-        + bottom_surface[:, :, np.newaxis] * k_frac
-    )  # (ni, nj, nk) — lazy
-    return z_3d
 
 
 def curvilinear_mesh_boundary(

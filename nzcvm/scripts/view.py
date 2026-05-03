@@ -30,7 +30,8 @@ import pyvista as pv
 
 QUALITIES_COMPONENTS = ("rho", "vp", "vs", "qp", "qs", "alpha")
 DEPTH_SCALAR = "depth"
-ALL_SCALARS = (DEPTH_SCALAR,) + QUALITIES_COMPONENTS
+LAYER_SCALAR = "layer"
+ALL_SCALARS = (DEPTH_SCALAR,LAYER_SCALAR) + QUALITIES_COMPONENTS
 
 GRID_PATH = "/grid"  # root path for grid groups inside the DataTree
 
@@ -54,6 +55,7 @@ def _iter_grid_groups(dt: xr.DataTree):
 
 
 def _build_structured_grid(
+    layer: int,
     ds: xr.Dataset,
     scalar: str,
     stride: int,
@@ -81,6 +83,8 @@ def _build_structured_grid(
     # --- scalar data -------------------------------------------------------
     if scalar == DEPTH_SCALAR:
         values = ds["depth"].values[sl, sl, sl].astype(np.float32)
+    elif scalar == LAYER_SCALAR:
+        values = np.full_like(x, layer, dtype=np.float32)
     else:
         comp_idx = QUALITIES_COMPONENTS.index(scalar)
         values = ds["qualities"].values[sl, sl, sl, comp_idx].astype(np.float32)
@@ -301,7 +305,7 @@ def model(
 
     # --- build grids -------------------------------------------------------
     grids: dict[str, pv.StructuredGrid] = {}
-    for name, ds in _iter_grid_groups(dt):
+    for i, (name, ds) in enumerate(_iter_grid_groups(dt)):
         # Check this group actually has the requested scalar
         if scalar == DEPTH_SCALAR and "depth" not in ds:
             typer.echo(f"  [skip] '{name}' has no 'depth' variable.")
@@ -312,7 +316,7 @@ def model(
 
         typer.echo(f"  Building StructuredGrid for '{name}' (stride={stride}) …")
         try:
-            g = _build_structured_grid(ds, scalar, stride)
+            g = _build_structured_grid(i, ds, scalar, stride)
             grids[name] = g
             typer.echo(f"    → {g.n_points:,} points, bounds: {np.round(g.bounds, 0)}")
         except Exception as exc:  # noqa: BLE001

@@ -5,8 +5,6 @@ PyVista supports reading and writing VTKHDF files natively via ``pv.read()`` and
 tetrahedral meshes in the format expected by the NZCVM Rust extension.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import numpy as np

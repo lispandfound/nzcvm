@@ -32,8 +32,6 @@ nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree from this
 nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 import os
@@ -220,13 +218,18 @@ class Grid(ConfigObject):
     origin_y: float = NO_ORIGIN
 
 
+@dataclass
+class LayerConfig(ConfigObject):
+    pass
+
+
 # ---------------------------------------------------------------------------
 # Layer DTO configs
 # ---------------------------------------------------------------------------
 
 
 @dataclass
-class ClampLayerConfig(ConfigObject):
+class ClampLayerConfig(LayerConfig):
     """Configuration DTO for a :class:`~nzcvm.layers.clamp.ClampLayer`.
 
     The *clamps* mapping associates each velocity component with its
@@ -264,7 +267,7 @@ class ClampLayerConfig(ConfigObject):
 
 
 @dataclass
-class ElyLayerConfig(ConfigObject):
+class ElyLayerConfig(LayerConfig):
     """Configuration DTO for an :class:`~nzcvm.layers.ely.ElyTaperLayer`.
 
     Parameters
@@ -305,7 +308,7 @@ class ElyLayerConfig(ConfigObject):
 
 
 @dataclass
-class ModelLayerConfig(ConfigObject):
+class ModelLayerConfig(LayerConfig):
     """Configuration DTO for a :class:`~nzcvm.layers.query.ModelLayer`.
 
     Specifies where to find the velocity-model mesh files.  *model_path*
@@ -371,15 +374,6 @@ class ModelLayerConfig(ConfigObject):
         return ModelLayer(model)
 
 
-#: Discriminated union of all layer configuration types.
-#:
-#: The ``type`` field acts as the discriminator key; mashumaro selects the
-#: correct concrete class when deserialising from TOML/JSON/YAML.
-LayerConfig = Annotated[
-    ClampLayerConfig | ElyLayerConfig | ModelLayerConfig,
-    Discriminator(field="type", include_subtypes=True),
-]
-
 DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
 
 
@@ -415,7 +409,12 @@ class VelocityModelSpec(ConfigObject):
 
     metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
     grid: Grid = field(default_factory=Grid)  # ty: ignore[no-matching-overload]
-    layers: list[LayerConfig] = field(default_factory=list)
+    layers: list[
+        Annotated[
+            LayerConfig,
+            Discriminator(field="type", include_subtypes=True),
+        ]
+    ] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Validate that mesh refinement resolutions are mutually divisible.

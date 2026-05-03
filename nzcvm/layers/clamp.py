@@ -54,7 +54,7 @@ class ClampLayer:
 
         for component, (lo, hi) in self.clamps.items():
             name = component.value
-            logger.info("Clamping component %r to bounds (%r, %r)", name, lo, hi)
+            logger.debug("Clamping component %r to bounds (%r, %r)", name, lo, hi)
             quality = block.qualities.sel(component=component)
             block.qualities.loc[dict(component=component)] = quality.clip(
                 min=lo, max=hi

@@ -606,7 +606,7 @@ class ModelTree:
         xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
         lo, hi = model_range.value
         params = QueryParams(lo, hi)
-        logger.info("Querying for chunk qualities for range: %s.", model_range)
+        logger.debug("Querying for chunk qualities for range: %s.", model_range)
         buf = self._raw.query_many(xyz, params)
         return buf.reshape(x.shape + (6,))
 

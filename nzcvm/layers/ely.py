@@ -66,7 +66,7 @@ class ElyTaperLayer:
 
         # If the whole chunk is below the taper, skip Ely entirely.
         if not np.any(is_in_taper):
-            logger.info("Chunk outside taper, skipping Ely taper calculation.")
+            logger.debug("Chunk outside taper, skipping Ely taper calculation.")
             return self.next_layer(chunk, **kwargs)
         # Ask the next layer *only* for the basins.
         basin_kwargs = kwargs.copy()
@@ -77,8 +77,8 @@ class ElyTaperLayer:
 
         # Inside basins we don't have to compute the tomography or Ely taper.
         if np.allclose(alpha, 1.0):
-            logger.info("Chunk inside basin, skipping Ely taper calculation.")
-            logger.info(
+            logger.debug("Chunk inside basin, skipping Ely taper calculation.")
+            logger.debug(
                 "Chunk qualities: Rho=[%.2f-%.2f] Vp=[%.2f-%.2f], Vs=[%.2f-%.2f]",
                 basins["qualities"].sel(component=Component.RHO).min(),
                 basins["qualities"].sel(component=Component.RHO).max(),

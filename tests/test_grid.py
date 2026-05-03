@@ -112,12 +112,12 @@ class TestFillGridDaskBacking:
 
 
 # ---------------------------------------------------------------------------
-# Tests — scanl continuity
+# Tests — continuity
 # ---------------------------------------------------------------------------
 
 
-class TestFillGridScanl:
-    """Bottom of level N must equal top of level N+1 (scanl continuity)."""
+class TestFillGridContinuity:
+    """Bottom of level N must equal top of level N+1 (continuity)."""
 
     def test_bottom_of_first_equals_top_of_second(self):
         grids = [

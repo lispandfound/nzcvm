@@ -72,35 +72,6 @@ def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
     return Model(raw, {})
 
 
-def _make_grid_datatree(
-    ni: int = 4, nj: int = 3, nk: int = 2, size: float = 5.0
-) -> xr.DataTree:
-    """DataTree with a single /grid/test node with dask-backed x, y, z."""
-    resolution_h = size / ni
-    resolution_v = size / nk
-
-    x_1d = da.arange(ni, dtype=np.float32) * resolution_h
-    y_1d = da.arange(nj, dtype=np.float32) * resolution_h
-    z_1d = da.arange(nk, dtype=np.float32) * resolution_v
-
-    grid_x, grid_y, grid_z = da.meshgrid(x_1d, y_1d, z_1d, indexing="ij")
-
-    dims = (Coordinate.I, Coordinate.J, Coordinate.K)
-    ds = xr.Dataset(
-        data_vars={
-            Coordinate.X: (dims, grid_x),
-            Coordinate.Y: (dims, grid_y),
-            Coordinate.Z: (dims, grid_z),
-        },
-        coords={
-            Coordinate.I: np.arange(ni),
-            Coordinate.J: np.arange(nj),
-            Coordinate.K: np.arange(nk),
-        },
-    )
-    return xr.DataTree.from_dict({"/grid/test": ds}, name="root")
-
-
 def _make_block_dataset(
     ni: int = 4,
     nj: int = 3,
@@ -229,8 +200,7 @@ class TestAffineTransformLayerDimensions:
     def test_dims_preserved_after_transform(self):
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        tree = _make_grid_datatree(ni=3, nj=2, nk=2)
-        block_ds = tree["/grid/test"].dataset
+        block_ds = _make_block_dataset(ni=3, nj=2, nk=2)
         result = layer(block_ds)
         expected = (Coordinate.I, Coordinate.J, Coordinate.K)
         for coord in (Coordinate.X, Coordinate.Y, Coordinate.Z):
@@ -242,8 +212,7 @@ class TestAffineTransformLayerDimensions:
         ni, nj, nk = 3, 2, 2
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        tree = _make_grid_datatree(ni=ni, nj=nj, nk=nk)
-        block_ds = tree["/grid/test"].dataset
+        block_ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
         result = layer(block_ds)
         assert result[Coordinate.X].shape == (ni, nj, nk)
         assert result[Coordinate.Y].shape == (ni, nj, nk)
@@ -252,8 +221,7 @@ class TestAffineTransformLayerDimensions:
     def test_x_y_z_remain_dask_backed(self):
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        tree = _make_grid_datatree(ni=3, nj=2, nk=2)
-        block_ds = tree["/grid/test"].dataset
+        block_ds = _make_block_dataset(ni=3, nj=2, nk=2)
         result = layer(block_ds)
         assert isinstance(result[Coordinate.X].data, da.Array)
         assert isinstance(result[Coordinate.Y].data, da.Array)
@@ -261,8 +229,7 @@ class TestAffineTransformLayerDimensions:
     def test_z_passthrough_after_transform(self):
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        tree = _make_grid_datatree(ni=2, nj=2, nk=3, size=6.0)
-        block_ds = tree["/grid/test"].dataset
+        block_ds = _make_block_dataset(ni=2, nj=2, nk=3, size=6.0)
         original_z = block_ds[Coordinate.Z].values.copy()
         result = layer(block_ds)
         transformed_z = result[Coordinate.Z].values
@@ -277,8 +244,7 @@ class TestAffineTransformLayerDimensions:
         layer_normal = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         layer_transposed = AffineTransformLayer(affine_transposed, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
-        tree = _make_grid_datatree(ni=3, nj=2, nk=2, size=5.0)
-        block_ds = tree["/grid/test"].dataset
+        block_ds = _make_block_dataset(ni=3, nj=2, nk=2, size=5.0)
         x0 = block_ds[Coordinate.X].values
         y0 = block_ds[Coordinate.Y].values
 

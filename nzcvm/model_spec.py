@@ -226,42 +226,27 @@ class Grid(ConfigObject):
 
 
 @dataclass
-class BoundsConfig(ConfigObject):
-    """Inclusive bounds for a single velocity component.
-
-    Both *min* and *max* are optional — ``None`` means unbounded on that side.
-
-    Parameters
-    ----------
-    min :
-        Lower bound (inclusive).  ``None`` → no lower clamp.
-    max :
-        Upper bound (inclusive).  ``None`` → no upper clamp.
-    """
-
-    min: float | None = None
-    max: float | None = None
-
-
-@dataclass
 class ClampLayerConfig(ConfigObject):
     """Configuration DTO for a :class:`~nzcvm.layers.clamp.ClampLayer`.
 
     The *clamps* mapping associates each velocity component with its
-    ``(min, max)`` bounds.  Components not listed are left unclamped.
+    ``(min, max)`` bounds as a 2-tuple.  ``None`` means unbounded on that
+    side.  Components not listed are left unclamped.
 
     Examples
     --------
-    TOML::
+    YAML::
 
-        [[layers]]
-        type = "clamp"
-        [layers.clamps.vs]
-        min = 500.0
+        layers:
+          - type: clamp
+            clamps:
+              vs: [500.0, null]
     """
 
     type: Literal["clamp"] = "clamp"
-    clamps: dict[Component, BoundsConfig] = field(default_factory=dict)
+    clamps: dict[Component, tuple[float | None, float | None]] = field(
+        default_factory=dict
+    )
 
     def build(self, next_layer: Any) -> Any:
         """Instantiate a :class:`~nzcvm.layers.clamp.ClampLayer`.
@@ -275,10 +260,7 @@ class ClampLayerConfig(ConfigObject):
         -------
         nzcvm.layers.clamp.ClampLayer
         """
-        clamp_spec: dict[Component, tuple[float | None, float | None]] = {
-            comp: (cfg.min, cfg.max) for comp, cfg in self.clamps.items()
-        }
-        return ClampLayer(clamp_spec, next_layer)
+        return ClampLayer(self.clamps, next_layer)
 
 
 @dataclass
@@ -369,11 +351,6 @@ class ModelLayerConfig(ConfigObject):
         FileNotFoundError
             If *model_path* does not exist.
         """
-        import os
-
-        from nzcvm.layers.query import ModelLayer
-        from nzcvm.model import ModelTree
-
         if self.model_path is not None:
             resolved = self.model_path
         else:

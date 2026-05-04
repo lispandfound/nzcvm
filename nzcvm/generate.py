@@ -188,7 +188,7 @@ def _annotate_topo_metadata(grids: list[xr.Dataset], elevation: xr.DataArray) ->
 
     Parameters
     ----------
-    grids :
+    grids : list of dataset
         Populated grid datasets, sorted by ``bottom`` attribute.
     elevation :
         Topographic surface elevation (at the top grid's resolution).
@@ -296,7 +296,7 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
 
     1. Creates per-refinement 2-D grid datasets with physical ``x``/``y``
        arrays (with optional cell-centre half-cell offset when
-       ``grid.cell_registration == "center"``).
+       ``grid.cell_registration == "centre"``).
     2. Loads the topographic surface from ``velocity_model_spec.grid.surface``.
     3. Calls :func:`fill_grid` to add 3-D ``z``, ``depth``, and broadcast
        ``x``/``y`` variables to each dataset.

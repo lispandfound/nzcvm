@@ -31,7 +31,7 @@ import pyvista as pv
 QUALITIES_COMPONENTS = ("rho", "vp", "vs", "qp", "qs", "alpha")
 DEPTH_SCALAR = "depth"
 LAYER_SCALAR = "layer"
-ALL_SCALARS = (DEPTH_SCALAR,LAYER_SCALAR) + QUALITIES_COMPONENTS
+ALL_SCALARS = (DEPTH_SCALAR, LAYER_SCALAR) + QUALITIES_COMPONENTS
 
 GRID_PATH = "/grid"  # root path for grid groups inside the DataTree
 
@@ -265,6 +265,8 @@ def model(
         Optional[Path],
         typer.Option("--screenshot", help="Save a PNG screenshot to this path."),
     ] = None,
+    min_val: float | None = None,
+    max_val: float | None = None,
 ) -> None:
     """
     Load an xarray DataTree and visualise every /grid/* group as a 3-D
@@ -328,7 +330,11 @@ def model(
 
     # --- compute global scalar range across all grids ----------------------
     all_vals = np.concatenate([g.point_data[scalar] for g in grids.values()])
-    clim = (float(np.nanmin(all_vals)), float(np.nanmax(all_vals)))
+    clim = [float(np.nanmin(all_vals)), float(np.nanmax(all_vals))]
+    if min_val is not None:
+        clim[0] = min_val
+    if max_val is not None:
+        clim[1] = max_val
     typer.echo(f"Scalar '{scalar}' range: {clim[0]:.4g} … {clim[1]:.4g}")
 
     # --- set up plotter ----------------------------------------------------

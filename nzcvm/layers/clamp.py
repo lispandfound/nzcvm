@@ -68,6 +68,6 @@ class ClampLayer:
         for component, (lo, hi) in self.clamps.items():
             lo_str = f"{lo}" if lo is not None else "−∞"
             hi_str = f"{hi}" if hi is not None else "+∞"
-            tree.add(f"{component.value}{lo_str} … {hi_str}")
+            tree.add(f"{component.value}: {lo_str} … {hi_str}")
         tree.add(self.next_layer)
         yield tree

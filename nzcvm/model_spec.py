@@ -229,6 +229,12 @@ class LayerConfig(ConfigObject):
 
 
 @dataclass
+class Bound(ConfigObject):
+    min: float | None = None
+    max: float | None = None
+
+
+@dataclass
 class ClampLayerConfig(LayerConfig):
     """Configuration DTO for a :class:`~nzcvm.layers.clamp.ClampLayer`.
 
@@ -247,9 +253,7 @@ class ClampLayerConfig(LayerConfig):
     """
 
     type: Literal["clamp"] = "clamp"
-    clamps: dict[Component, tuple[float | None, float | None]] = field(
-        default_factory=dict
-    )
+    clamps: dict[Component, Bound] = field(default_factory=dict)
 
     def build(self, next_layer: Any) -> Any:
         """Instantiate a :class:`~nzcvm.layers.clamp.ClampLayer`.
@@ -263,7 +267,11 @@ class ClampLayerConfig(LayerConfig):
         -------
         nzcvm.layers.clamp.ClampLayer
         """
-        return ClampLayer(self.clamps, next_layer)
+        clamps = {
+            component: (bound.min, bound.max)
+            for component, bound in self.clamps.items()
+        }
+        return ClampLayer(clamps, next_layer)
 
 
 @dataclass

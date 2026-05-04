@@ -78,8 +78,8 @@ class ConfigObject(
 class CellRegistration(StrEnum):
     """Whether grid points represent cell corners or cell centres."""
 
-    CORNER = "corner"
-    CENTER = "center"
+    CORNER = auto()
+    CENTRE = auto()
 
 
 @dataclass

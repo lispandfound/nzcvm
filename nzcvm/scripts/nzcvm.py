@@ -1,6 +1,5 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-
 from nzcvm.graph import export_datatree_graph
 
 import os
@@ -33,35 +32,39 @@ from nzcvm.scripts import (
 )
 
 console = Console()
-LOGGING_CONFIG = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
+
+
+def configure_logging(level: str) -> None:
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "standard": {
+                "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
+            },
         },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "standard",
-            "level": "INFO",
-            "stream": "ext://sys.stdout",
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "standard",
+                "level": "INFO",
+                "stream": "ext://sys.stdout",
+            },
         },
-    },
-    "loggers": {
-        "": {  # root logger
-            "handlers": ["console"],
-            "level": "INFO",
-            "propagate": True,
+        "loggers": {
+            "": {  # root logger
+                "handlers": ["console"],
+                "level": level,
+                "propagate": True,
+            },
+            "dask": {
+                "level": "WARNING",  # Silence noisy dask internals
+                "propagate": True,
+            },
         },
-        "dask": {
-            "level": "WARNING",  # Silence noisy dask internals
-            "propagate": True,
-        },
-    },
-}
-logging.config.dictConfig(LOGGING_CONFIG)
+    }
+
+    logging.config.dictConfig(logging_config)
 
 
 def num_cores() -> int:
@@ -140,8 +143,10 @@ def generate(
             help="Config format to read. You can usually leave this as inferred."
         ),
     ] = VelocityModelSpecFormat.INFERRED,
+    log_level: str = "INFO",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
+    configure_logging(log_level)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
 

@@ -110,58 +110,50 @@ def _compute_vertical_chunk_size(elevation: xr.DataArray) -> int:
     return max(1, int(TARGET_CHUNK_SIZE // (h_chunk_points * dtype_bytes)))
 
 
+def _logical_k_indices(
+    nk: int, cell_registration: CellRegistration, dtype: np.dtype
+) -> xr.DataArray:
+
+    k_indices = np.arange(nk)
+    k_coord = np.linspace(0.0, 1.0, num=nk, dtype=dtype)
+    if cell_registration == CellRegistration.CENTRE:
+        k_coord = (k_coord[1:] + k_coord[:-1]) / 2
+
+    return xr.DataArray(
+        k_coord,
+        dims=Coordinate.K,
+        coords={Coordinate.K: k_indices},
+    )
+
+
 def _populate_grid(
     grid: xr.Dataset,
-    current_top_elevation: xr.DataArray,
+    top_elevation: xr.DataArray,
     surface_elevation: xr.DataArray,
-    horizontal_chunks: dict,
     vertical_chunk_size: int,
-    total_nk: int,
-) -> tuple[xr.DataArray, int]:
+    cell_registration: CellRegistration,
+) -> xr.DataArray:
     """Fill one 2-D grid dataset with 3-D coordinates in-place.
-
-    Uses :func:`~nzcvm.curvilinear_mesh.curvilinear_mesh_boundary` to build
-    the bottom boundary surface and :func:`~nzcvm.curvilinear_mesh.fill_between`
-    to linearly interpolate the ``z`` coordinate.  Broadcasts ``x`` and ``y``
-    across the K dimension and computes ``depth = z - surface_elevation``.
-
-    The *current_top_elevation* and *surface_elevation* are each resampled to
-    *grid*'s I/J coordinates via :meth:`~xarray.DataArray.sel` before use.
 
     Parameters
     ----------
     grid :
         2-D grid dataset to populate (modified in-place).
-    current_top_elevation :
-        Top-of-layer elevation (bottom surface of the preceding layer, or the
-        topographic surface for the first layer).
+    top_elevation :
+        Top-of-layer elevation.
     surface_elevation :
-        Topographic surface elevation at the finest-resolution grid, used to
+        Topographic surface elevation of the grid, used to
         compute ``depth``.
-    horizontal_chunks :
-        Chunk spec for the I/J dimensions.
     vertical_chunk_size :
         Number of k-levels per vertical chunk.
-    total_nk :
-        Running total of k-levels across all previously processed grids.
+    cell_registration :
+        Cell registration for gridpoints in the z direction.
 
     Returns
     -------
     bottom_surface : xarray.DataArray
         The computed bottom boundary of this grid.
-    nk : int
-        Number of vertical levels in this grid.
     """
-    grid[Coordinate.X] = grid[Coordinate.X].chunk(horizontal_chunks)
-    grid[Coordinate.Y] = grid[Coordinate.Y].chunk(horizontal_chunks)
-
-    grid_coords = {
-        Coordinate.I: grid.coords[Coordinate.I],
-        Coordinate.J: grid.coords[Coordinate.J],
-    }
-
-    top_elevation = current_top_elevation.sel(grid_coords)
-    grid_elevation = surface_elevation.sel(grid_coords)
 
     bottom_surface, nk = curvilinear_mesh.curvilinear_mesh_boundary(
         top_elevation,
@@ -170,13 +162,9 @@ def _populate_grid(
         grid.attrs["deformation"],
     )
 
-    k_indices = np.arange(total_nk, total_nk + nk)
-    k_coord = np.linspace(0.0, 1.0, num=nk, dtype=grid[Coordinate.X].dtype)
-    k_da = xr.DataArray(
-        k_coord,
-        dims=Coordinate.K,
-        coords={Coordinate.K: k_indices},
-    ).chunk({Coordinate.K: vertical_chunk_size})
+    k_da = _logical_k_indices(nk, cell_registration, grid[Coordinate.X].dtype).chunk(
+        {Coordinate.K: vertical_chunk_size}
+    )
 
     grid[Coordinate.Z] = curvilinear_mesh.fill_between(
         top_elevation,
@@ -190,9 +178,9 @@ def _populate_grid(
     grid[Coordinate.X] = grid[Coordinate.X].chunk({Coordinate.K: vertical_chunk_size})
     grid[Coordinate.Y] = grid[Coordinate.Y].chunk({Coordinate.K: vertical_chunk_size})
 
-    grid["depth"] = grid[Coordinate.Z] - grid_elevation
+    grid["depth"] = grid[Coordinate.Z] - surface_elevation
 
-    return bottom_surface, nk
+    return bottom_surface
 
 
 def _annotate_topo_metadata(grids: list[xr.Dataset], elevation: xr.DataArray) -> None:
@@ -228,7 +216,9 @@ def _annotate_topo_metadata(grids: list[xr.Dataset], elevation: xr.DataArray) ->
         current_max_top_depth = current_max_bottom_depth
 
 
-def fill_grid(grids: list[xr.Dataset], topography: Surface) -> list[xr.Dataset]:
+def fill_grid(
+    grids: list[xr.Dataset], topography: Surface, cell_registration: CellRegistration
+) -> list[xr.Dataset]:
     """Populate 2-D grid datasets with 3-D elevation, depth, and coordinates.
 
     Processes each grid in ascending order of ``bottom`` (surface → depth).
@@ -278,15 +268,23 @@ def fill_grid(grids: list[xr.Dataset], topography: Surface) -> list[xr.Dataset]:
     current_top_elevation = elevation
 
     for grid in grids:
-        current_top_elevation, nk = _populate_grid(
-            grid,
-            current_top_elevation,
-            elevation,
-            horizontal_chunks,
-            vertical_chunk_size,
-            total_nk,
+        grid[Coordinate.X] = grid[Coordinate.X].chunk(horizontal_chunks)
+        grid[Coordinate.Y] = grid[Coordinate.Y].chunk(horizontal_chunks)
+
+        grid_coords = {
+            Coordinate.I: grid.coords[Coordinate.I],
+            Coordinate.J: grid.coords[Coordinate.J],
+        }
+
+        top_elevation = current_top_elevation.sel(grid_coords)
+        grid_elevation = elevation.sel(grid_coords)
+
+        current_top_elevation = _populate_grid(
+            grid, top_elevation, grid_elevation, vertical_chunk_size, cell_registration
         )
-        total_nk += nk
+
+        grid.coords[Coordinate.K] = grid.coords[Coordinate.K] + total_nk
+        total_nk += len(grid.coords[Coordinate.K])
 
     _annotate_topo_metadata(grids, elevation)
 

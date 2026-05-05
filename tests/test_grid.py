@@ -4,7 +4,7 @@ Key properties verified:
 
 1. All coordinate arrays (x, y, z, depth) are dask-backed after fill_grid.
 2. The bottom interface (k = -1) of level N is identical to the top interface
-   (k = 0) of level N+1 (*scanl* continuity property).
+   (k = 0) of level N+1 (continuity property).
 3. depth is 0 at k=0 of the first layer (surface == top).
 """
 
@@ -18,6 +18,7 @@ import xarray as xr
 
 from nzcvm.coordinates import Coordinate
 from nzcvm.generate import fill_grid
+from nzcvm.model_spec import CellRegistration
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +138,7 @@ class TestFillGridContinuity:
             err_msg="Bottom of r0 must equal top of r1",
         )
 
-    def test_scanl_property_three_levels(self):
+    def test_continuity_three_levels(self):
         grids = [
             _make_grid("r0", 100.0, 300.0, 1.0),
             _make_grid("r1", 100.0, 800.0, 0.5),
@@ -177,8 +178,8 @@ class TestFillGridContinuity:
 class TestFillGridMultiResolution:
     """Grids at different resolutions must remain watertight via isel resampling."""
 
-    def test_scanl_fine_to_coarse(self):
-        """Bottom of fine layer must equal top of coarse layer after isel resampling."""
+    def test_continuity_fine_to_coarse(self):
+        """Bottom of fine layer must equal top of coarse layer after sel resampling."""
         min_res = 100.0
         grids = [
             _make_grid("fine", 100.0, 500.0, 1.0, minimum_resolution=min_res),
@@ -199,5 +200,43 @@ class TestFillGridMultiResolution:
             bottom_fine,
             top_coarse,
             rtol=1e-5,
-            err_msg="Bottom of fine layer must equal top of coarse layer (isel subset)",
+            err_msg="Bottom of fine layer must equal top of coarse layer (sel subset)",
         )
+
+# ---------------------------------------------------------------------------
+# Tests — cell registration
+# ---------------------------------------------------------------------------
+
+
+class TestFillGridCellRegistration:
+    """Cell registration controls where grid points sit within each cell."""
+
+    def test_corner_registration_has_nk_levels(self):
+        """CORNER: nk interpolation weights including both boundary interfaces."""
+        grids = [_make_grid("r0", 100.0, 500.0, 0.0)]
+        result = fill_grid(grids, _FlatSurface(), CellRegistration.CORNER)
+        z = result[0][Coordinate.Z]
+        # nk is at least 2 (top + bottom interfaces)
+        assert z.sizes[Coordinate.K] >= 2
+
+    def test_centre_registration_has_fewer_levels(self):
+        """CENTRE: nk - 1 cell-centre weights, so one fewer k level than CORNER."""
+        grids_corner = [_make_grid("r0", 100.0, 500.0, 0.0)]
+        grids_centre = [_make_grid("r0", 100.0, 500.0, 0.0)]
+        z_corner = fill_grid(grids_corner, _FlatSurface(), CellRegistration.CORNER)[0][
+            Coordinate.Z
+        ]
+        z_centre = fill_grid(grids_centre, _FlatSurface(), CellRegistration.CENTRE)[0][
+            Coordinate.Z
+        ]
+        assert z_centre.sizes[Coordinate.K] == z_corner.sizes[Coordinate.K] - 1
+
+    def test_centre_z_values_between_corner_interfaces(self):
+        """CENTRE z values must lie strictly between the top and bottom surfaces."""
+        grids = [_make_grid("r0", 100.0, 500.0, 1.0)]
+        result = fill_grid(grids, _FlatSurface(z_value=-100.0), CellRegistration.CENTRE)
+        z = result[0][Coordinate.Z].values
+        # Top interface is at -100.0 (surface), bottom at 500 m depth.
+        # Centre values must be strictly inside that range.
+        assert np.all(z > -100.0), "CENTRE z values must be below the top surface"
+        assert np.all(z < 500.0), "CENTRE z values must be above the bottom surface"

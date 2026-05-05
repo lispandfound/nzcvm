@@ -14,6 +14,7 @@ from nzcvm.components import Component, Coordinate
 ATTENUATION_ATTR = "Attenuation"
 ATTENUATION = np.int32(1)
 MAX_RESOLUTION_ATTR = "Coarsest horizontal grid spacing"
+MIN_RESOLUTION_ATTR = "Finest horizontal grid spacing"
 MIN_MAX_DEPTH_ATTR = "Min, max depth"
 ORIGIN_AZIM_ATTR = "Origin longitude, latitude, azimuth"
 NGRIDS_ATTR = "ngrids"
@@ -39,51 +40,48 @@ def to_sfile(dtree, filename):
     ----------
     dtree :
         DataTree produced by the query pipeline, with children under
-        ``/block`` and root attributes including ``azimuth``.
+        ``/grid`` and root attributes including ``azimuth``.
     filename :
         Destination HDF5 file path.
     """
+    grid_group = dtree["/grid"]
     with h5py.File(filename, "w") as f:
         f.attrs.create(
             ORIGIN_AZIM_ATTR,
-            data=dtree.attrs["azimuth"],
+            data=[
+                grid_group.attrs["origin_lon"],
+                grid_group.attrs["origin_lat"],
+                grid_group.attrs["azimuth"],
+            ],
             dtype=np.float64,
         )
 
         f.attrs.create(ATTENUATION_ATTR, data=ATTENUATION, dtype=np.int32)
-        f.attrs.create(NGRIDS_ATTR, data=np.int32(len(dtree["block"])), dtype=np.int32)
+        f.attrs.create(NGRIDS_ATTR, data=np.int32(len(dtree["grid"])), dtype=np.int32)
 
         mat_group = f.create_group(MATERIAL_GROUP)
         surface_group = f.create_group(SURFACE_GROUP)
 
         sources = []
         targets = []
-        z_mins = []
-        z_maxs = []
-        # Sort blocks in vertical order
-        blocks = sorted(
-            dtree["block"].children.values(), key=lambda block: block.attrs["z_top"]
+        # Sort grids in vertical order
+        grids = sorted(
+            dtree["grid"].children.values(),
+            key=lambda grid: grid.attrs["minimum_top_depth"],
         )
-
-        top_block = blocks[0]
-        topography = top_block[Coordinate.Z].sel({Coordinate.K: 0})
-        topography_surface = surface_group.create_dataset(
-            "z_values_0",
-            shape=topography.shape,
-            chunks=topography.chunks,
-            dtype=topography.dtype,
+        f.attrs.create(
+            MIN_RESOLUTION_ATTR,
+            data=min(grid.attrs["resolution"] for grid in grids),
+            dtype=np.float64,
         )
-        sources.append(topography)
-        targets.append(topography_surface)
-
-        for i, dataset in enumerate(blocks):
-            # SW4 expects blocks in the format "grid_i".
+        for i, dataset in enumerate(grids):
+            # SW4 expects grids in the format "grid_i".
             grid_name = f"grid_{i}"
             grid_h5 = mat_group.create_group(grid_name)
 
             grid_h5.attrs.create(
                 HORIZONTAL_ATTR,
-                data=float(dataset.attrs["resolution_horiz"]),
+                data=float(dataset.attrs["resolution"]),
                 dtype=np.float64,
             )
             grid_h5.attrs.create(
@@ -94,9 +92,6 @@ def to_sfile(dtree, filename):
 
             for sfile_name, var_name in COMPONENT_MAP.items():
                 data = dataset["qualities"].sel(component=str(var_name)).data
-                z_data = dataset["z"].data
-                z_mins.append(z_data.min())
-                z_maxs.append(z_data.max())
 
                 dset = grid_h5.create_dataset(
                     sfile_name,
@@ -108,41 +103,39 @@ def to_sfile(dtree, filename):
                 sources.append(data)
                 targets.append(dset)
 
-            nz = dataset[Coordinate.Z].sizes[Coordinate.K]
-            bottom = dataset[Coordinate.Z].sel({Coordinate.K: nz - 1})
+            if i == 0:
+                top = dataset[Coordinate.Z].isel({Coordinate.K: 0}).data
+                top_surface = surface_group.create_dataset(
+                    "z_values_0",
+                    shape=top.shape,
+                    chunks=top.chunksize,
+                    dtype=top.dtype,
+                )
+                sources.append(top)
+                targets.append(top_surface)
+
+            bottom = dataset[Coordinate.Z].isel({Coordinate.K: -1}).data
             bottom_surface = surface_group.create_dataset(
-                f"z_values_{i}",
+                f"z_values_{i + 1}",
                 shape=bottom.shape,
-                chunks=bottom.chunks,
+                chunks=bottom.chunksize,
                 dtype=bottom.dtype,
             )
             sources.append(bottom)
             targets.append(bottom_surface)
 
-        # The sfile format specifies the `MIN_MAX_DEPTH_ATTR` attribute should
-        # contain the minimum and maximum z elevation over the whole dataset.
-        # This is pretty annoying because that quantity is actually rather hard
-        # to calculate because, in general, it depends on transformed z values
-        # with topography. To do this without forcefully evaluating all z values
-        # in memory we create a buffer to write z values to and then evaluate it
-        # at the same time as da.storing the sources and targets.
+        global_min = grids[0].attrs["topo_min"]
+        global_bottom_surface = (
+            grids[-1][Coordinate.Z].isel({Coordinate.K: -1}).data.max()
+        )
+        global_bottom_surface_realised = np.array([np.nan])
+        sources.append(global_bottom_surface)
+        targets.append(global_bottom_surface_realised)
 
-        z_mins = da.array(z_mins)
-        z_maxs = da.array(z_maxs)
-        global_min = da.min(z_mins)
-        global_max = da.max(z_maxs)
-
-        global_task = da.array([global_min, global_max])
-        global_task_realised = np.array([np.nan, np.nan])
-
-        sources.append(global_task)
-        targets.append(global_task_realised)
         da.store(sources, targets)
 
-        # Now global_task_realised should contain the z min and z max, but we
-        # should check and throw an error if it doesn't.
-        if np.any(np.isnan(global_task_realised)):
-            raise ValueError(
-                f"Global z-min and z-max came out as NaN! {global_task_realised=}"
-            )
-        f.attrs.create(MIN_MAX_DEPTH_ATTR, data=global_task_realised, dtype=np.float64)
+        global_max = global_bottom_surface_realised.item()
+
+        f.attrs.create(
+            MIN_MAX_DEPTH_ATTR, data=[global_min, global_max], dtype=np.float64
+        )

@@ -138,9 +138,6 @@ def basin(
             readable=True,
         ),
     ] = None,
-    scale: Annotated[
-        float, typer.Option(help="Vertical exaggeration factor (e.g. 5.0).", min=0.0)
-    ] = 1.0,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
     pl = pv.Plotter()
@@ -151,8 +148,9 @@ def basin(
         pl.add_mesh(
             topo, style="wireframe", color="black", opacity=0.3, label="Surface"
         )
-
-    pl.add_mesh(mesh_data)
+    if scalar in mesh_data.field_data:
+        mesh_data.point_data[scalar] = mesh_data.field_data[scalar]
+    pl.add_mesh(mesh_data, scalars=scalar)
     pl.camera.up = (0.0, 0.0, -1.0)
     pl.show()
 

@@ -253,7 +253,8 @@ class ClampLayerConfig(LayerConfig):
     """
 
     type: Literal["clamp"] = "clamp"
-    clamps: dict[Component, Bound] = field(default_factory=dict)
+    clamps: dict[str, Bound] = field(default_factory=dict)
+    max_vp_vs_ratio: float | None = None
 
     def build(self, next_layer: Any) -> Any:
         """Instantiate a :class:`~nzcvm.layers.clamp.ClampLayer`.

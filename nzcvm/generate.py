@@ -118,6 +118,7 @@ def _logical_k_indices(
     k_coord = np.linspace(0.0, 1.0, num=nk, dtype=dtype)
     if cell_registration == CellRegistration.CENTRE:
         k_coord = (k_coord[1:] + k_coord[:-1]) / 2
+        k_indices = k_indices[:-1]
 
     return xr.DataArray(
         k_coord,
@@ -324,7 +325,7 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
         ni_global = int(np.ceil(grid_spec.extent_x / minimum_resolution)) + 1
         nj_global = int(np.ceil(grid_spec.extent_y / minimum_resolution)) + 1
         offset = 0.0
-    else:  # "center"
+    else:  # "centre"
         ni_global = int(np.ceil(grid_spec.extent_x / minimum_resolution))
         nj_global = int(np.ceil(grid_spec.extent_y / minimum_resolution))
         offset = 0.5  # half-cell offset in units of minimum_resolution
@@ -371,10 +372,12 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
 
     # Load the topographic surface and populate the 3D geometry.
     topographic_surface = read_surface_from_path(grid_spec.surface)
-    grids = fill_grid(grids, topographic_surface)
+    grids = fill_grid(grids, topographic_surface, cell_reg)
 
     # Assemble DataTree.
     nodes = {f"grid/{g.attrs['name']}": g for g in grids}
     root = xr.DataTree.from_dict(nodes, name=name)
+
     root.attrs.update(velocity_model_spec.metadata.to_dict())
+    root["/grid"].attrs.update(velocity_model_spec.grid.to_dict())
     return root

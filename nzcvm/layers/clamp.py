@@ -37,7 +37,7 @@ class ClampLayer:
     ...         Component.VS: (180.0, None),
     ...         Component.VP: (300.0, 6000.0),
     ...     },
-    ...     next_layer=None, # in reality, pass another layer here
+    ...     next_layer=None, # in reality, pass another layer here.
     ... )
     """
 

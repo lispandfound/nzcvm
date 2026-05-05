@@ -11,8 +11,6 @@ Run with::
 The script prints wall-clock timings for the full dask compute.
 """
 
-from __future__ import annotations
-
 import time
 from dataclasses import dataclass
 
@@ -110,28 +108,24 @@ def build_grids() -> list[xr.Dataset]:
 
 
 def run_benchmark() -> None:
-    """Run fill_grid and compute all coordinate arrays, printing timings."""
-    print("Building grid datasets …", flush=True)
+    """Run fill_grid and output results as a Markdown table."""
+
     t0 = time.perf_counter()
     grids = build_grids()
     t1 = time.perf_counter()
-    print(f"  Grid construction: {t1 - t0:.3f} s")
+    construction_time = t1 - t0
 
-    print("Running fill_grid (lazy graph construction) …", flush=True)
     t2 = time.perf_counter()
     filled = fill_grid(grids, _FlatSurface(), CellRegistration.CORNER)
     t3 = time.perf_counter()
-    print(f"  fill_grid (lazy):  {t3 - t2:.3f} s")
+    lazy_time = t3 - t2
 
-    # Estimate total data size
     total_elements = sum(
         g[Coordinate.X].size + g[Coordinate.Y].size + g[Coordinate.Z].size
         for g in filled
     )
     total_gb = total_elements * 4 / 1024**3
-    print(f"  Total array size:  {total_gb:.2f} GB (uncompressed float32)")
 
-    print("Computing all coordinate arrays (dask compute) …", flush=True)
     t4 = time.perf_counter()
     arrays_to_compute = []
     for g in filled:
@@ -140,11 +134,20 @@ def run_benchmark() -> None:
         )
     da.compute(*arrays_to_compute)
     t5 = time.perf_counter()
-    print(f"  dask compute:      {t5 - t4:.3f} s")
-    print(f"  Total (compute):   {t5 - t4:.3f} s  [{total_gb:.2f} GB]")
+    compute_time = t5 - t4
 
-    throughput = total_gb / max(t5 - t4, 1e-9)
-    print(f"  Throughput:        {throughput:.2f} GB/s")
+    throughput = total_gb / max(compute_time, 1e-9)
+
+    # Output Markdown Table
+    print(f"### 📊 Benchmark Results: `fill_grid`")
+    print(f"\n| Metric | Value |")
+    print(f"| :--- | :--- |")
+    print(f"| **Total Data Size** | {total_gb:.2f} GB |")
+    print(f"| **Grid Construction** | {construction_time:.3f} s |")
+    print(f"| **Lazy Graph Init** | {lazy_time:.3f} s |")
+    print(f"| **Dask Compute Time** | {compute_time:.3f} s |")
+    print(f"| **Throughput** | **{throughput:.2f} GB/s** |")
+    print(f"\n*Benchmark run on {time.strftime('%Y-%m-%d %H:%M:%S')}*")
 
 
 if __name__ == "__main__":

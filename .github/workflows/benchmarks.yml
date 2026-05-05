@@ -46,4 +46,4 @@ jobs:
         run: |
           uv run --dev \
             --config-setting 'build-args=--profile=release' \
-            python benchmarks/benchmark_generate.py
+            python benchmarks/benchmark_generate.py >> $GITHUB_STEP_SUMMARY

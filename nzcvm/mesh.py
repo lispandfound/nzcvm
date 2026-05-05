@@ -1,8 +1,8 @@
 """Mesh I/O utilities for NZCVM using PyVista.
 
 PyVista supports reading and writing VTKHDF files natively via ``pv.read()`` and
-``mesh.save()``.  This module provides thin helpers for creating and loading
-tetrahedral meshes in the format expected by the NZCVM Rust extension.
+``mesh.save()``. This module provides thin helpers for creating tetrahedral
+meshes in the format expected by the NZCVM Rust extension.
 """
 
 import numpy as np

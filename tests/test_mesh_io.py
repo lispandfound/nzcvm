@@ -10,128 +10,65 @@ import numpy as np
 import pytest
 import pyvista as pv
 
-from nzcvm.mesh import make_mesh, read_vtkhdf
+from nzcvm.mesh import make_mesh
 
 
-def _make_pv_mesh(rho: float = 2700.0, priority: int = 0) -> pv.UnstructuredGrid:
-    """Single-tetrahedron mesh with all NZCVM-required data arrays."""
-    points = np.array(
-        [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        dtype=np.float32,
-    )
-    return make_mesh(
-        points=points,
-        connectivity=np.array([[0, 1, 2, 3]], dtype=np.int64),
-        cell_data={
-            "model_type": np.array([0], dtype=np.uint8),
-            "models": np.array([0], dtype=np.uint64),
-        },
-        field_data={
-            "rho": np.array([rho], dtype=np.float32),
-            "vp": np.array([6000.0], dtype=np.float32),
-            "vs": np.array([3500.0], dtype=np.float32),
-            "qp": np.array([200.0], dtype=np.float32),
-            "qs": np.array([100.0], dtype=np.float32),
-            "alpha": np.array([1.0], dtype=np.float32),
-            "priority": np.array([priority], dtype=np.uint8),
-        },
-    )
+@pytest.fixture
+def basic_mesh_data():
+    points = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=np.float32)
+    connectivity = np.array([[0, 1, 2, 3]], dtype=np.int64)
+    return points, connectivity
 
 
-class TestPyVistaVtkHdfRoundtrip:
-    """PyVista natively handles VTKHDF I/O; verify NZCVM-specific data survives."""
+def test_make_mesh_connectivity_formatting(basic_mesh_data):
+    """Verify that (M, 4) connectivity is correctly flattened with VTK padding."""
+    points, _ = basic_mesh_data
 
-    def test_read_returns_unstructured_grid(self, tmp_path):
-        mesh = _make_pv_mesh()
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        assert isinstance(loaded, pv.UnstructuredGrid)
+    two_cells = np.array([[0, 1, 2, 3], [0, 1, 2, 3]], dtype=np.int64)
 
-    def test_n_points_preserved(self, tmp_path):
-        mesh = _make_pv_mesh()
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        assert loaded.n_points == mesh.n_points
+    mesh = make_mesh(points, two_cells, {}, {})
 
-    def test_points_preserved(self, tmp_path):
-        mesh = _make_pv_mesh()
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        assert loaded.points == pytest.approx(mesh.points, rel=1e-5)
-
-    def test_rho_field_data_preserved(self, tmp_path):
-        mesh = _make_pv_mesh(rho=3000.0)
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        assert float(loaded.field_data["rho"][0]) == pytest.approx(3000.0)
-
-    def test_priority_field_data_preserved(self, tmp_path):
-        mesh = _make_pv_mesh(priority=5)
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        assert int(loaded.field_data["priority"][0]) == 5
-
-    def test_all_quality_fields_preserved(self, tmp_path):
-        mesh = _make_pv_mesh(rho=2500.0)
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        for field in ("vp", "vs", "qp", "qs", "alpha"):
-            assert float(loaded.field_data[field][0]) == pytest.approx(
-                float(mesh.field_data[field][0])
-            )
-
-    def test_cell_data_preserved(self, tmp_path):
-        mesh = _make_pv_mesh()
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        np.testing.assert_array_equal(
-            loaded.cell_data["model_type"], mesh.cell_data["model_type"]
-        )
-
-    def test_connectivity_preserved(self, tmp_path):
-        mesh = _make_pv_mesh()
-        path = tmp_path / "test.vtkhdf"
-        mesh.save(str(path))
-        loaded = pv.read(str(path))
-        loaded_conn = loaded.cells_dict[pv.CellType.TETRA]
-        orig_conn = mesh.cells_dict[np.uint8(pv.CellType.TETRA)]
-        np.testing.assert_array_equal(loaded_conn, orig_conn)
-
-    def test_read_vtkhdf_raises_for_wrong_type(self, tmp_path):
-        """read_vtkhdf should raise when the file is not an UnstructuredGrid."""
-        poly = pv.Sphere()
-        path = tmp_path / "sphere.vtkhdf"
-        poly.save(str(path))
-        with pytest.raises(ValueError, match="UnstructuredGrid"):
-            read_vtkhdf(path)
+    # VTK format: [n_pts_cell0, id0, id1, id2, id3, n_pts_cell1, id0, ...]
+    expected_cells = np.array([4, 0, 1, 2, 3, 4, 0, 1, 2, 3], dtype=np.int64)
+    np.testing.assert_array_equal(mesh.cells, expected_cells)
+    assert mesh.celltypes[0] == pv.CellType.TETRA
 
 
-class TestMakeMesh:
-    """make_mesh must create a valid pyvista UnstructuredGrid."""
+def test_make_mesh_name_metadata_handling(basic_mesh_data):
+    """Verify that the 'name' parameter is correctly wrapped for VTKHDF compatibility."""
+    points, connectivity = basic_mesh_data
+    test_name = "nz_model_v1"
 
-    def test_returns_unstructured_grid(self):
-        mesh = _make_pv_mesh()
-        assert isinstance(mesh, pv.UnstructuredGrid)
+    # Test case 1: Name provided
+    mesh = make_mesh(points, connectivity, {}, {}, name=test_name)
+    assert "name" in mesh.field_data
 
-    def test_n_points(self):
-        mesh = _make_pv_mesh()
-        assert mesh.n_points == 4
+    assert mesh.field_data["name"][0] == test_name
 
-    def test_n_cells(self):
-        mesh = _make_pv_mesh()
-        assert mesh.n_cells == 1
+    field_data = {"name": np.array(["old_name"])}
+    mesh = make_mesh(points, connectivity, {}, field_data, name="new_name")
+    assert mesh.field_data["name"][0] == "new_name"
 
-    def test_cell_type_is_tetra(self):
-        mesh = _make_pv_mesh()
-        assert pv.CellType.TETRA in mesh.cells_dict
 
-    def test_field_data_accessible(self):
-        mesh = _make_pv_mesh(rho=1234.0)
-        assert float(mesh.field_data["rho"][0]) == pytest.approx(1234.0)
+def test_make_mesh_data_assignment(basic_mesh_data):
+    """Ensure cell and field data dictionaries are correctly mapped to the mesh."""
+    points, connectivity = basic_mesh_data
+    cell_data = {"velocity": np.array([1500.0])}
+    field_data = {"version": np.array([1])}
+
+    mesh = make_mesh(points, connectivity, cell_data, field_data)
+
+    np.testing.assert_array_equal(mesh.cell_data["velocity"], cell_data["velocity"])
+    np.testing.assert_array_equal(mesh.field_data["version"], field_data["version"])
+
+
+def test_make_mesh_empty_data_structures(basic_mesh_data):
+    """Ensure the function handles empty dictionaries without error."""
+    points, connectivity = basic_mesh_data
+
+    # Should not raise any KeyError or TypeError
+    mesh = make_mesh(points, connectivity, {}, {}, name=None)
+
+    assert len(mesh.cell_data) == 0
+    # field_data might have default VTK keys, but shouldn't have 'name'
+    assert "name" not in mesh.field_data

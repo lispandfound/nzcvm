@@ -22,7 +22,6 @@ from rich.progress import (
 )
 from rich.table import Table
 
-from nzcvm.mesh import read_vtkhdf
 
 console = Console()
 
@@ -292,7 +291,7 @@ def main():
         console.print(f"[bold red]Error:[/bold red] File {args.mesh} not found.")
         return
 
-    mesh = read_vtkhdf(args.mesh)
+    mesh = pv.read(args.mesh)
     analyze_voxel_hashmap(mesh, args.resolution)
 
 

@@ -32,7 +32,6 @@ from nzcvm import nzcvm  # ty: ignore[unresolved-import]
 from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 from nzcvm.components import Component
-from nzcvm.mesh import read_vtkhdf
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
@@ -434,9 +433,15 @@ class ModelTree:
         else:
             mesh_paths = [Path(p) for p in models]
 
-        mesh_models = [
-            _mesh_model_from_pyvista(read_vtkhdf(p), name=p.stem) for p in mesh_paths
-        ]
+        mesh_models = []
+        for p in mesh_paths:
+            model = pv.read(p)
+            if not isinstance(model, pv.UnstructuredGrid):
+                raise ValueError(
+                    f"Model {p} is not an unstructured grid (received {type(p)!r})."
+                )
+            mesh_models.append(_mesh_model_from_pyvista(model, name=p.stem))
+
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw)
 

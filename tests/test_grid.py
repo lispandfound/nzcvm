@@ -8,7 +8,7 @@ Key properties verified:
 3. depth is 0 at k=0 of the first layer (surface == top).
 """
 
-from __future__ import annotations
+import pytest
 
 from dataclasses import dataclass
 
@@ -88,28 +88,19 @@ def _make_grid(
 # ---------------------------------------------------------------------------
 
 
-class TestFillGridDaskBacking:
-    """All coordinate arrays must be dask-backed after fill_grid."""
-
-    def test_x_is_dask(self):
-        grids = [_make_grid("r0", 100.0, 500.0, 0.5)]
-        result = fill_grid(grids, _FlatSurface())
-        assert isinstance(result[0][Coordinate.X].data, da.Array), "x must be dask"
-
-    def test_y_is_dask(self):
-        grids = [_make_grid("r0", 100.0, 500.0, 0.5)]
-        result = fill_grid(grids, _FlatSurface())
-        assert isinstance(result[0][Coordinate.Y].data, da.Array), "y must be dask"
-
-    def test_z_is_dask(self):
-        grids = [_make_grid("r0", 100.0, 500.0, 0.5)]
-        result = fill_grid(grids, _FlatSurface())
-        assert isinstance(result[0][Coordinate.Z].data, da.Array), "z must be dask"
-
-    def test_depth_is_dask(self):
-        grids = [_make_grid("r0", 100.0, 500.0, 0.5)]
-        result = fill_grid(grids, _FlatSurface())
-        assert isinstance(result[0]["depth"].data, da.Array), "depth must be dask"
+@pytest.mark.parametrize(
+    "cell_registration",
+    list(CellRegistration),
+)
+@pytest.mark.parametrize(
+    "coordinate", [Coordinate.X, Coordinate.Y, Coordinate.Z, Coordinate.DEPTH]
+)
+def test_component_is_dask(cell_registration: CellRegistration, coordinate: Coordinate):
+    grids = [_make_grid("r0", 100.0, 500.0, 0.5)]
+    result = fill_grid(grids, _FlatSurface(), cell_registration)
+    assert isinstance(result[0][coordinate].data, da.Array), (
+        f"{coordinate!r} must be dask"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -117,91 +108,84 @@ class TestFillGridDaskBacking:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    "cell_registration",
+    list(CellRegistration),
+)
 class TestFillGridContinuity:
     """Bottom of level N must equal top of level N+1 (continuity)."""
 
-    def test_bottom_of_first_equals_top_of_second(self):
+    def test_bottom_of_first_equals_top_of_second(
+        self, cell_registration: CellRegistration
+    ):
         grids = [
             _make_grid("r0", 100.0, 500.0, 0.5),
             _make_grid("r1", 100.0, 1500.0, 0.5),
         ]
-        result = fill_grid(grids, _FlatSurface())
+        result = fill_grid(grids, _FlatSurface(), cell_registration)
         result_by_name = {g.attrs["name"]: g for g in result}
 
         z0 = result_by_name["r0"][Coordinate.Z].values
         z1 = result_by_name["r1"][Coordinate.Z].values
 
-        np.testing.assert_allclose(
-            z0[:, :, -1],
-            z1[:, :, 0],
-            rtol=1e-5,
-            err_msg="Bottom of r0 must equal top of r1",
-        )
+        match cell_registration:
+            case CellRegistration.CORNER:
+                assert z0[:, :, -1] == pytest.approx(z1[:, :, 0])
+            case CellRegistration.CENTRE:
+                assert z0[:, :, -1] != pytest.approx(z1[:, :, 0], abs=0.1)
 
-    def test_continuity_three_levels(self):
+    def test_continuity_three_levels(self, cell_registration: CellRegistration):
         grids = [
             _make_grid("r0", 100.0, 300.0, 1.0),
             _make_grid("r1", 100.0, 800.0, 0.5),
             _make_grid("r2", 100.0, 2000.0, 0.0),
         ]
-        result = fill_grid(grids, _FlatSurface(z_value=-50.0))
+        result = fill_grid(grids, _FlatSurface(z_value=-50.0), cell_registration)
         result_by_name = {g.attrs["name"]: g for g in result}
 
         for a, b in [("r0", "r1"), ("r1", "r2")]:
             za = result_by_name[a][Coordinate.Z].values
             zb = result_by_name[b][Coordinate.Z].values
-            np.testing.assert_allclose(
-                za[:, :, -1],
-                zb[:, :, 0],
-                rtol=1e-5,
-                err_msg=f"Bottom of {a} must equal top of {b}",
-            )
+            match cell_registration:
+                case CellRegistration.CORNER:
+                    assert za[:, :, -1] == pytest.approx(zb[:, :, 0])
+                case CellRegistration.CENTRE:
+                    assert za[:, :, -1] != pytest.approx(zb[:, :, 0], abs=0.1)
 
-    def test_depth_zero_at_surface(self):
+    def test_depth_zero_at_surface(self, cell_registration: CellRegistration):
         """depth must be 0 at k=0 of the first layer (top is the surface)."""
         grids = [_make_grid("r0", 100.0, 500.0, 1.0)]
-        result = fill_grid(grids, _FlatSurface(z_value=-100.0))
+        result = fill_grid(grids, _FlatSurface(z_value=-100.0), cell_registration)
         depth = result[0]["depth"].values
-        np.testing.assert_allclose(
-            depth[:, :, 0],
-            0.0,
-            atol=1e-6,
-            err_msg="depth must be 0 at the top interface of the first layer",
-        )
+        match cell_registration:
+            case CellRegistration.CORNER:
+                assert depth[..., 0] == pytest.approx(0.0)
+            case CellRegistration.CENTRE:
+                assert depth[..., 0] != pytest.approx(0.0, abs=0.1)
 
 
-# ---------------------------------------------------------------------------
-# Tests — multi-resolution isel resampling
-# ---------------------------------------------------------------------------
+def test_continuity_fine_to_coarse():
+    """Bottom of fine layer must equal top of coarse layer after sel resampling."""
+    min_res = 100.0
+    grids = [
+        _make_grid("fine", 100.0, 500.0, 1.0, minimum_resolution=min_res),
+        _make_grid("coarse", 200.0, 2000.0, 1.0, minimum_resolution=min_res),
+    ]
+    result = fill_grid(grids, _FlatSurface(z_value=-50.0), CellRegistration.CORNER)
+    result_by_name = {g.attrs["name"]: g for g in result}
 
+    z_fine = result_by_name["fine"][Coordinate.Z].values
+    z_coarse = result_by_name["coarse"][Coordinate.Z].values
 
-class TestFillGridMultiResolution:
-    """Grids at different resolutions must remain watertight via isel resampling."""
+    # The coarse grid has half the I/J points; its top should match the
+    # corresponding subset (every other point) of the fine bottom.
+    bottom_fine = z_fine[::2, ::2, -1]
+    top_coarse = z_coarse[:, :, 0]
 
-    def test_continuity_fine_to_coarse(self):
-        """Bottom of fine layer must equal top of coarse layer after sel resampling."""
-        min_res = 100.0
-        grids = [
-            _make_grid("fine", 100.0, 500.0, 1.0, minimum_resolution=min_res),
-            _make_grid("coarse", 200.0, 2000.0, 1.0, minimum_resolution=min_res),
-        ]
-        result = fill_grid(grids, _FlatSurface(z_value=-50.0))
-        result_by_name = {g.attrs["name"]: g for g in result}
+    assert bottom_fine == pytest.approx(top_coarse), (
+        "Bottom of fine layer must equal top of coarse layer (sel subset)"
+    )
 
-        z_fine = result_by_name["fine"][Coordinate.Z].values
-        z_coarse = result_by_name["coarse"][Coordinate.Z].values
-
-        # The coarse grid has half the I/J points; its top should match the
-        # corresponding subset (every other point) of the fine bottom.
-        bottom_fine = z_fine[::2, ::2, -1]
-        top_coarse = z_coarse[:, :, 0]
-
-        np.testing.assert_allclose(
-            bottom_fine,
-            top_coarse,
-            rtol=1e-5,
-            err_msg="Bottom of fine layer must equal top of coarse layer (sel subset)",
-        )
 
 # ---------------------------------------------------------------------------
 # Tests — cell registration

@@ -162,7 +162,7 @@ def rotate(
     >>> R = rotate(90.0)           # 2-D, 90° CCW: (1,0) → (0,1)
     >>> np.allclose((R @ [1.0, 0.0, 1.0])[:2], [0.0, 1.0], atol=1e-6)
     True
-    >>> R3 = rotate(90.0, origin=(0.0, 0.0, 0.0), axis='z')
+    >>> R3 = rotate(90.0, axis='z')
     >>> np.allclose((R3 @ [1.0, 0.0, 0.0, 1.0])[:3], [0.0, 1.0, 0.0], atol=1e-6)
     True
     """

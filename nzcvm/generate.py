@@ -122,12 +122,12 @@ def _logical_k_indices(
 
     Parameters
     ----------
-    nk :
+    nk : int
         Number of vertical levels from
         :func:`~nzcvm.curvilinear_mesh.curvilinear_mesh_boundary`.
-    cell_registration :
+    cell_registration : CellRegistration
         Whether layer positions are at cell corners or centres.
-    dtype :
+    dtype : np.dtype
         NumPy dtype for the weight values (typically ``float32``).
 
     Returns

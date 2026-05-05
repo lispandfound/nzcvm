@@ -4,7 +4,7 @@
 
 1. Builds per-refinement 2-D grid datasets with physical ``x``/``y``
    coordinate arrays, optionally offset by half a cell for
-   ``cell_registration="center"``.
+   ``cell_registration=CellRegistration.CENTRE``.
 2. Loads the topographic surface from ``velocity_model_spec.grid.surface``.
 3. Calls :func:`fill_grid` to populate each dataset with the 3-D curvilinear
    ``z``, ``depth``, and broadcast ``x``/``y`` arrays.
@@ -113,7 +113,29 @@ def _compute_vertical_chunk_size(elevation: xr.DataArray) -> int:
 def _logical_k_indices(
     nk: int, cell_registration: CellRegistration, dtype: np.dtype
 ) -> xr.DataArray:
+    """Build a 1-D K DataArray of normalised layer-interpolation weights.
 
+    For ``CORNER`` registration the weights run from ``0.0`` to ``1.0``
+    inclusive (one value per interface, *nk* values total).
+    For ``CENTRE`` registration the weights are the midpoints of consecutive
+    corner intervals, giving *nk - 1* cell-centre values.
+
+    Parameters
+    ----------
+    nk :
+        Number of vertical levels from
+        :func:`~nzcvm.curvilinear_mesh.curvilinear_mesh_boundary`.
+    cell_registration :
+        Whether layer positions are at cell corners or centres.
+    dtype :
+        NumPy dtype for the weight values (typically ``float32``).
+
+    Returns
+    -------
+    xarray.DataArray
+        1-D DataArray with dim ``k`` and integer coordinate ``k = 0 … nk-1``
+        (or ``nk-2`` for ``CENTRE`` registration).
+    """
     k_indices = np.arange(nk)
     k_coord = np.linspace(0.0, 1.0, num=nk, dtype=dtype)
     if cell_registration == CellRegistration.CENTRE:
@@ -217,7 +239,9 @@ def _annotate_topo_metadata(grids: list[xr.Dataset], elevation: xr.DataArray) ->
 
 
 def fill_grid(
-    grids: list[xr.Dataset], topography: Surface, cell_registration: CellRegistration
+    grids: list[xr.Dataset],
+    topography: Surface,
+    cell_registration: CellRegistration = CellRegistration.CORNER,
 ) -> list[xr.Dataset]:
     """Populate 2-D grid datasets with 3-D elevation, depth, and coordinates.
 
@@ -249,6 +273,11 @@ def fill_grid(
     topography :
         Loaded topography surface used to query surface elevations at the
         top (shallowest) grid's horizontal coordinates.
+    cell_registration :
+        Whether layer coordinates are placed at cell corners (``CORNER``,
+        default) or cell centres (``CENTRE``).  This controls the vertical
+        interpolation weights passed to
+        :func:`~nzcvm.curvilinear_mesh.fill_between`.
 
     Returns
     -------
@@ -296,7 +325,7 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
 
     1. Creates per-refinement 2-D grid datasets with physical ``x``/``y``
        arrays (with optional cell-centre half-cell offset when
-       ``grid.cell_registration == "center"``).
+       ``grid.cell_registration == CellRegistration.CENTRE``).
     2. Loads the topographic surface from ``velocity_model_spec.grid.surface``.
     3. Calls :func:`fill_grid` to add 3-D ``z``, ``depth``, and broadcast
        ``x``/``y`` variables to each dataset.
@@ -371,7 +400,7 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
 
     # Load the topographic surface and populate the 3D geometry.
     topographic_surface = read_surface_from_path(grid_spec.surface)
-    grids = fill_grid(grids, topographic_surface)
+    grids = fill_grid(grids, topographic_surface, cell_reg)
 
     # Assemble DataTree.
     nodes = {f"grid/{g.attrs['name']}": g for g in grids}

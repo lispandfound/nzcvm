@@ -10,7 +10,7 @@ from pathlib import Path
 
 import xarray as xr
 
-from . import emod3d, sfile, netcdf, quantise, zarr
+from . import emod3d, sfile, netcdf, quantise
 
 
 class Format(StrEnum):

@@ -17,7 +17,7 @@ from nzcvm.model import ModelRange
 
 import shapely
 from scipy.spatial import cKDTree
-from numba import njit, prange
+from numba import njit
 
 logger = logging.getLogger(__name__)
 

@@ -13,7 +13,7 @@ actual velocity-model queries.  A minimal TOML example::
 
     [[layers]]
     type = "clamp"
-    [layers.vs]
+    [layers.clamps.vs]
     min = 500.0
 
     [[layers]]

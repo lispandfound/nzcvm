@@ -265,18 +265,17 @@ def fill_grid(
 
     Parameters
     ----------
-    grids :
+    grids : list of datasets
         List of 2-D datasets, each with physical ``x``/``y`` arrays and the
         attributes ``resolution``, ``bottom``, ``deformation``, and ``name``.
         The list is sorted internally by ``bottom``.
-    topography :
+    topography : Surface
         Loaded topography surface used to query surface elevations at the
         top (shallowest) grid's horizontal coordinates.
-    cell_registration :
-        Whether layer coordinates are placed at cell corners (``CORNER``,
-        default) or cell centres (``CENTRE``).  This controls the vertical
-        interpolation weights passed to
-        :func:`~nzcvm.curvilinear_mesh.fill_between`.
+    cell_registration : CellRegistration
+        Whether layer coordinates are placed at cell corners (``CORNER``) or
+        cell centres (``CENTRE``). This controls the vertical interpolation
+        weights passed to :func:`~nzcvm.curvilinear_mesh.fill_between`.
 
     Returns
     -------
@@ -405,6 +404,9 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
     nodes = {f"grid/{g.attrs['name']}": g for g in grids}
     root = xr.DataTree.from_dict(nodes, name=name)
 
-    root.attrs.update(velocity_model_spec.metadata.to_dict())
-    root["/grid"].attrs.update(velocity_model_spec.grid.to_dict())
+    metadata_attrs = velocity_model_spec.metadata.to_dict()
+    root.attrs.update(metadata_attrs)
+    grid_attrs = velocity_model_spec.grid.to_dict()
+    root["/grid"].attrs.update(grid_attrs)
+
     return root

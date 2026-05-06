@@ -8,7 +8,8 @@ import dask.array as da
 import h5py
 import numpy as np
 
-from nzcvm.components import Component, Coordinate
+from nzcvm.components import Component
+from nzcvm.coordinates import Coordinate
 
 # Global attributes
 ATTENUATION_ATTR = "Attenuation"

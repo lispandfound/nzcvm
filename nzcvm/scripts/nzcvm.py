@@ -47,7 +47,7 @@ def configure_logging(level: str) -> None:
             "console": {
                 "class": "logging.StreamHandler",
                 "formatter": "standard",
-                "level": "INFO",
+                "level": level,
                 "stream": "ext://sys.stdout",
             },
         },
@@ -58,9 +58,10 @@ def configure_logging(level: str) -> None:
                 "propagate": True,
             },
             "dask": {
-                "level": "WARNING",  # Silence noisy dask internals
+                "level": level,  # Silence noisy dask internals
                 "propagate": True,
             },
+            "hdf5plugin": {"level": level, "propagate": True},
         },
     }
 
@@ -143,7 +144,13 @@ def generate(
             help="Config format to read. You can usually leave this as inferred."
         ),
     ] = VelocityModelSpecFormat.INFERRED,
-    log_level: str = "INFO",
+    quantise: Annotated[
+        bool,
+        typer.Option(
+            help="If set, quantise the output in NetCDF/Zarr formats using ZFP"
+        ),
+    ] = False,
+    log_level: str = "WARNING",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
     configure_logging(log_level)
@@ -170,6 +177,7 @@ def generate(
     with console.status("Initialising velocity model"):
         velocity_model = skeleton_velocity_model(velocity_model_spec)
 
+    print(velocity_model)
     with console.status("Building layer pipeline"):
         model_pipeline = velocity_model_spec.build_pipeline()
     rich.print(model_pipeline)
@@ -185,9 +193,7 @@ def generate(
 
     with profiler as prof, res_prof as rprof, progress_ctx:
         formats.write_velocity_model(
-            velocity_model,
-            output,
-            formats.from_path(output),
+            velocity_model, output, output_format, quantise_arrays=quantise
         )
 
     if profile and prof and rprof:

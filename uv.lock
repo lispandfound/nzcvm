@@ -510,6 +510,22 @@ wheels = [
 ]
 
 [[package]]
+name = "hdf5plugin"
+version = "6.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "h5py" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a1/4f/9130151e3aa475b3e4e9a611bf608107fe5c72d277d74c4cf36f164b7c81/hdf5plugin-6.0.0.tar.gz", hash = "sha256:847ed9e96b451367a110f0ba64a3b260d38d64bbf3f25751858d3b56e094cfe0", size = 66372085, upload-time = "2025-10-08T18:16:28.423Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/13/15017f6210bfea843316d62f0f121e364e17bb129444ed803a256a213036/hdf5plugin-6.0.0-py3-none-macosx_10_13_universal2.whl", hash = "sha256:a59fbd5d4290a8a5334d82ccb4c6b9bfc7aaf586de7fedb88762e8601bc05fd4", size = 13339413, upload-time = "2025-10-08T18:16:10.656Z" },
+    { url = "https://files.pythonhosted.org/packages/40/bf/d1f3765fb879820d7331e30e860b684f5b78d3ec17324e8f54130cbe560b/hdf5plugin-6.0.0-py3-none-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:d301f4b9295872bacf277c70628d4c5e965ee47db762d8fde2d4849f201b9897", size = 42858563, upload-time = "2025-10-08T18:16:14.106Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/67/37d0b84fbbf26bf0d6a99a8f98bcd82bb6d437dc8cabee259fb3d7506ec7/hdf5plugin-6.0.0-py3-none-manylinux_2_24_ppc64le.manylinux_2_28_ppc64le.whl", hash = "sha256:78b082ea355fe46bf5b396024de1fb662a1aaf9a5e11861ad61a5a2a6316d59d", size = 45126124, upload-time = "2025-10-08T18:16:17.992Z" },
+    { url = "https://files.pythonhosted.org/packages/ed/2f/1046d464ad1db29a4f6c70ba4e19b39baa8a6542c719eaa4e765108f07f1/hdf5plugin-6.0.0-py3-none-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:79e0524d18ddc41c0cf2e1bb2e529d4e154c286f6a1bd85f3d44019d2a17574a", size = 44857273, upload-time = "2025-10-08T18:16:22.007Z" },
+    { url = "https://files.pythonhosted.org/packages/61/b3/75478bdfee85533777de4204373f563aa7a1074355300743c3aedc33cac5/hdf5plugin-6.0.0-py3-none-win_amd64.whl", hash = "sha256:99866f90be1ceac5519e6e038669564be326c233618d59ba1f38c9dd8c32099e", size = 3379316, upload-time = "2025-10-08T18:16:25.007Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.11"
 source = { registry = "https://pypi.org/simple" }
@@ -1085,6 +1101,7 @@ dependencies = [
     { name = "dask", extra = ["array", "diagnostics"] },
     { name = "geopandas" },
     { name = "h5py" },
+    { name = "hdf5plugin" },
     { name = "mashumaro", extra = ["toml", "yaml"] },
     { name = "meshio" },
     { name = "numba" },
@@ -1102,6 +1119,7 @@ dependencies = [
     { name = "typer" },
     { name = "xarray", extra = ["io"] },
     { name = "zarr" },
+    { name = "zfpy" },
 ]
 
 [package.dev-dependencies]
@@ -1118,6 +1136,7 @@ requires-dist = [
     { name = "dask", extras = ["array", "diagnostics"], specifier = ">=2026.3.0" },
     { name = "geopandas", specifier = ">=1.1.3" },
     { name = "h5py", specifier = ">=3.16.0" },
+    { name = "hdf5plugin", specifier = ">=6.0.0" },
     { name = "mashumaro", extras = ["json", "toml", "yaml"], specifier = ">=3.20" },
     { name = "meshio", specifier = ">=5.3.5" },
     { name = "numba", specifier = ">=0.65.0" },
@@ -1135,6 +1154,7 @@ requires-dist = [
     { name = "typer", specifier = ">=0.24.2" },
     { name = "xarray", extras = ["io"], specifier = ">=2026.2.0" },
     { name = "zarr", specifier = ">=3.1.6" },
+    { name = "zfpy", specifier = ">=1.0.1" },
 ]
 
 [package.metadata.requires-dev]
@@ -2227,4 +2247,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/31/5a/b8a0cf39a14c770c30bd1f2d120c54000c8cd9e84e8e79f38d9a7ce58071/zarr-3.1.6.tar.gz", hash = "sha256:d95e72cbea4b90e9a70679468b8266400331756232576ae2b43400ac5108d0eb", size = 386531, upload-time = "2026-03-23T17:25:18.748Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/de/7c/ba8ca8cbe9dbef8e83a95fc208fed8e6686c98b4719aaa0aa7f3d31fe390/zarr-3.1.6-py3-none-any.whl", hash = "sha256:b5a82c5079d1c3d4ee8f06746fa3b9a98a7d804300fa3f4be154362a33e1207e", size = 295655, upload-time = "2026-03-23T17:25:17.189Z" },
+]
+
+[[package]]
+name = "zfpy"
+version = "1.0.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/11/f4/419e613c612d2da771cf7f8b8e112ae22e40066293bb190f0a57d018d299/zfpy-1.0.1.tar.gz", hash = "sha256:75c7014bdb2ad497a08846aaadca6d13de7c154a541c42557e52ec42030ca926", size = 51559, upload-time = "2025-10-09T09:00:19.61Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/e3/6252478931b05582c2d69fd6d632b889fc12f5ecb8bba1a658e370f39d8a/zfpy-1.0.1-cp313-cp313-macosx_10_13_x86_64.whl", hash = "sha256:791fa42b651a26be67e52043b619e3a039862900e7080711d07a5de956158b8c", size = 112789, upload-time = "2024-11-26T08:20:16.266Z" },
+    { url = "https://files.pythonhosted.org/packages/54/80/7a2b7ddc427ddde0448917e4b25e85c89ec243b6ab09671aafabb27333a3/zfpy-1.0.1-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:f811480ebff2e028c50bf3491d1d2e3869eb4388883543d0698f5fdc917e4386", size = 208295, upload-time = "2024-11-26T08:20:17.27Z" },
+    { url = "https://files.pythonhosted.org/packages/11/fc/298d32dbfee464e77b02a441fb7d3d261c5215aee6054a2150a36f675fa6/zfpy-1.0.1-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:665d3f55665a5b53642842f751f2dc1e7ec5a1307030f88b8137e63bb93c9e24", size = 929189, upload-time = "2025-10-09T09:00:11.041Z" },
+    { url = "https://files.pythonhosted.org/packages/84/e5/c687647ef8c6d716095e1ae7ab4923fdb1ef67eb98613ebcf98567da8945/zfpy-1.0.1-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:7192425d69887a0759aa3f494f942fe5da7fd32debc1ec5ed44bbd754d8b486a", size = 982510, upload-time = "2025-10-09T09:00:12.074Z" },
+    { url = "https://files.pythonhosted.org/packages/84/04/bf33d66dbe69161f52b8315960c28bda8487fcc40a17ad2f21d969973705/zfpy-1.0.1-cp313-cp313-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:d4892bc441ce59de98c4b3b29f04e44657aa6ccfe3ae5ca23660efb010b829d6", size = 829807, upload-time = "2024-11-26T08:20:18.625Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/a1/6c83ed879fdf8758dbf6cfea2dc626acd0885b844478a25d5add00189f8d/zfpy-1.0.1-cp313-cp313-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:c0a64590ef3c182988f4ac5745ec6e1623b06c348583cbdb96d296e4899f4469", size = 840087, upload-time = "2024-11-26T08:20:20.476Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/2c/2ae60826091824196d7b57d1fa95a78bd0bd5f84dc5633ea8151375ee415/zfpy-1.0.1-cp313-cp313-win_amd64.whl", hash = "sha256:f9a71cfce2fb7a82497e90e7152f847250664f30ca4dfedcca500c35d4c63e44", size = 151298, upload-time = "2024-11-27T14:27:24.084Z" },
+    { url = "https://files.pythonhosted.org/packages/6a/34/fd98b894c209cde197d0730a7bfb8816a64e5cba5b55d37775653bdbb3fd/zfpy-1.0.1-cp314-cp314-macosx_10_13_x86_64.whl", hash = "sha256:ba62488da318a1e2a7497164823ac0899993560e41fbdfb0381b0f011b317f26", size = 110533, upload-time = "2025-10-09T09:00:13.487Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/aa/20700e764b317ec00d43cfa3b7932c7aa6389fc4c8575e0387e5f615257a/zfpy-1.0.1-cp314-cp314-macosx_11_0_arm64.whl", hash = "sha256:838926f46c6601bce70068b711d630f74cde89ab33d92851bfaa9ed22ae06009", size = 211052, upload-time = "2025-10-09T09:00:14.327Z" },
+    { url = "https://files.pythonhosted.org/packages/2c/3e/e06f05503687980f8f3c4890e2374ed25c368501df45a0c20ae171ccddd4/zfpy-1.0.1-cp314-cp314-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:78dfd1ce01fc79e068be69a7e883203cf47f13806e6f65d66cb30e2b2a4bcb13", size = 926708, upload-time = "2025-10-09T09:00:15.256Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/83/ce7ee50b9e34205b7a30f1c34c87b7d31e9b74ec1f10ed4ecc7c5898a10d/zfpy-1.0.1-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:802633376e86ed19bb07cd8518dd445a81b81f89ef9ac2147f4429a95cd0a69f", size = 974968, upload-time = "2025-10-09T09:00:16.617Z" },
+    { url = "https://files.pythonhosted.org/packages/d5/20/25ec660961c4197ff59904691da3bfa091f4ae203b7557c834e05ef7fe9d/zfpy-1.0.1-cp314-cp314-win_amd64.whl", hash = "sha256:5448056a32da0f5db4dd3a80b008d6d31a06ba1a6d44bf5cf3a112a238ca30ac", size = 154849, upload-time = "2025-10-09T09:00:18.41Z" },
 ]

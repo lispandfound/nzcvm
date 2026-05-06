@@ -25,6 +25,7 @@ nzcvm.model_spec.ModelMetadata : Stores coordinate-system parameters alongside m
 """
 
 from enum import StrEnum, auto
+from typing import Literal
 
 import numpy as np
 import xarray as xr
@@ -53,7 +54,7 @@ class Coordinate(StrEnum):
     X = auto()
     Y = auto()
     Z = auto()
-    ELEVATION = auto()
+    DEPTH = auto()
     I = auto()  # noqa: E741
     J = auto()
     K = auto()
@@ -161,7 +162,7 @@ def rotate(
     >>> R = rotate(90.0)           # 2-D, 90° CCW: (1,0) → (0,1)
     >>> np.allclose((R @ [1.0, 0.0, 1.0])[:2], [0.0, 1.0], atol=1e-6)
     True
-    >>> R3 = rotate(90.0, origin=(0.0, 0.0, 0.0), axis='z')
+    >>> R3 = rotate(90.0, axis='z')
     >>> np.allclose((R3 @ [1.0, 0.0, 0.0, 1.0])[:3], [0.0, 1.0, 0.0], atol=1e-6)
     True
     """

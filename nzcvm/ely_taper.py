@@ -20,7 +20,7 @@ from nzcvm.components import Component
 
 # Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s using sympy.
 BROCHER_VP_COEFFS = xr.DataArray(
-    np.array([-2.51e-11, 2.683e-07, 0.0008206, 2.0947, 940.9], dtype=np.float32),
+    np.array([-2.51e-11, 2.683e-07, -0.0008206, 2.0947, 940.9], dtype=np.float32),
     dims=["degree"],
     coords=dict(degree=[4, 3, 2, 1, 0]),
 )

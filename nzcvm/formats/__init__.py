@@ -10,7 +10,7 @@ from pathlib import Path
 
 import xarray as xr
 
-from . import emod3d, sfile
+from . import emod3d, sfile, netcdf, quantise
 
 
 class Format(StrEnum):
@@ -71,25 +71,45 @@ def from_path(path: Path) -> Format:
 
 
 def write_velocity_model(
-    velocity_model: xr.DataTree, path: Path, format: Format
+    velocity_model: xr.DataTree,
+    path: Path,
+    format: Format,
+    quantise_arrays: bool = True,
 ) -> None:
     """Write *velocity_model* to *path* in the given *format*.
 
     Parameters
     ----------
-    velocity_model :
+    velocity_model : DataTree
         Populated :class:`xarray.DataTree` produced by the query pipeline.
-    path :
+    path : Path
         Destination file or directory path.
-    format :
+    format : Format
         Output format; use :func:`from_path` to infer from the extension.
+    quantise : bool
+        If True, quantise the velocity model output for formats that support it
     """
+    if format == Format.INFERRED:
+        format = from_path(path)
+
+    if quantise_arrays and format != Format.NETCDF:
+        raise ValueError(
+            "Lossy array quantisation is only supported with the NetCDF format."
+        )
+    elif quantise_arrays:
+        velocity_model = quantise.apply_compression(
+            velocity_model, quantise.DEFAULT_PRECISION
+        )
+
     match format:
         case Format.EMOD3D:
             emod3d.to_emod3d(velocity_model, path)
         case Format.SFILE:
             sfile.to_sfile(velocity_model, path)
         case Format.NETCDF:
-            velocity_model.to_netcdf(path, engine="h5netcdf", mode="w")
+            netcdf.to_netcdf(
+                velocity_model,
+                path,
+            )
         case Format.ZARR:
             velocity_model.to_zarr(path, mode="w")

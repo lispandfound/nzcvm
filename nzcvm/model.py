@@ -29,10 +29,9 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.components import Component
-from nzcvm.mesh import read_vtkhdf
-
 from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
+
+from nzcvm.components import Component
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
@@ -434,9 +433,15 @@ class ModelTree:
         else:
             mesh_paths = [Path(p) for p in models]
 
-        mesh_models = [
-            _mesh_model_from_pyvista(read_vtkhdf(p), name=p.stem) for p in mesh_paths
-        ]
+        mesh_models = []
+        for p in mesh_paths:
+            model = pv.read(p)
+            if not isinstance(model, pv.UnstructuredGrid):
+                raise ValueError(
+                    f"Model {p} is not an unstructured grid (received {type(p)!r})."
+                )
+            mesh_models.append(_mesh_model_from_pyvista(model, name=p.stem))
+
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw)
 
@@ -606,7 +611,7 @@ class ModelTree:
         xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
         lo, hi = model_range.value
         params = QueryParams(lo, hi)
-        logger.info("Querying for chunk qualities for range: %s.", model_range)
+        logger.debug("Querying for chunk qualities for range: %s.", model_range)
         buf = self._raw.query_many(xyz, params)
         return buf.reshape(x.shape + (6,))
 

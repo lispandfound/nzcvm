@@ -1,7 +1,5 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-from nzcvm.components import Component
-
 from nzcvm.graph import export_datatree_graph
 
 import os
@@ -21,14 +19,10 @@ from rich.panel import Panel
 from rich.table import Table
 from tqdm.dask import TqdmCallback
 
-from nzcvm import formats, surface
+from nzcvm import formats
 from nzcvm.generate import skeleton_velocity_model
 from nzcvm.model_spec import VelocityModelSpec, VelocityModelSpecFormat
-from nzcvm.layers.query import ModelLayer
-from nzcvm.layers.ely import ElyTaperLayer
-from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.helpers import execute_model_pipeline
-from nzcvm.model import Model
 from nzcvm.scripts import (
     construct_mesh,
     convert_tomography,
@@ -38,35 +32,40 @@ from nzcvm.scripts import (
 )
 
 console = Console()
-LOGGING_CONFIG = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "standard": {
-            "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
+
+
+def configure_logging(level: str) -> None:
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "standard": {
+                "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
+            },
         },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "standard",
-            "level": "INFO",
-            "stream": "ext://sys.stdout",
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "standard",
+                "level": level,
+                "stream": "ext://sys.stdout",
+            },
         },
-    },
-    "loggers": {
-        "": {  # root logger
-            "handlers": ["console"],
-            "level": "INFO",
-            "propagate": True,
+        "loggers": {
+            "": {  # root logger
+                "handlers": ["console"],
+                "level": level,
+                "propagate": True,
+            },
+            "dask": {
+                "level": level,  # Silence noisy dask internals
+                "propagate": True,
+            },
+            "hdf5plugin": {"level": level, "propagate": True},
         },
-        "dask": {
-            "level": "WARNING",  # Silence noisy dask internals
-            "propagate": True,
-        },
-    },
-}
-logging.config.dictConfig(LOGGING_CONFIG)
+    }
+
+    logging.config.dictConfig(logging_config)
 
 
 def num_cores() -> int:
@@ -115,26 +114,6 @@ def generate(
     output: Annotated[
         Path, typer.Argument(help="Output path to write velocity model to.")
     ],
-    topography: Annotated[
-        Path,
-        typer.Option(
-            help="Topography surface file.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    vs30_path: Annotated[
-        Path,
-        typer.Option(
-            help="Vs30 surface file.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
     n_threads: Annotated[
         int | None,
         typer.Option(help="Number of threads to spawn to query the model.", min=1),
@@ -153,16 +132,6 @@ def generate(
     graph_output: Annotated[
         Path, typer.Option(help="Dask graph output location.")
     ] = Path("dask_graph.svg"),
-    model_path: Annotated[
-        Path | None,
-        typer.Option(
-            help="Path containing models.", exists=True, file_okay=False, dir_okay=True
-        ),
-    ] = None,
-    model_glob: Annotated[
-        str,
-        typer.Option(help="Glob for models, set this to load only a subset of models."),
-    ] = "*.vtkhdf",
     output_format: Annotated[
         formats.Format,
         typer.Option(
@@ -175,13 +144,18 @@ def generate(
             help="Config format to read. You can usually leave this as inferred."
         ),
     ] = VelocityModelSpecFormat.INFERRED,
+    quantise: Annotated[
+        bool,
+        typer.Option(
+            help="If set, quantise the output in NetCDF/Zarr formats using ZFP"
+        ),
+    ] = False,
+    log_level: str = "WARNING",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
+    configure_logging(log_level)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
-    resolved_model_path = (
-        model_path if model_path is not None else determine_model_path()
-    )
 
     console.print(
         Panel.fit(
@@ -191,39 +165,21 @@ def generate(
         )
     )
 
-    if not resolved_model_path.exists():
-        console.print(
-            f"[error]Error:[/error] Model path [path]{resolved_model_path}[/path] not found."
-        )
-        return
-
     velocity_model_spec = VelocityModelSpec.read_config(config, config_format)
-
-    with console.status("Initialising model"):
-        velocity_model = skeleton_velocity_model(velocity_model_spec)
-
-    print(velocity_model)
 
     summary = Table(show_header=False, box=rich.box.SIMPLE)
     summary.add_row(
         "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
     )
     summary.add_row("Refinements", str(len(velocity_model_spec.grid.mesh_refinements)))
-
     console.print(summary)
 
-    models = list(resolved_model_path.rglob(model_glob))
-    console.print(f"[info]Found {len(models)} model components in search path.[/info]")
+    with console.status("Initialising velocity model"):
+        velocity_model = skeleton_velocity_model(velocity_model_spec)
 
-    with console.status("Loading basin models"):
-        model = Model.load_models(*models)
-
-    with console.status("Reading surface vs30"):
-        vs30 = surface.read_surface_from_path(vs30_path)
-
-    model_pipeline = ClampLayer(
-        {Component.VS: (500.0, None)}, ElyTaperLayer(vs30, 450.0, ModelLayer(model))
-    )  # ty: ignore[invalid-argument-type]
+    print(velocity_model)
+    with console.status("Building layer pipeline"):
+        model_pipeline = velocity_model_spec.build_pipeline()
     rich.print(model_pipeline)
 
     velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
@@ -237,9 +193,7 @@ def generate(
 
     with profiler as prof, res_prof as rprof, progress_ctx:
         formats.write_velocity_model(
-            velocity_model,
-            output,
-            formats.from_path(output),
+            velocity_model, output, output_format, quantise_arrays=quantise
         )
 
     if profile and prof and rprof:

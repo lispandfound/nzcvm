@@ -30,7 +30,8 @@ import pyvista as pv
 
 QUALITIES_COMPONENTS = ("rho", "vp", "vs", "qp", "qs", "alpha")
 DEPTH_SCALAR = "depth"
-ALL_SCALARS = (DEPTH_SCALAR,) + QUALITIES_COMPONENTS
+LAYER_SCALAR = "layer"
+ALL_SCALARS = (DEPTH_SCALAR, LAYER_SCALAR) + QUALITIES_COMPONENTS
 
 GRID_PATH = "/grid"  # root path for grid groups inside the DataTree
 
@@ -54,6 +55,7 @@ def _iter_grid_groups(dt: xr.DataTree):
 
 
 def _build_structured_grid(
+    layer: int,
     ds: xr.Dataset,
     scalar: str,
     stride: int,
@@ -81,6 +83,8 @@ def _build_structured_grid(
     # --- scalar data -------------------------------------------------------
     if scalar == DEPTH_SCALAR:
         values = ds["depth"].values[sl, sl, sl].astype(np.float32)
+    elif scalar == LAYER_SCALAR:
+        values = np.full_like(x, layer, dtype=np.float32)
     else:
         comp_idx = QUALITIES_COMPONENTS.index(scalar)
         values = ds["qualities"].values[sl, sl, sl, comp_idx].astype(np.float32)
@@ -134,9 +138,6 @@ def basin(
             readable=True,
         ),
     ] = None,
-    scale: Annotated[
-        float, typer.Option(help="Vertical exaggeration factor (e.g. 5.0).", min=0.0)
-    ] = 1.0,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
     pl = pv.Plotter()
@@ -148,7 +149,28 @@ def basin(
             topo, style="wireframe", color="black", opacity=0.3, label="Surface"
         )
 
-    pl.add_mesh(mesh_data)
+    if scalar in mesh_data.point_data:
+        scalar_name = scalar
+    elif scalar in mesh_data.cell_data:
+        scalar_name = scalar
+    elif scalar in mesh_data.field_data:
+        field_values = np.asarray(mesh_data.field_data[scalar]).reshape(-1)
+        if field_values.size != 1:
+            raise typer.BadParameter(
+                f"Field-data scalar '{scalar}' must contain exactly one value, "
+                f"got {field_values.size}."
+            )
+        if mesh_data.n_cells > 0:
+            mesh_data.cell_data[scalar] = np.full(mesh_data.n_cells, field_values[0])
+        else:
+            mesh_data.point_data[scalar] = np.full(
+                mesh_data.n_points, field_values[0]
+            )
+        scalar_name = scalar
+    else:
+        raise typer.BadParameter(f"Scalar '{scalar}' not found in mesh data.")
+
+    pl.add_mesh(mesh_data, scalars=scalar_name)
     pl.camera.up = (0.0, 0.0, -1.0)
     pl.show()
 
@@ -261,6 +283,8 @@ def model(
         Optional[Path],
         typer.Option("--screenshot", help="Save a PNG screenshot to this path."),
     ] = None,
+    min_val: float | None = None,
+    max_val: float | None = None,
 ) -> None:
     """
     Load an xarray DataTree and visualise every /grid/* group as a 3-D
@@ -301,7 +325,7 @@ def model(
 
     # --- build grids -------------------------------------------------------
     grids: dict[str, pv.StructuredGrid] = {}
-    for name, ds in _iter_grid_groups(dt):
+    for i, (name, ds) in enumerate(_iter_grid_groups(dt)):
         # Check this group actually has the requested scalar
         if scalar == DEPTH_SCALAR and "depth" not in ds:
             typer.echo(f"  [skip] '{name}' has no 'depth' variable.")
@@ -312,7 +336,7 @@ def model(
 
         typer.echo(f"  Building StructuredGrid for '{name}' (stride={stride}) …")
         try:
-            g = _build_structured_grid(ds, scalar, stride)
+            g = _build_structured_grid(i, ds, scalar, stride)
             grids[name] = g
             typer.echo(f"    → {g.n_points:,} points, bounds: {np.round(g.bounds, 0)}")
         except Exception as exc:  # noqa: BLE001
@@ -324,7 +348,11 @@ def model(
 
     # --- compute global scalar range across all grids ----------------------
     all_vals = np.concatenate([g.point_data[scalar] for g in grids.values()])
-    clim = (float(np.nanmin(all_vals)), float(np.nanmax(all_vals)))
+    clim = [float(np.nanmin(all_vals)), float(np.nanmax(all_vals))]
+    if min_val is not None:
+        clim[0] = min_val
+    if max_val is not None:
+        clim[1] = max_val
     typer.echo(f"Scalar '{scalar}' range: {clim[0]:.4g} … {clim[1]:.4g}")
 
     # --- set up plotter ----------------------------------------------------

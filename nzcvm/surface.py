@@ -78,7 +78,6 @@ class Surface:
                 f"- Total failed: {len(bad_coords)}\n"
                 f"- Failure Rate: {len(bad_coords) / x.size:.2%}\n"
             )
-            print(note)
             e = ValueError("Points not in convex hull of surface boundary.")
             e.add_note(note)
 
@@ -89,7 +88,7 @@ class Surface:
         sampled = query_cloud.sample(
             self.mesh,
             tolerance=self.interpolation_tolerance,
-            snap_to_closest_point=True,
+            snap_to_closest_point=False,
         )
 
         z = np.array(sampled.point_data[self.mesh.active_scalars_name])

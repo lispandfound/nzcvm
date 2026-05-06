@@ -32,12 +32,19 @@ nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree from this
 nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
 """
 
+from nzcvm.layers.offshore import OffshoreBasin
+
+import shapely
+
+from nzcvm.components import Component
+
+import gzip
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 import os
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
-
+import pandas as pd
 from mashumaro.codecs.json import JSONDecoder
 from mashumaro.codecs.toml import TOMLDecoder
 from mashumaro.codecs.yaml import YAMLDecoder
@@ -272,6 +279,88 @@ class ClampLayerConfig(LayerConfig):
             for component, bound in self.clamps.items()
         }
         return ClampLayer(clamps, next_layer)
+
+
+@dataclass
+class OffshoreBasinConfig(LayerConfig):
+    """Configuration DTO for an :class:`~nzcvm.layers.offshore.OffshoreBasin`.
+
+    Parameters
+    ----------
+    coastline :
+        Path to the coastline file.
+    basin_depth :
+        Basin depth (see `DepthModel`).
+    simplification_tolerance : float
+        Simplification tolerance for coastline (in m), see `shapely.simplify` to
+        understand the meaning of this parameter.
+    basin_model :
+        Basin model to use (dictionary of `Component` keys)
+
+
+    Examples
+    --------
+    TOML::
+
+        [[layers]]
+        type = "basin"
+        coastline = "path/to/coastline.wkb.gz"
+        model = [
+            {"bottom_depth": 100.0, "rho": 1820, "vp": 1720, "vs": 500, "qp": 100.0, "qs": 50.0, "alpha": 1.0}
+        ]
+        basin_depth = [
+            {"distance": 0.0, "bottom_depth": 50.0}
+        ]
+    """
+
+    coastline: Path
+    basin_depth: list[dict[str, float | int]]
+    model: list[dict[str, float | int]]
+    simplification_tolerance: float | None = None
+    type: Literal["offshore"] = "offshore"
+
+    def __post_init__(self):
+        components = set(Component)
+        columns = components | {"bottom_depth"}
+        for layer in self.model:
+            if set(layer.keys()) != columns:
+                raise ValueError(
+                    f"Basin model must have exactly {', '.join(sorted(components))} and depth keys."
+                )
+
+        for layer in self.basin_depth:
+            if set(layer.keys()) != {"bottom_depth", "distance"}:
+                raise ValueError(
+                    "Basin model must have exactly bottom_depth and distance keys."
+                )
+
+    def build(self, next_layer: Any) -> Any:
+        """Instantiate an :class:`~nzcvm.layers.offshore.OffshoreBasin`.
+
+        Parameters
+        ----------
+        next_layer :
+            Downstream :class:`~nzcvm.layers.protocol.QueryLayer` to wrap.
+
+        Returns
+        -------
+        nzcvm.layers.offshore.OffshoreBasin
+        """
+
+        with gzip.open(self.coastline) as handle:
+            coastline = shapely.from_wkb(handle.read())
+
+        if self.simplification_tolerance:
+            coastline = coastline.simplify(self.simplification_tolerance)
+
+        basin_depth = pd.DataFrame(self.basin_depth)
+        model = pd.DataFrame(self.model)
+        return OffshoreBasin(
+            coastline=coastline,
+            basin_depth=basin_depth,
+            model=model,
+            next_layer=next_layer,
+        )
 
 
 @dataclass

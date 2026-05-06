@@ -78,23 +78,22 @@ class ElyTaperLayer:
         # Inside basins we don't have to compute the tomography or Ely taper.
         if np.allclose(alpha, 1.0):
             logger.debug("Chunk inside basin, skipping Ely taper calculation.")
-            logger.debug(
-                "Chunk qualities: Rho=[%.2f-%.2f] Vp=[%.2f-%.2f], Vs=[%.2f-%.2f]",
-                basins["qualities"].sel(component=Component.RHO).min(),
-                basins["qualities"].sel(component=Component.RHO).max(),
-                basins["qualities"].sel(component=Component.VP).min(),
-                basins["qualities"].sel(component=Component.VP).max(),
-                basins["qualities"].sel(component=Component.VS).min(),
-                basins["qualities"].sel(component=Component.VS).max(),
-            )
             return basins
 
         background = self.next_layer(chunk, **kwargs)
 
         safe_z = chunk["depth"].clip(max=self.z_t)
 
-        x_top = chunk[Coordinate.X.value].isel({Coordinate.K: 0})
-        y_top = chunk[Coordinate.Y.value].isel({Coordinate.K: 0})
+        x_top = (
+            chunk[Coordinate.X.value]
+            .isel({Coordinate.K: 0})
+            .drop_vars(Coordinate.K.value)
+        )
+        y_top = (
+            chunk[Coordinate.Y.value]
+            .isel({Coordinate.K: 0})
+            .drop_vars(Coordinate.K.value)
+        )
 
         vs30 = xr.apply_ufunc(
             self.interpolator.transform,
@@ -105,16 +104,18 @@ class ElyTaperLayer:
             dask="parallelized",
             output_dtypes=[np.float32],
         )
+        logger.debug(f"Vs30 range: {vs30.min()} - {vs30.max()}")
 
         # Select a z-layer of the block
         # The array [0] as the selection is important because it preserves the k
         # axis for downstream layers.
         surface_layer = chunk.isel({Coordinate.K: [0]}).copy()
 
-        # Set the z-level to be z_T
-        surface_layer[Coordinate.Z.value] = xr.full_like(
-            surface_layer[Coordinate.X.value], self.z_t
+        # This hack sets the reference elevation to an equivalent to depth = 450m below topography
+        surface_layer[Coordinate.Z.value] -= (
+            surface_layer[Coordinate.DEPTH.value] - self.z_t
         )
+        surface_layer[Coordinate.DEPTH.value] = self.z_t
 
         # Calculate bounding taper qualities using *ONLY* the tomography
         tomo_kwargs = kwargs.copy()
@@ -189,7 +190,10 @@ class ElyTaperLayer:
         xarray.Dataset
             Same dataset with ``qualities`` calculated according to Ely taper relations.
         """
-        if block.attrs["minimum_top_depth"] >= self.z_t:
+        if (
+            block.attrs["minimum_top_depth"] >= self.z_t
+            or kwargs.get("model_range") == ModelRange.BASINS
+        ):
             return self.next_layer(block, **kwargs)
 
         return xr.map_blocks(

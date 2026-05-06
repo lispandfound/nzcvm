@@ -48,7 +48,6 @@ from mashumaro.mixins.toml import DataClassTOMLMixin
 from mashumaro.mixins.yaml import DataClassYAMLMixin
 from mashumaro.types import Discriminator
 
-from nzcvm.components import Component
 from nzcvm.coordinates import (
     NO_ORIGIN,
     WGS84_CRS,

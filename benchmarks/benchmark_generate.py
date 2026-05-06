@@ -139,9 +139,9 @@ def run_benchmark() -> None:
     throughput = total_gb / max(compute_time, 1e-9)
 
     # Output Markdown Table
-    print(f"### 📊 Benchmark Results: `fill_grid`")
-    print(f"\n| Metric | Value |")
-    print(f"| :--- | :--- |")
+    print("### 📊 Benchmark Results: `fill_grid`")
+    print("\n| Metric | Value |")
+    print("| :--- | :--- |")
     print(f"| **Total Data Size** | {total_gb:.2f} GB |")
     print(f"| **Grid Construction** | {construction_time:.3f} s |")
     print(f"| **Lazy Graph Init** | {lazy_time:.3f} s |")

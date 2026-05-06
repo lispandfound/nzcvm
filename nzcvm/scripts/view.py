@@ -148,9 +148,29 @@ def basin(
         pl.add_mesh(
             topo, style="wireframe", color="black", opacity=0.3, label="Surface"
         )
-    if scalar in mesh_data.field_data:
-        mesh_data.point_data[scalar] = mesh_data.field_data[scalar]
-    pl.add_mesh(mesh_data, scalars=scalar)
+
+    if scalar in mesh_data.point_data:
+        scalar_name = scalar
+    elif scalar in mesh_data.cell_data:
+        scalar_name = scalar
+    elif scalar in mesh_data.field_data:
+        field_values = np.asarray(mesh_data.field_data[scalar]).reshape(-1)
+        if field_values.size != 1:
+            raise typer.BadParameter(
+                f"Field-data scalar '{scalar}' must contain exactly one value, "
+                f"got {field_values.size}."
+            )
+        if mesh_data.n_cells > 0:
+            mesh_data.cell_data[scalar] = np.full(mesh_data.n_cells, field_values[0])
+        else:
+            mesh_data.point_data[scalar] = np.full(
+                mesh_data.n_points, field_values[0]
+            )
+        scalar_name = scalar
+    else:
+        raise typer.BadParameter(f"Scalar '{scalar}' not found in mesh data.")
+
+    pl.add_mesh(mesh_data, scalars=scalar_name)
     pl.camera.up = (0.0, 0.0, -1.0)
     pl.show()
 

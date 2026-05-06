@@ -305,14 +305,6 @@ class OffshoreBasin:
        After blending, the output alpha is forced to ``1.0`` to signal that
        the offshore layer provides full coverage at these points.
 
-       .. note::
-           # TODO (Scientific Review): The blending formula above is a simple
-           linear mix weighted by basin alpha.  For seismic velocity
-           components (vp, vs, rho) a harmonic or log-space blend may be more
-           physically appropriate at sharp basin edges.  The choice of forcing
-           output alpha to 1.0 also prevents downstream layers from further
-           overwriting offshore values; verify this is the intended behaviour.
-
     Parameters
     ----------
     coastline : shapely.Geometry

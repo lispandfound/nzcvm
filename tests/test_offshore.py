@@ -292,15 +292,17 @@ class TestNumbaPointToSegments:
 
     def test_multiple_candidates_picks_minimum(self):
         """With two candidate segments, the closer one governs the result."""
-        # Segment 0: along y-axis [100, 0] → [100, 10].  Point at (0, 5). dist ≈ 100.
-        # Segment 1: along x-axis [0, 100] → [10, 100].  Point at (0, 5). dist ≈ 95.
+        # Segment 0: vertical at x=100, from (100,0) to (100,10).
+        #   Point (0, 5) projects to (100, 5) → distance = 100.
+        # Segment 1: horizontal at y=100, from (0,100) to (10,100).
+        #   Point (0, 5) is closest to endpoint A (0,100) → distance = 95.
+        # Minimum is 95 (segment 1).
         pts = np.array([[0.0, 5.0]], dtype=np.float64)
         segs = np.array(
             [[[[100.0, 0.0], [100.0, 10.0]], [[0.0, 100.0], [10.0, 100.0]]]],
             dtype=np.float64,
         )
         dist = float(_numba_point_to_segments(pts, segs)[0])
-        # Closest is segment 0 at distance 100; segment 1 at 95 – minimum is 95.
         assert dist == pytest.approx(95.0, rel=1e-6)
 
     def test_zero_length_segment_handled(self):

@@ -17,32 +17,40 @@ from nzcvm.coordinates import (
 
 
 class TestIdentity:
-    def test_identity_is_eye4(self):
-        np.testing.assert_array_equal(identity(), np.eye(4))
+    def test_identity_2d_is_eye3(self):
+        """Default identity (2-D) returns a 3×3 matrix."""
+        np.testing.assert_array_equal(identity(), np.eye(3))
 
-    def test_identity_leaves_point_unchanged(self):
-        p = np.array([1.0, 2.0, 3.0, 1.0])
+    def test_identity_3d_is_eye4(self):
+        """identity(dims=3) returns a 4×4 matrix."""
+        np.testing.assert_array_equal(identity(dims=3), np.eye(4))
+
+    def test_identity_leaves_2d_point_unchanged(self):
+        p = np.array([1.0, 2.0, 1.0])
         np.testing.assert_array_equal(identity() @ p, p)
+
+    def test_identity_leaves_3d_point_unchanged(self):
+        p = np.array([1.0, 2.0, 3.0, 1.0])
+        np.testing.assert_array_equal(identity(dims=3) @ p, p)
 
 
 class TestTranslate:
     def test_translates_xy(self):
         T = translate(10.0, 20.0)
-        p = np.array([0.0, 0.0, 0.0, 1.0])
+        p = np.array([0.0, 0.0, 1.0])
         result = T @ p
         assert result[0] == pytest.approx(10.0)
         assert result[1] == pytest.approx(20.0)
-        assert result[2] == pytest.approx(0.0)
 
     def test_translates_xyz(self):
-        T = translate(1.0, 2.0, 3.0)
+        T = translate(1.0, 2.0, z=3.0)
         p = np.array([0.0, 0.0, 0.0, 1.0])
         result = T @ p
         assert result[:3] == pytest.approx([1.0, 2.0, 3.0])
 
     def test_compose_translates_add(self):
         T = translate(1.0, 0.0) @ translate(2.0, 3.0)
-        p = np.array([0.0, 0.0, 0.0, 1.0])
+        p = np.array([0.0, 0.0, 1.0])
         result = T @ p
         assert result[:2] == pytest.approx([3.0, 3.0])
 
@@ -50,15 +58,14 @@ class TestTranslate:
 class TestRotate:
     def test_ccw_90_maps_x_to_y(self):
         R = rotate(90.0, ccw=True)
-        p = np.array([1.0, 0.0, 0.0, 1.0])
+        p = np.array([1.0, 0.0, 1.0])
         result = R @ p
         assert result[:2] == pytest.approx([0.0, 1.0], abs=1e-10)
 
     def test_cw_azimuth_0_maps_local_x_to_north(self):
         """At azimuth 0° (ccw=False) local x should point north (+y_CRS)."""
         R = rotate(0.0, ccw=False)
-        # local x basis vector (1, 0)
-        p = np.array([1.0, 0.0, 0.0, 1.0])
+        p = np.array([1.0, 0.0, 1.0])
         result = R @ p
         # Should point north: CRS x (easting) = 0, CRS y (northing) = 1
         assert result[0] == pytest.approx(0.0, abs=1e-10)
@@ -67,17 +74,17 @@ class TestRotate:
     def test_cw_azimuth_90_maps_local_x_to_east(self):
         """At azimuth 90° (ccw=False) local x should point east (+x_CRS)."""
         R = rotate(90.0, ccw=False)
-        p = np.array([1.0, 0.0, 0.0, 1.0])
+        p = np.array([1.0, 0.0, 1.0])
         result = R @ p
         assert result[0] == pytest.approx(1.0, abs=1e-10)
         assert result[1] == pytest.approx(0.0, abs=1e-10)
 
-    def test_rotation_with_origin(self):
-        """Rotation around a non-zero origin should leave the origin fixed."""
-        R = rotate(45.0, origin=(1.0, 0.0))
-        p = np.array([1.0, 0.0, 0.0, 1.0])
-        result = R @ p
-        assert result[:2] == pytest.approx([1.0, 0.0], abs=1e-10)
+    def test_rotation_around_origin_leaves_origin_fixed(self):
+        """Rotation leaves the coordinate origin unchanged."""
+        R = rotate(45.0)
+        origin = np.array([0.0, 0.0, 1.0])
+        result = R @ origin
+        assert result[:2] == pytest.approx([0.0, 0.0], abs=1e-10)
 
     def test_rotation_is_orthogonal(self):
         """Rotation matrix should be orthogonal (det = ±1)."""
@@ -87,7 +94,7 @@ class TestRotate:
 
 class TestScale:
     def test_uniform_scale(self):
-        S = scale(2.0, 2.0, 2.0)
+        S = scale(2.0, 2.0, sz=2.0)
         p = np.array([1.0, 1.0, 1.0, 1.0])
         result = S @ p
         assert result[:3] == pytest.approx([2.0, 2.0, 2.0])
@@ -98,16 +105,34 @@ class TestScale:
         result = S @ p
         assert result[:3] == pytest.approx([3.0, 5.0, 7.0])
 
+    def test_2d_scale(self):
+        S = scale(2.0, 3.0)
+        p = np.array([1.0, 1.0, 1.0])
+        result = S @ p
+        assert result[:2] == pytest.approx([2.0, 3.0])
+
 
 class TestReflect:
     def test_reflect_x_negates_x(self):
         R = reflect_x()
+        p = np.array([3.0, 4.0, 1.0])
+        result = R @ p
+        assert result[:2] == pytest.approx([-3.0, 4.0])
+
+    def test_reflect_y_negates_y(self):
+        R = reflect_y()
+        p = np.array([3.0, 4.0, 1.0])
+        result = R @ p
+        assert result[:2] == pytest.approx([3.0, -4.0])
+
+    def test_reflect_x_3d(self):
+        R = reflect_x(dims=3)
         p = np.array([3.0, 4.0, 5.0, 1.0])
         result = R @ p
         assert result[:3] == pytest.approx([-3.0, 4.0, 5.0])
 
-    def test_reflect_y_negates_y(self):
-        R = reflect_y()
+    def test_reflect_y_3d(self):
+        R = reflect_y(dims=3)
         p = np.array([3.0, 4.0, 5.0, 1.0])
         result = R @ p
         assert result[:3] == pytest.approx([3.0, -4.0, 5.0])
@@ -116,12 +141,22 @@ class TestReflect:
 class TestTransposeXY:
     def test_swaps_x_and_y(self):
         T = transpose_xy()
+        p = np.array([1.0, 2.0, 1.0])
+        result = T @ p
+        assert result[:2] == pytest.approx([2.0, 1.0])
+
+    def test_swaps_x_and_y_3d(self):
+        T = transpose_xy(dims=3)
         p = np.array([1.0, 2.0, 3.0, 1.0])
         result = T @ p
         assert result[:3] == pytest.approx([2.0, 1.0, 3.0])
 
     def test_transpose_is_its_own_inverse(self):
         T = transpose_xy()
+        np.testing.assert_allclose(T @ T, np.eye(3), atol=1e-12)
+
+    def test_transpose_3d_is_its_own_inverse(self):
+        T = transpose_xy(dims=3)
         np.testing.assert_allclose(T @ T, np.eye(4), atol=1e-12)
 
 
@@ -129,7 +164,7 @@ class TestComposition:
     def test_translate_then_scale(self):
         """scale(2) @ translate(1,0): translate first then scale."""
         A = scale(2.0) @ translate(1.0, 0.0)
-        p = np.array([0.0, 0.0, 0.0, 1.0])
+        p = np.array([0.0, 0.0, 1.0])
         result = A @ p
         # translate → (1,0), scale → (2,0)
         assert result[:2] == pytest.approx([2.0, 0.0])
@@ -142,7 +177,7 @@ class TestComposition:
             @ reflect_x()
             @ rotate(140.0, ccw=False)
         )
-        np.testing.assert_allclose(np.linalg.inv(A) @ A, np.eye(4), atol=1e-3)
+        np.testing.assert_allclose(np.linalg.inv(A) @ A, np.eye(3), atol=1e-3)
 
 
 class TestCrsTransform:

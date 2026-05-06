@@ -45,17 +45,18 @@ def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
     involutory). ``reflect_x()`` is also self-inverse.
     """
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
+
     fwd = (
-        translate(ox, oy)
+        translate(ox, oy, z=0.0)
         @ scale(1000.0, 1000.0, 1000.0)
-        @ reflect_x()
-        @ rotate(140.0, ccw=False)
+        @ reflect_x(dims=3)
+        @ rotate(140.0, axis="z", ccw=False)
     )
     inv = (
-        rotate(140.0, ccw=False)
-        @ reflect_x()
+        rotate(140.0, axis="z", ccw=False)
+        @ reflect_x(dims=3)
         @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
-        @ translate(-ox, -oy)
+        @ translate(-ox, -oy, z=0.0)
     )
     return fwd, inv
 
@@ -67,14 +68,14 @@ EP2020_AFFINE: Affine = _EP2020_FWD
 
 _db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
 DB2025_AFFINE: Affine = (
-    translate(_db2025_ox, _db2025_oy)
+    translate(_db2025_ox, _db2025_oy, z=0.0)
     @ scale(1000.0, 1000.0, 1000.0)
-    @ rotate(35.0, ccw=False)
+    @ rotate(35.0, axis="z", ccw=False)
 )
 DB2025_INV_AFFINE: Affine = (
-    rotate(35.0, ccw=False)
+    rotate(35.0, axis="z", ccw=False)
     @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
-    @ translate(-_db2025_ox, -_db2025_oy)
+    @ translate(-_db2025_ox, -_db2025_oy, z=0.0)
 )
 DB2025_CRS_TRANSFORMER = Transformer.from_crs(CRS_UTM60S, CRS_NZTM, always_xy=True)
 
@@ -157,9 +158,9 @@ def tet_connectivity(ni: int, nj: int, nk: int):
 def data_frame_to_mesh(
     df: pd.DataFrame, tomography_model: TomographyModel
 ) -> pv.UnstructuredGrid:
-    rho = df[tomography_model.rho]
-    vp = df[tomography_model.vp]
-    vs = df[tomography_model.vs]
+    rho = df[tomography_model.rho] * 1000
+    vp = df[tomography_model.vp] * 1000
+    vs = df[tomography_model.vs] * 1000
     qp = df[tomography_model.qp]
     qs = df[tomography_model.qs]
 
@@ -258,7 +259,7 @@ app = typer.Typer(
 
 
 @app.command()
-def main(
+def convert(
     model: Annotated[
         Path,
         typer.Argument(

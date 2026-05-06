@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+
 from nzcvm.mesh import make_mesh
 from nzcvm.model import MeshModel, Model, ModelTree
 

@@ -15,6 +15,7 @@ dependencies = [
     "dask[array,diagnostics]>=2026.3.0",
     "geopandas>=1.1.3",
     "h5py>=3.16.0",
+    "hdf5plugin>=6.0.0",
     "mashumaro[json,toml,yaml]>=3.20",
     "meshio>=5.3.5",
     "numba>=0.65.0",
@@ -32,6 +33,7 @@ dependencies = [
     "typer>=0.24.2",
     "xarray[io]>=2026.2.0",
     "zarr>=3.1.6",
+    "zfpy>=1.0.1",
 ]
 
 [project.scripts]

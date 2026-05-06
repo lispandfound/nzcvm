@@ -15,9 +15,9 @@ from nzcvm.model import Model
 class ModelLayer:
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
-    Calls :meth:`~nzcvm.model.Model.query_many_raw` and writes the returned
-    material properties as a ``qualities`` DataArray with a ``component``
-    coordinate dimension.
+    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/grid/*``
+    node and writes the returned material properties (``rho``, ``vp``,
+    ``vs``, ``qp``, ``qs``, ``alpha``) as dataset variables.
 
     Parameters
     ----------

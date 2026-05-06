@@ -1,5 +1,7 @@
 """Helpers for mapping functions over DataTree nodes."""
 
+from nzcvm.layers.protocol import QueryLayer
+
 import glob
 import re
 from collections.abc import Callable, Mapping
@@ -81,59 +83,10 @@ def map_over_datasets_with_glob(
     return map_over_datasets_with_path(data_tree, _only_glob, kwargs)
 
 
-def block_map(
-    velocity_model: xr.DataTree,
-    func: DatasetTransform,
-    kwargs: Mapping[str, Any] | None = None,
+def execute_model_pipeline(
+    velocity_model: xr.DataTree, pipeline: QueryLayer
 ) -> xr.DataTree:
-    """Apply *func* to every ``/block/*`` node in *velocity_model*.
+    def func(_path: NodePath, block: xr.Dataset, **_kwargs) -> xr.Dataset:
+        return pipeline(block)
 
-    Convenience wrapper around :func:`map_over_datasets_with_glob` using the
-    fixed pattern ``/block/*``.
-
-    Parameters
-    ----------
-    velocity_model :
-        DataTree produced by :meth:`~nzcvm.geomodelgrid.GeoModelGrid.to_datatree`.
-    func :
-        Callable ``(path, dataset) -> xr.Dataset``.
-    kwargs :
-        Extra keyword arguments forwarded to *func*.
-
-    Returns
-    -------
-    xarray.DataTree
-        A new datatree where *func* is applied at all nodes with a path matching *glob*.
-    """
-    return map_over_datasets_with_glob(velocity_model, "/block/*", func, kwargs)
-
-
-def block_map_no_path(
-    velocity_model: xr.DataTree,
-    func: Callable[..., xr.Dataset],
-    kwargs: Mapping[str, Any] | None = None,
-) -> xr.DataTree:
-    """Apply *func* to every ``/block/*`` node in *velocity_model*.
-
-    Convenience wrapper around :func:`map_over_datasets_with_glob` using the
-    fixed pattern ``/block/*``.
-
-    Parameters
-    ----------
-    velocity_model :
-        DataTree produced by :meth:`~nzcvm.geomodelgrid.GeoModelGrid.to_datatree`.
-    func :
-        Callable ``dataset -> xr.Dataset``.
-    kwargs :
-        Extra keyword arguments forwarded to *func*.
-
-    Returns
-    -------
-    xarray.DataTree
-        A new datatree where *func* is applied at all nodes with a path matching *glob*.
-    """
-
-    def wrapper(_path: NodePath, dset: xr.Dataset, **kwargs) -> xr.Dataset:
-        return func(dset, **kwargs)
-
-    return map_over_datasets_with_glob(velocity_model, "/block/*", wrapper, kwargs)
+    return map_over_datasets_with_glob(velocity_model, "/grid/*", func, dict())

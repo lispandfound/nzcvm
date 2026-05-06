@@ -36,13 +36,17 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
     ValueError
         If *dtree* contains more or fewer than one block.
     """
-    if len(dtree["block"]) != 1:
-        raise ValueError("EMOD3D format requires exactly one block")
 
-    block = list(dtree["block"].children.values())[0].to_dataset()
+    grids = [grid.to_dataset() for grid in dtree["grid"].children.values()]
+    resolutions = [grid.attrs["resolution"] for grid in grids]
+
+    if not np.allclose(resolutions, resolutions[0]):
+        raise ValueError("EMOD3D format requires exactly one horizontal resolution")
+
+    grid = xr.concat(grids, Coordinate.K, join="outer")
 
     # Each array has the same size, may as well be the X coordinate
-    block_size = block[Coordinate.X].nbytes
+    file_size = grid[Coordinate.X].nbytes
 
     directory.mkdir(parents=True, exist_ok=True)
     with (
@@ -50,14 +54,14 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
         open(directory / VPFILE, "wb") as vp_file,
         open(directory / VSFILE, "wb") as vs_file,
     ):
-        os.posix_fallocate(rho_file.fileno(), 0, block_size)
-        os.posix_fallocate(vp_file.fileno(), 0, block_size)
-        os.posix_fallocate(vs_file.fileno(), 0, block_size)
+        os.posix_fallocate(rho_file.fileno(), 0, file_size)
+        os.posix_fallocate(vp_file.fileno(), 0, file_size)
+        os.posix_fallocate(vs_file.fileno(), 0, file_size)
 
     output_shape = (
-        len(block[Coordinate.J]),
-        len(block[Coordinate.I]),
-        len(block[Coordinate.K]),
+        len(grid[Coordinate.J]),
+        len(grid[Coordinate.I]),
+        len(grid[Coordinate.K]),
     )
 
     rho = np.memmap(
@@ -66,18 +70,19 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
     vp = np.memmap(directory / VPFILE, shape=output_shape, mode="r+", dtype=np.float32)
     vs = np.memmap(directory / VSFILE, shape=output_shape, mode="r+", dtype=np.float32)
 
-    block = block.transpose(Coordinate.J, Coordinate.I, Coordinate.K)
-
     contiguous_chunking = {0: "auto", 1: "auto", 2: -1}
     sources = [
-        block["qualities"]
+        grid["qualities"]
         .sel(component=str(Component.RHO))
+        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
         .data.rechunk(contiguous_chunking),
-        block["qualities"]
+        grid["qualities"]
         .sel(component=str(Component.VP))
+        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
         .data.rechunk(contiguous_chunking),
-        block["qualities"]
+        grid["qualities"]
         .sel(component=str(Component.VS))
+        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
         .data.rechunk(contiguous_chunking),
     ]
     targets = [rho, vp, vs]

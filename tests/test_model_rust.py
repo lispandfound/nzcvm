@@ -10,6 +10,7 @@ import pytest
 import xarray as xr
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+
 from nzcvm.model import Model, ModelRange
 
 
@@ -45,7 +46,7 @@ class TestQueryManyRaw:
     def test_model_range_filters(self):
         x = np.array([0.1], dtype=np.float32)
         result = _make_model(vs=3500.0, priority=10).query_many_raw(
-            x, x, x, model_range=ModelRange.TOMOGRAPHY
+            x, x, x, model_range=ModelRange.BASINS
         )
         assert abs(float(result[0, 2]) - 3500.0) < 1.0
 

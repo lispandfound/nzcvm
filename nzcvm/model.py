@@ -19,6 +19,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, Self
 
+import logging
 import numpy as np
 import pyvista as pv
 import rich
@@ -28,12 +29,12 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.components import Component
-from nzcvm.mesh import read_vtkhdf
-
 from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
+from nzcvm.components import Component
+
 MB = 1 / (1024 * 1024)
+logger = logging.getLogger(__name__)
 
 
 class ModelRange(Enum):
@@ -42,8 +43,8 @@ class ModelRange(Enum):
     Priority values are ``u8`` ordered so that ``0`` is the highest priority
     and ``255`` is the lowest.  The ranges below reflect the NZCVM convention:
 
-    * ``0–127``  — tomography models (higher priority, evaluated first).
-    * ``129–255`` — basin models (lower priority, blended in afterwards).
+    * ``0–127``  — basin models (higher priority, evaluated first).
+    * ``129–255`` — tomography models (lower priority, blended in afterwards).
 
     Priority 128 is intentionally excluded from both named ranges and may be
     used as a separator value by model authors.
@@ -55,8 +56,8 @@ class ModelRange(Enum):
         :meth:`~nzcvm.model.ModelTree.query_bounded`.
     """
 
-    TOMOGRAPHY = (0, 127)
-    BASINS = (128, 255)
+    BASINS = (0, 127)
+    TOMOGRAPHY = (128, 255)
     ALL = (0, 255)
 
 
@@ -432,9 +433,15 @@ class ModelTree:
         else:
             mesh_paths = [Path(p) for p in models]
 
-        mesh_models = [
-            _mesh_model_from_pyvista(read_vtkhdf(p), name=p.stem) for p in mesh_paths
-        ]
+        mesh_models = []
+        for p in mesh_paths:
+            model = pv.read(p)
+            if not isinstance(model, pv.UnstructuredGrid):
+                raise ValueError(
+                    f"Model {p} is not an unstructured grid (received {type(p)!r})."
+                )
+            mesh_models.append(_mesh_model_from_pyvista(model, name=p.stem))
+
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw)
 
@@ -604,6 +611,7 @@ class ModelTree:
         xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
         lo, hi = model_range.value
         params = QueryParams(lo, hi)
+        logger.debug("Querying for chunk qualities for range: %s.", model_range)
         buf = self._raw.query_many(xyz, params)
         return buf.reshape(x.shape + (6,))
 

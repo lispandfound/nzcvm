@@ -9,38 +9,37 @@ from rich.tree import Tree
 
 from nzcvm.coordinates import Coordinate
 from nzcvm.layers.protocol import QueryLayer
-from nzcvm.surface import Surface
 
 
 class DepthTransformLayer:
     """Pipeline layer that converts depth-below-surface to absolute elevation.
 
-    Interpolates the surface elevation at each ``(x, y)`` column and
-    replaces the ``z`` coordinate with ``surface_elevation + z``.
+    For each ``/grid/*`` node, evaluates the topography surface at the node's
+    ``x`` and ``y`` coordinates and replaces ``z`` (depth below surface) with
+    ``surface_elevation + z`` (absolute elevation).
 
     Parameters
     ----------
-    interpolator :
-        A :class:`~nzcvm.surface.Surface` that maps ``(x, y)`` to elevation.
+    surface :
+        Surface elevation interpolator exposing a ``transform(x, y)`` method.
     next_layer :
         Downstream layer to invoke after the depth transform.
 
     See Also
     --------
-    nzcvm.surface.Surface : Surface interpolator used for elevation lookup.
-    nzcvm.layers.CoordinateTransformLayer : Typically applied upstream.
+    nzcvm.layers.AffineTransformLayer : Typically applied upstream.
     """
 
-    def __init__(self, interpolator: Surface, next_layer: QueryLayer) -> None:
+    def __init__(self, surface: object, next_layer: QueryLayer) -> None:
         """
         Parameters
         ----------
-        interpolator :
+        surface :
             Surface elevation interpolator.
         next_layer :
             Downstream layer invoked after the transform.
         """
-        self.interpolator = interpolator
+        self.surface = surface
         self.next_layer = next_layer
 
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
@@ -63,7 +62,7 @@ class DepthTransformLayer:
         y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
 
         surface_elevation = xr.apply_ufunc(
-            self.interpolator.transform,
+            self.surface.transform,
             x_top,
             y_top,
             input_core_dims=[[], []],
@@ -84,6 +83,5 @@ class DepthTransformLayer:
     ) -> RenderResult:
         """Render the pipeline chain as a rich tree."""
         tree = Tree("[bold blue]Depth Transform[/bold blue]")
-        tree.add(self.interpolator)  #  ty: ignore[invalid-argument-type]
         tree.add(self.next_layer)
         yield tree

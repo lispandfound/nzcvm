@@ -1,43 +1,12 @@
 """Mesh I/O utilities for NZCVM using PyVista.
 
 PyVista supports reading and writing VTKHDF files natively via ``pv.read()`` and
-``mesh.save()``.  This module provides thin helpers for creating and loading
-tetrahedral meshes in the format expected by the NZCVM Rust extension.
+``mesh.save()``. This module provides thin helpers for creating tetrahedral
+meshes in the format expected by the NZCVM Rust extension.
 """
-
-from __future__ import annotations
-
-from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-
-
-def read_vtkhdf(path: str | Path) -> pv.UnstructuredGrid:
-    """Load a VTKHDF file as a :class:`pyvista.UnstructuredGrid`.
-
-    Parameters
-    ----------
-    path:
-        Path to a ``.vtkhdf`` file written by PyVista or the NZCVM tooling.
-
-    Returns
-    -------
-    pyvista.UnstructuredGrid
-
-    Raises
-    ------
-    ValueError
-        If the file does not contain an ``UnstructuredGrid``.
-    """
-    mesh = pv.read(str(path))
-    if not isinstance(mesh, pv.UnstructuredGrid):
-        raise ValueError(
-            f"Expected an UnstructuredGrid VTKHDF file, but got "
-            f"{type(mesh).__name__!r}. Ensure the file is of VTK type "
-            f"'UnstructuredGrid'."
-        )
-    return mesh
 
 
 def make_mesh(

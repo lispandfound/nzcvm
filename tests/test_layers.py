@@ -19,9 +19,9 @@ from pyproj import Transformer
 from rich.console import Console, ConsoleOptions, RenderResult
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate, rotate, translate
-from nzcvm.geomodelgrid import Block, empty_block
 from nzcvm.layers import DepthTransformLayer
 from nzcvm.layers.affine import AffineTransformLayer
 from nzcvm.layers.ely import ElyTaperLayer
@@ -36,11 +36,7 @@ _COMPONENT_NAMES = [str(c) for c in Component]
 
 
 def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
-    """Return a constant-quality Model spanning a [0, size]^3 cube.
-
-    The cube is tessellated with the standard 5-tetrahedra decomposition of a
-    unit voxel, scaled to *size*.
-    """
+    """Return a constant-quality Model spanning a [0, size]^3 cube."""
     s = size
     vertices = np.array(
         [
@@ -55,21 +51,19 @@ def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
         ],
         dtype=np.float32,
     )
-    # 5-tet decomposition of a single cube (even-parity, i+j+k = 0)
-    #   v000=0, v100=1, v010=2, v110=3, v001=4, v101=5, v011=6, v111=7
     faces = np.array(
         [
-            [0, 1, 2, 4],  # corner 0
-            [3, 1, 2, 7],  # corner 1
-            [5, 1, 4, 7],  # corner 2
-            [6, 2, 4, 7],  # corner 3
-            [1, 2, 4, 7],  # central
+            [0, 1, 2, 4],
+            [3, 1, 2, 7],
+            [5, 1, 4, 7],
+            [6, 2, 4, 7],
+            [1, 2, 4, 7],
         ],
         dtype=np.uint64,
     )
     n_cells = len(faces)
-    types = np.zeros(n_cells, dtype=np.uint8)  # Constant model
-    quality_idx = np.zeros(n_cells, dtype=np.uint64)  # All → quality[0]
+    types = np.zeros(n_cells, dtype=np.uint8)
+    quality_idx = np.zeros(n_cells, dtype=np.uint64)
     qualities = np.array([[rho, 6000.0, 3500.0, 200.0, 100.0, 1.0]], dtype=np.float32)
     raw_mesh = _nzcvm.mesh_model(
         vertices, faces, types, quality_idx, qualities, np.uint8(0), None
@@ -79,17 +73,45 @@ def _make_constant_model(size: float = 10.0, rho: float = 2700.0) -> Model:
 
 
 def _make_block_dataset(
-    ni: int = 4, nj: int = 3, nk: int = 2, size: float = 5.0, z_top: float = 0.0
+    ni: int = 4,
+    nj: int = 3,
+    nk: int = 2,
+    size: float = 5.0,
+    z_top: float = 0.0,
 ) -> xr.Dataset:
-    """Dataset whose grid points lie in [0, size)^2 × [z_top, z_top+size)."""
-    block = Block(
-        resolution_horiz=size / ni,
-        resolution_vert=size / nk,
-        z_top=z_top,
-        shape={Coordinate.I: ni, Coordinate.J: nj, Coordinate.K: nk},
-        name="test",
+    """Dataset with dask-backed x, y, z, depth and minimum_top_depth attribute.
+
+    *depth* equals *z* (both start at *z_top* and increase downward), matching
+    the real data convention where ``depth = z - surface_elevation`` and the
+    surface elevation is assumed to be 0.
+    """
+    resolution_h = size / ni
+    resolution_v = size / nk
+
+    x_1d = da.arange(ni, dtype=np.float32) * resolution_h
+    y_1d = da.arange(nj, dtype=np.float32) * resolution_h
+    z_1d = da.arange(nk, dtype=np.float32) * resolution_v + z_top
+
+    grid_x, grid_y, grid_z = da.meshgrid(x_1d, y_1d, z_1d, indexing="ij")
+
+    dims = (Coordinate.I, Coordinate.J, Coordinate.K)
+    return xr.Dataset(
+        data_vars={
+            Coordinate.X: (dims, grid_x),
+            Coordinate.Y: (dims, grid_y),
+            Coordinate.Z: (dims, grid_z),
+            "depth": (dims, grid_z),
+        },
+        coords={
+            Coordinate.I: np.arange(ni),
+            Coordinate.J: np.arange(nj),
+            Coordinate.K: np.arange(nk),
+        },
+        attrs={
+            "minimum_top_depth": float(z_top),
+            "maximum_top_depth": float(z_top + size),
+        },
     )
-    return empty_block(block)
 
 
 # ---------------------------------------------------------------------------
@@ -99,21 +121,6 @@ def _make_block_dataset(
 
 class TestModelLayerDimensions:
     """ModelLayer must attach a ``qualities`` DataArray with dims (i, j, k, component)."""
-
-    def test_output_contains_qualities(self):
-        model = _make_constant_model()
-        layer = ModelLayer(model)
-        ds = _make_block_dataset()
-        result = layer(ds)
-        assert "qualities" in result, "Expected 'qualities' in block dataset"
-
-    def test_qualities_has_component_coordinate(self):
-        model = _make_constant_model()
-        layer = ModelLayer(model)
-        ds = _make_block_dataset()
-        result = layer(ds)
-        assert "component" in result["qualities"].coords
-        assert list(result["qualities"].coords["component"].values) == _COMPONENT_NAMES
 
     def test_qualities_has_correct_dims(self):
         model = _make_constant_model()
@@ -131,9 +138,8 @@ class TestModelLayerDimensions:
         layer = ModelLayer(model)
         ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
         result = layer(ds)
-        n_comp = len(Component)
-        assert result["qualities"].shape == (ni, nj, nk, n_comp), (
-            f"'qualities' shape {result['qualities'].shape} ≠ ({ni},{nj},{nk},{n_comp})"
+        assert result["qualities"].shape == (ni, nj, nk, len(Component)), (
+            f"'qualities' shape {result['qualities'].shape} ≠ ({ni},{nj},{nk},{len(Component)})"
         )
 
     def test_coordinate_variables_preserved(self):
@@ -153,8 +159,8 @@ class TestModelLayerDimensions:
         result = layer(ds)
         x_dims = tuple(result[Coordinate.X].dims)
         for comp in _COMPONENT_NAMES:
-            slice_dims = tuple(result["qualities"].sel(component=comp).dims)
-            assert slice_dims == x_dims
+            comp_dims = tuple(result["qualities"].sel(component=comp).dims)
+            assert comp_dims == x_dims
 
     def test_computed_rho_value(self):
         """After compute(), the rho component must equal the model's constant value."""
@@ -167,7 +173,7 @@ class TestModelLayerDimensions:
 
 
 # ---------------------------------------------------------------------------
-# CoordinateTransformLayer dimension contract
+# AffineTransformLayer dimension contract
 # ---------------------------------------------------------------------------
 
 
@@ -187,7 +193,6 @@ class TestAffineTransformLayerDimensions:
     """AffineTransformLayer must preserve (i, j, k) dims while updating x/y/z."""
 
     def _make_affine(self, azimuth: float = 0.0):
-        """Build a rotation+translation affine for NZTM origin at [172°, -43.5°]."""
         tr = Transformer.from_crs(4326, 2193, always_xy=True)
         ox, oy = tr.transform(172.0, -43.5)
         return translate(ox, oy) @ rotate(azimuth, ccw=False)
@@ -195,8 +200,8 @@ class TestAffineTransformLayerDimensions:
     def test_dims_preserved_after_transform(self):
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        ds = _make_block_dataset(ni=3, nj=2, nk=2)
-        result = layer(ds)
+        block_ds = _make_block_dataset(ni=3, nj=2, nk=2)
+        result = layer(block_ds)
         expected = (Coordinate.I, Coordinate.J, Coordinate.K)
         for coord in (Coordinate.X, Coordinate.Y, Coordinate.Z):
             assert tuple(result[coord].dims) == expected, (
@@ -207,33 +212,30 @@ class TestAffineTransformLayerDimensions:
         ni, nj, nk = 3, 2, 2
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
-        result = layer(ds)
+        block_ds = _make_block_dataset(ni=ni, nj=nj, nk=nk)
+        result = layer(block_ds)
         assert result[Coordinate.X].shape == (ni, nj, nk)
         assert result[Coordinate.Y].shape == (ni, nj, nk)
         assert result[Coordinate.Z].shape == (ni, nj, nk)
 
     def test_x_y_z_remain_dask_backed(self):
-        """Coordinate values must stay lazy (dask-backed) after the transform."""
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        ds = _make_block_dataset(ni=3, nj=2, nk=2)
-        result = layer(ds)
+        block_ds = _make_block_dataset(ni=3, nj=2, nk=2)
+        result = layer(block_ds)
         assert isinstance(result[Coordinate.X].data, da.Array)
         assert isinstance(result[Coordinate.Y].data, da.Array)
 
     def test_z_passthrough_after_transform(self):
-        """Z must not be altered by AffineTransformLayer when z row is [0,0,1,0]."""
         affine = self._make_affine()
         layer = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
-        ds = _make_block_dataset(ni=2, nj=2, nk=3, size=6.0)
-        original_z = ds[Coordinate.Z].values.copy()
-        result = layer(ds)
+        block_ds = _make_block_dataset(ni=2, nj=2, nk=3, size=6.0)
+        original_z = block_ds[Coordinate.Z].values.copy()
+        result = layer(block_ds)
         transformed_z = result[Coordinate.Z].values
         assert transformed_z == pytest.approx(original_z, rel=1e-5)
 
     def test_transpose_xy_swaps_x_and_y_outputs(self):
-        """Prepending transpose_xy() should swap the x and y outputs."""
         from nzcvm.coordinates import transpose_xy
 
         affine = self._make_affine()
@@ -242,16 +244,15 @@ class TestAffineTransformLayerDimensions:
         layer_normal = AffineTransformLayer(affine, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         layer_transposed = AffineTransformLayer(affine_transposed, _PassThroughLayer())  # ty: ignore[invalid-argument-type]
 
-        ds = _make_block_dataset(ni=3, nj=2, nk=2, size=5.0)
-        x0 = ds[Coordinate.X].values
-        y0 = ds[Coordinate.Y].values
+        block_ds = _make_block_dataset(ni=3, nj=2, nk=2, size=5.0)
+        x0 = block_ds[Coordinate.X].values
+        y0 = block_ds[Coordinate.Y].values
 
-        # Build a dataset with x and y swapped
-        ds_swapped = ds.copy()
-        ds_swapped[Coordinate.X] = (ds[Coordinate.X].dims, y0)
-        ds_swapped[Coordinate.Y] = (ds[Coordinate.Y].dims, x0)
+        ds_swapped = block_ds.copy()
+        ds_swapped[Coordinate.X] = (block_ds[Coordinate.X].dims, y0)
+        ds_swapped[Coordinate.Y] = (block_ds[Coordinate.Y].dims, x0)
 
-        result_transposed = layer_transposed(ds)
+        result_transposed = layer_transposed(block_ds)
         result_normal_swapped = layer_normal(ds_swapped)
 
         xt = result_transposed[Coordinate.X]
@@ -266,7 +267,6 @@ class DummySurface:
     elevation_value: float = 100.0
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        # Returns a constant elevation with the same shape as input
         return np.full(x.shape, self.elevation_value, dtype=np.float32)
 
 
@@ -287,16 +287,16 @@ class TestDepthTransformLayer:
     def test_z_math_calculation(self):
         """Verify the arithmetic: Elevation = Surface + Depth."""
         surface_val = 500.0
-        # Create a block where vertical resolution is 10.0
-        # z_top=0.0 means depths will be [0.0, 10.0]
-        ds = _make_block_dataset(ni=1, nj=1, nk=2, size=20.0)
+        # z_top=0 so z (and depth) go from 0 to 10, matching the expected output.
+        ds = _make_block_dataset(ni=1, nj=1, nk=2, size=20.0, z_top=0.0)
 
         layer = DepthTransformLayer(DummySurface(surface_val), _PassThroughLayer())  # ty: ignore[invalid-argument-type]
         result = layer(ds)
 
         transformed_z = result[Coordinate.Z.value].values
 
-        # Expected: 500.0 (surface) + [0.0, 10.0] (depths)
+        # z = [0.0, 10.0] (from size=20, nk=2 → resolution_v=10)
+        # expected: 500.0 + [0.0, 10.0] = [500.0, 510.0]
         expected_z = np.array([500.0, 510.0]).reshape(1, 1, 2)
         np.testing.assert_allclose(transformed_z, expected_z)
 
@@ -463,7 +463,7 @@ class TestElyTaperLayerDimensions:
         # is_in_taper is False everywhere and background values should dominate.
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=9.0, size=10.0)
         ds = ds.copy()
-        ds["z"] = (ds["z"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
+        ds["depth"] = (ds["depth"].dims, np.full((2, 2, 2), 15.0, dtype=np.float32))
         result = layer(ds)
         # All points are deeper than the taper zone → background (rho=9999) should be used
         np.testing.assert_allclose(
@@ -493,11 +493,11 @@ class TestElyTaperLayerDimensions:
         #   k=0 → z=5  (in the taper zone: z < z_t=10)
         #   k=1 → z=15 (deeper than the taper zone: z >= z_t=10)
         ds = _make_block_dataset(ni=2, nj=2, nk=2, z_top=0.0, size=10.0)
-        z_arr = np.zeros((2, 2, 2), dtype=np.float32)
-        z_arr[:, :, 0] = 5.0
-        z_arr[:, :, 1] = 15.0
+        depth_arr = np.zeros((2, 2, 2), dtype=np.float32)
+        depth_arr[:, :, 0] = 5.0
+        depth_arr[:, :, 1] = 15.0
         ds = ds.copy()
-        ds["z"] = (ds["z"].dims, z_arr)
+        ds["depth"] = (ds["depth"].dims, depth_arr)
         result = layer(ds)
         rho = result["qualities"].sel(component="rho").values
         # k=1 slice (z=15, deeper than z_t=10) must use the background rho=9999

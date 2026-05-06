@@ -1,5 +1,7 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from nzcvm.graph import export_datatree_graph
+
 import os
 from contextlib import nullcontext
 from pathlib import Path
@@ -10,31 +12,60 @@ import psutil
 import rich
 import rich.box
 import typer
+import logging.config
 from dask.diagnostics import Profiler, ResourceProfiler, visualize
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from tqdm.dask import TqdmCallback
 
-from nzcvm import formats, surface
-from nzcvm.geomodelgrid import GeoModelGrid, GeoModelGridFormat
-from nzcvm.layers import (
-    AffineTransformLayer,
-    DepthTransformLayer,
-    ModelLayer,
-    block_map_no_path,
-)
-from nzcvm.layers.ely import ElyTaperLayer
-from nzcvm.model import Model
+from nzcvm import formats
+from nzcvm.generate import skeleton_velocity_model
+from nzcvm.model_spec import VelocityModelSpec, VelocityModelSpecFormat
+from nzcvm.layers.helpers import execute_model_pipeline
 from nzcvm.scripts import (
     construct_mesh,
     convert_tomography,
     surface_cli,
     tree_stats,
-    view_basin,
+    view,
 )
 
 console = Console()
+
+
+def configure_logging(level: str) -> None:
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "standard": {
+                "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "standard",
+                "level": level,
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "": {  # root logger
+                "handlers": ["console"],
+                "level": level,
+                "propagate": True,
+            },
+            "dask": {
+                "level": level,  # Silence noisy dask internals
+                "propagate": True,
+            },
+            "hdf5plugin": {"level": level, "propagate": True},
+        },
+    }
+
+    logging.config.dictConfig(logging_config)
 
 
 def num_cores() -> int:
@@ -65,7 +96,7 @@ app.add_typer(construct_mesh.app, name="basin")
 app.add_typer(convert_tomography.app, name="tomography")
 app.add_typer(surface_cli.app, name="surface")
 app.add_typer(tree_stats.app, name="tree-stats")
-app.add_typer(view_basin.app, name="view-basin")
+app.add_typer(view.app, name="view")
 
 
 @app.command()
@@ -83,31 +114,14 @@ def generate(
     output: Annotated[
         Path, typer.Argument(help="Output path to write velocity model to.")
     ],
-    topography: Annotated[
-        Path,
-        typer.Option(
-            help="Topography surface file.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    vs30_path: Annotated[
-        Path,
-        typer.Option(
-            help="Vs30 surface file.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
     n_threads: Annotated[
         int | None,
         typer.Option(help="Number of threads to spawn to query the model.", min=1),
     ] = None,
     profile: Annotated[bool, typer.Option(help="If set, profile this run.")] = False,
+    graph: Annotated[
+        bool, typer.Option(help="If set, export the dask graph for this run.")
+    ] = False,
     progress: Annotated[bool, typer.Option(help="If set, show progress.")] = True,
     dt: Annotated[
         float, typer.Option(help="Resource profiler sample rate (seconds).", min=0.0)
@@ -115,16 +129,9 @@ def generate(
     profile_output: Annotated[
         Path, typer.Option(help="Profile report output path.")
     ] = Path("dask_profile.html"),
-    model_path: Annotated[
-        Path | None,
-        typer.Option(
-            help="Path containing models.", exists=True, file_okay=False, dir_okay=True
-        ),
-    ] = None,
-    model_glob: Annotated[
-        str,
-        typer.Option(help="Glob for models, set this to load only a subset of models."),
-    ] = "*.vtkhdf",
+    graph_output: Annotated[
+        Path, typer.Option(help="Dask graph output location.")
+    ] = Path("dask_graph.svg"),
     output_format: Annotated[
         formats.Format,
         typer.Option(
@@ -132,17 +139,23 @@ def generate(
         ),
     ] = formats.Format.INFERRED,
     config_format: Annotated[
-        GeoModelGridFormat,
+        VelocityModelSpecFormat,
         typer.Option(
             help="Config format to read. You can usually leave this as inferred."
         ),
-    ] = GeoModelGridFormat.INFERRED,
+    ] = VelocityModelSpecFormat.INFERRED,
+    quantise: Annotated[
+        bool,
+        typer.Option(
+            help="If set, quantise the output in NetCDF/Zarr formats using ZFP"
+        ),
+    ] = False,
+    log_level: str = "WARNING",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
+    configure_logging(log_level)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
-    resolved_model_path = (
-        model_path if model_path is not None else determine_model_path()
-    )
+    dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
 
     console.print(
         Panel.fit(
@@ -152,45 +165,27 @@ def generate(
         )
     )
 
-    if not resolved_model_path.exists():
-        console.print(
-            f"[error]Error:[/error] Model path [path]{resolved_model_path}[/path] not found."
-        )
-        return
-
-    geo_model_grid = GeoModelGrid.read_config(config, config_format)
-    affine = geo_model_grid.metadata.affine
-    velocity_model = geo_model_grid.to_datatree()
+    velocity_model_spec = VelocityModelSpec.read_config(config, config_format)
 
     summary = Table(show_header=False, box=rich.box.SIMPLE)
     summary.add_row(
-        "Model Title", f"[bold]{geo_model_grid.metadata.title or 'N/A'}[/bold]"
+        "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
     )
-    summary.add_row("Blocks", str(len(geo_model_grid.blocks)))
-
+    summary.add_row("Refinements", str(len(velocity_model_spec.grid.mesh_refinements)))
     console.print(summary)
 
-    models = list(resolved_model_path.rglob(model_glob))
-    console.print(f"[info]Found {len(models)} model components in search path.[/info]")
+    with console.status("Initialising velocity model"):
+        velocity_model = skeleton_velocity_model(velocity_model_spec)
 
-    with console.status("Loading basin models"):
-        model = Model.load_models(*models)
-
-    with console.status("Reading surface topography"):
-        topo = surface.read_surface_from_path(topography)
-
-    with console.status("Reading surface vs30"):
-        vs30 = surface.read_surface_from_path(vs30_path)
-
-    model_pipeline = AffineTransformLayer(
-        affine,
-        ElyTaperLayer(vs30, 450.0, DepthTransformLayer(topo, ModelLayer(model))),  # ty: ignore[invalid-argument-type]
-    )
+    print(velocity_model)
+    with console.status("Building layer pipeline"):
+        model_pipeline = velocity_model_spec.build_pipeline()
     rich.print(model_pipeline)
 
-    velocity_model = block_map_no_path(velocity_model, model_pipeline)
-
-    dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
+    velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
+    if graph:
+        with console.status("Storing dask graph"):
+            export_datatree_graph(velocity_model, graph_output)
 
     progress_ctx = TqdmCallback(desc="Generating Model") if progress else nullcontext()
     profiler = Profiler() if profile else nullcontext()
@@ -198,9 +193,7 @@ def generate(
 
     with profiler as prof, res_prof as rprof, progress_ctx:
         formats.write_velocity_model(
-            velocity_model,
-            output,
-            formats.from_path(output),
+            velocity_model, output, output_format, quantise_arrays=quantise
         )
 
     if profile and prof and rprof:

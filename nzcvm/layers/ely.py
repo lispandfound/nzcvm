@@ -4,6 +4,8 @@ from typing import Any
 
 import numpy as np
 import xarray as xr
+import logging
+
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
@@ -13,6 +15,8 @@ from nzcvm.ely_taper import ely_vs_profile
 from nzcvm.layers.protocol import QueryLayer
 from nzcvm.model import ModelRange
 from nzcvm.surface import Surface
+
+logger = logging.getLogger(__name__)
 
 
 class ElyTaperLayer:
@@ -57,11 +61,13 @@ class ElyTaperLayer:
         self.z_t = z_t
         self.next_layer = next_layer
 
-    def _transform(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
-        # If the whole chunk is below the taper, skip Ely entirely.
-        if np.all(chunk["z"] > self.z_t):
-            return self.next_layer(chunk, **kwargs)
+    def _ely_transform(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        is_in_taper = chunk["depth"] < self.z_t
 
+        # If the whole chunk is below the taper, skip Ely entirely.
+        if not np.any(is_in_taper):
+            logger.debug("Chunk outside taper, skipping Ely taper calculation.")
+            return self.next_layer(chunk, **kwargs)
         # Ask the next layer *only* for the basins.
         basin_kwargs = kwargs.copy()
         basin_kwargs["model_range"] = ModelRange.BASINS
@@ -71,14 +77,23 @@ class ElyTaperLayer:
 
         # Inside basins we don't have to compute the tomography or Ely taper.
         if np.allclose(alpha, 1.0):
+            logger.debug("Chunk inside basin, skipping Ely taper calculation.")
             return basins
 
         background = self.next_layer(chunk, **kwargs)
 
-        safe_z = chunk["z"].clip(max=self.z_t)
+        safe_z = chunk["depth"].clip(max=self.z_t)
 
-        x_top = chunk[Coordinate.X.value].isel({Coordinate.K: 0})
-        y_top = chunk[Coordinate.Y.value].isel({Coordinate.K: 0})
+        x_top = (
+            chunk[Coordinate.X.value]
+            .isel({Coordinate.K: 0})
+            .drop_vars(Coordinate.K.value)
+        )
+        y_top = (
+            chunk[Coordinate.Y.value]
+            .isel({Coordinate.K: 0})
+            .drop_vars(Coordinate.K.value)
+        )
 
         vs30 = xr.apply_ufunc(
             self.interpolator.transform,
@@ -89,16 +104,18 @@ class ElyTaperLayer:
             dask="parallelized",
             output_dtypes=[np.float32],
         )
+        logger.debug(f"Vs30 range: {vs30.min()} - {vs30.max()}")
 
         # Select a z-layer of the block
         # The array [0] as the selection is important because it preserves the k
         # axis for downstream layers.
         surface_layer = chunk.isel({Coordinate.K: [0]}).copy()
 
-        # Set the z-level to be z_T
-        surface_layer[Coordinate.Z.value] = xr.full_like(
-            surface_layer[Coordinate.X.value], self.z_t
+        # This hack sets the reference elevation to an equivalent to depth = 450m below topography
+        surface_layer[Coordinate.Z.value] -= (
+            surface_layer[Coordinate.DEPTH.value] - self.z_t
         )
+        surface_layer[Coordinate.DEPTH.value] = self.z_t
 
         # Calculate bounding taper qualities using *ONLY* the tomography
         tomo_kwargs = kwargs.copy()
@@ -142,11 +159,6 @@ class ElyTaperLayer:
         blended_alpha = basin_alpha + ((1 - basin_alpha) * ely_alpha)
         ely_blended_qualities.loc[{"component": Component.ALPHA.value}] = blended_alpha
 
-        # Combine the Ely blend and the background model based on depth.
-        # xr.where is applied element-wise across all variables in the dataset.
-        is_in_taper = chunk["z"] < self.z_t
-
-        # Build result: keep all background variables, overwrite only qualities.
         result = background.copy()
         result["qualities"] = xr.where(
             is_in_taper, ely_blended_qualities, background["qualities"]
@@ -178,11 +190,14 @@ class ElyTaperLayer:
         xarray.Dataset
             Same dataset with ``qualities`` calculated according to Ely taper relations.
         """
-        if block.attrs["z_top"] >= self.z_t:
+        if (
+            block.attrs["minimum_top_depth"] >= self.z_t
+            or kwargs.get("model_range") == ModelRange.BASINS
+        ):
             return self.next_layer(block, **kwargs)
 
         return xr.map_blocks(
-            self._transform, block, kwargs=kwargs, template=self._template(block)
+            self._ely_transform, block, kwargs=kwargs, template=self._template(block)
         )
 
     def __rich_console__(
@@ -191,5 +206,6 @@ class ElyTaperLayer:
         """Render the pipeline chain as a rich tree."""
         tree = Tree("[bold blue]Ely GTL Layer[/bold blue]")
         tree.add(self.interpolator)  #  ty: ignore[invalid-argument-type]
+        tree.add(f"GTL Depth: {self.z_t:.2f}m")
         tree.add(self.next_layer)
         yield tree

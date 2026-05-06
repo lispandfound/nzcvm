@@ -12,10 +12,17 @@ from nzcvm.layers.protocol import QueryLayer
 
 
 class AffineTransformLayer:
-    """Pipeline layer that applies a 4x4 affine transform to (x, y, z) coordinates.
+    """Pipeline layer that applies a 3×3 (2-D) or 4×4 (3-D) affine transform.
+
+    For a **3×3 homogeneous matrix** (produced by :func:`~nzcvm.coordinates.translate`
+    without a ``z`` argument or by :func:`~nzcvm.coordinates.rotate` without an
+    ``axis``), only ``x`` and ``y`` are transformed; ``z`` is passed through
+    unchanged.
+
+    For a **4×4 matrix**, ``x``, ``y``, and ``z`` are all transformed.
 
     The transform is applied element-wise to the ``x``, ``y``, and ``z``
-    variables of every ``/block/*`` node, then passes the result to
+    variables of the block dataset, then passes the result to
     *next_layer*.  The element-wise approach is preferred over BLAS matmul
     because the ``column_stack`` + ``np.ones`` allocation in the BLAS path
     materialises an extra ``(N, 4)`` matrix per chunk (~25% more
@@ -26,9 +33,11 @@ class AffineTransformLayer:
     Parameters
     ----------
     affine :
-        4x4 homogeneous affine matrix (see :func:`~nzcvm.coordinates.translate`,
-        :func:`~nzcvm.coordinates.rotate`, :func:`~nzcvm.coordinates.scale`, etc.)
-        mapping local model coordinates to the desired output space.
+        3×3 or 4×4 homogeneous affine matrix (see
+        :func:`~nzcvm.coordinates.translate`,
+        :func:`~nzcvm.coordinates.rotate`,
+        :func:`~nzcvm.coordinates.scale`, etc.) mapping local model
+        coordinates to the desired output space.
     next_layer :
         Downstream layer to invoke after the transform.
 
@@ -62,7 +71,7 @@ class AffineTransformLayer:
 
         Parameters
         ----------
-        velocity_model :
+        block :
             Dataset with local-grid ``x``, ``y``, ``z`` coordinate variables.
 
         Returns
@@ -73,10 +82,15 @@ class AffineTransformLayer:
         a = self.affine.astype(np.float32)
         x = block[Coordinate.X]
         y = block[Coordinate.Y]
-        z = block[Coordinate.Z]
-        block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2] * z + a[0, 3]
-        block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2] * z + a[1, 3]
-        block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 2] * z + a[2, 3]
+        if a.shape == (3, 3):
+            # 2-D affine: transform x and y only; z is unchanged.
+            block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 2]
+            block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 2]
+        else:
+            # 3-D affine: transform x, y, and z.
+            block[Coordinate.X] = a[0, 0] * x + a[0, 1] * y + a[0, 3]
+            block[Coordinate.Y] = a[1, 0] * x + a[1, 1] * y + a[1, 3]
+            block[Coordinate.Z] = a[2, 0] * x + a[2, 1] * y + a[2, 3]
 
         return self.next_layer(block, **kwargs)
 

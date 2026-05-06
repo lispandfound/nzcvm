@@ -18,6 +18,10 @@ pub trait Contains<T: BHValue, const D: usize, Data> {
 
 const SMALL_VEC_SIZE: usize = 16;
 const SMALL_VEC_RAY_SIZE: usize = 8;
+/// Stack capacity for the stats iterator.  Larger than `SMALL_VEC_RAY_SIZE`
+/// because diagnostic traversals visit every matching leaf (no early-exit on
+/// alpha saturation) so the stack may grow deeper.
+const SMALL_VEC_STATS_SIZE: usize = 16;
 
 pub struct ContainsIterator<
     'bvh,
@@ -319,7 +323,7 @@ pub struct PriorityRayStatsIterator<
     bvh: &'bvh Bvh<T, DBVH>,
     point: Point<T, DQ>,
     shapes: &'shape [Shape],
-    stack: SmallVec<[usize; 16]>,
+    stack: SmallVec<[usize; SMALL_VEC_STATS_SIZE]>,
     priority_lo: T,
     priority_hi: T,
     pub stats: TraversalStats,

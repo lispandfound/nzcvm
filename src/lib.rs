@@ -76,7 +76,14 @@ mod nzcvm {
     /// * `vertices_py`   – `(N, 3)` float array of vertex coordinates.
     /// * `faces_py`      – `(M, 4)` integer array of tetrahedral cell indices.
     /// * `types_py`      – `(M,)` u8 array: `0` = constant, `1` = interpolate.
-    /// * `models_py`     – flat index array for the model lookup table.
+    /// * `models_py`     – flat integer look-up array whose stride varies with
+    ///   model type.  For each entry in `types_py`:
+    ///   - type `0` (constant): consume **1** index — the quality index.
+    ///   - type `1` (interpolate): consume **4** indices — the four vertex
+    ///     quality indices stored in `(x, y, z, w)` order matching the
+    ///     corresponding simplex vertices.
+    ///   The total length of `models_py` must equal
+    ///   `sum(1 if t==0 else 4 for t in types_py)`.
     /// * `qualities_py`  – `(Q, 6)` array of quality values indexed by `models_py`.
     /// * `priority`      – model priority (lower number = higher priority).
     /// * `transform_py`  – optional 4×4 world-to-local affine transform.
@@ -355,6 +362,14 @@ mod nzcvm {
         /// Returns an `(N, 6)` float32 array with columns ordered as
         /// `[rho, vp, vs, qp, qs, alpha]`.  Rows for points outside all
         /// matching models are left as zeros.
+        ///
+        /// # TODO
+        ///
+        /// The GIL is released during the hot loop but queries still run on a
+        /// single thread.  Since every row is independent, this loop is an
+        /// ideal candidate for `rayon::par_iter` — consider adding a
+        /// `parallel` flag to `QueryParams` or a separate `query_many_par`
+        /// entry-point.
         pub fn query_many<'py>(
             &self,
             py: Python<'py>,

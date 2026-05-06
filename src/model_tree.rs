@@ -32,7 +32,9 @@ pub struct ModelTree {
 
 impl DeepSizeOf for ModelTree {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
-        self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
+        // The outer BVH is 4-dimensional (3 spatial + 1 priority), so the node
+        // size must use `BvhNode<Real, 4>` to account for the extra AABB extent.
+        self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 4>>()
             + self.models.deep_size_of_children(context)
     }
 }
@@ -99,6 +101,11 @@ impl Query for ModelTree {
 
     fn query_stats(&self, point: Point3<Real>) -> QueryStats {
         let now = Instant::now();
+        // NOTE: This method traverses the BVH *twice* — once for AABB/simplex
+        // counts and once for the blended quality — so `elapsed` reflects two
+        // full traversals (~2× a normal query).  Separating them would require
+        // a single combined iterator; the current split keeps the hot paths
+        // simpler and this diagnostic path is never on the critical path.
         let mut iter = priority_ray_stats_iterator(&self.bvh_tree, &self.models, point, 0.0, 255.0);
         for _ in iter.by_ref() {}
         let outer_stats = iter.stats;
@@ -133,6 +140,11 @@ impl Query for ModelTree {
                     {
                         termination = Some(i);
                     }
+                    // Intentionally continue blending past saturation so that
+                    // `contributions` is a complete record of every model that
+                    // was visited, not just those that contributed before
+                    // saturation.  The `termination` index marks the point at
+                    // which further blending became a no-op.
                     current.blend(&q)
                 }
             });

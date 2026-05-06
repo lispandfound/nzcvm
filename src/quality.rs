@@ -26,6 +26,15 @@ impl Quality {
     /// The resulting `alpha` is `self.alpha + rhs.alpha * (1 - self.alpha)`.
     /// Material properties are blended proportionally.
     ///
+    /// # TODO (Scientific Review)
+    ///
+    /// This formula applies the same linear Porter-Duff blend to all six
+    /// components including `qp` and `qs` (seismic attenuation quality
+    /// factors).  For velocities (`rho`, `vp`, `vs`) a linear blend is the
+    /// standard Voigt/Reuss approximation; for attenuation quality factors the
+    /// harmonic mean (i.e. `1/Q` is additive) is more theoretically justified.
+    /// Verify with a domain expert that this approximation is acceptable.
+    ///
     /// # Examples
     ///
     /// A fully-opaque quality blended with anything stays unchanged:
@@ -68,6 +77,13 @@ impl Quality {
 }
 
 impl From<Quality> for Array1<Real> {
+    /// Convert a `Quality` to a 5-element array of `[rho, vp, vs, qp, qs]`.
+    ///
+    /// **`alpha` is intentionally excluded** from this array.  This conversion
+    /// was established before `alpha` became a first-class field and is
+    /// retained for callers that only need the five physical-property
+    /// components.  Use [`Quality::from_slice`] when you need all six
+    /// components (including `alpha`) as an ndarray.
     fn from(val: Quality) -> Self {
         Array1::from_iter([val.rho, val.vp, val.vs, val.qp, val.qs])
     }
@@ -86,7 +102,11 @@ impl From<ArrayView1<'_, Real>> for Quality {
     }
 }
 
-// TODO: How should qp/qs arithmetic be handled?
+// TODO (Scientific Review): qp and qs are dimensionless seismic quality factors
+// (attenuation); simple scalar addition and multiplication may not be physically
+// meaningful for these components (e.g. the harmonic mean is more appropriate for
+// averaging attenuation).  Confirm the intended usage before this impl is called
+// in production blending paths.
 impl Add for Quality {
     type Output = Self;
 

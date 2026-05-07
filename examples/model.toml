@@ -24,7 +24,7 @@ transpose = false
 origin_crs = 4326
 origin_x = 0
 origin_y = 0
-cell_registration = "corner"
+cell_registration = "centre"
 
 [grid.chunks]
 i = 128

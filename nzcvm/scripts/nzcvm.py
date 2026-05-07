@@ -34,7 +34,7 @@ from nzcvm.scripts import (
 console = Console()
 
 
-def configure_logging(level: str) -> None:
+def configure_logging(level: str, log_path: Path | None) -> None:
     logging_config = {
         "version": 1,
         "disable_existing_loggers": False,
@@ -57,13 +57,23 @@ def configure_logging(level: str) -> None:
                 "level": level,
                 "propagate": True,
             },
-            "dask": {
-                "level": level,  # Silence noisy dask internals
-                "propagate": True,
-            },
+            "dask": {"level": level, "propagate": True},
             "hdf5plugin": {"level": level, "propagate": True},
         },
     }
+
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logging_config["handlers"]["file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "standard",
+            "level": level,
+            "filename": str(log_path),
+            "maxBytes": 10485760,
+            "backupCount": 5,
+            "encoding": "utf8",
+        }
+        logging_config["loggers"][""]["handlers"] = ["file"]
 
     logging.config.dictConfig(logging_config)
 
@@ -151,9 +161,10 @@ def generate(
         ),
     ] = False,
     log_level: str = "WARNING",
+    log_file: Path | None = None,
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
-    configure_logging(log_level)
+    configure_logging(log_level, log_file)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
 

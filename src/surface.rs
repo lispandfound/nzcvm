@@ -3,7 +3,10 @@ use crate::tree_query::contains_point_iterator; // Assumed 2D iterator
 use crate::triangle::Triangle; // Assumed 2D equivalent of Simplex
 use deepsize::{Context, DeepSizeOf};
 
-use bvh::bvh::{Bvh, BvhNode};
+use bvh::{
+    bounding_hierarchy::BoundingHierarchy,
+    bvh::{Bvh, BvhNode},
+};
 use nalgebra::{Point2, Point3};
 use serde::Serialize;
 
@@ -47,7 +50,7 @@ impl SurfaceModel {
             .collect();
 
         // BVH is built in 2D space (Triangles must implement Bounded<Real, 2>)
-        let bvh_tree = Bvh::build(&mut triangles);
+        let bvh_tree = Bvh::build_par(&mut triangles);
 
         Self {
             bvh_tree,

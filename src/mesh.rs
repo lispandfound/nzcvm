@@ -2,11 +2,11 @@ use crate::model::*;
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
-use crate::tree_query::{contains_point_iterator, Contains};
+use crate::tree_query::{Contains, contains_point_iterator};
 use deepsize::{Context, DeepSizeOf};
 
 use bvh::aabb::{Aabb, Bounded};
-use bvh::bounding_hierarchy::BHShape;
+use bvh::bounding_hierarchy::{BHShape, BoundingHierarchy};
 use bvh::bvh::{Bvh, BvhNode};
 use nalgebra::{Affine3, Point, Point3, Point4};
 use serde::Serialize;
@@ -191,7 +191,7 @@ impl MeshModel {
                 )
             })
             .collect();
-        let bvh_tree = Bvh::build(&mut simplices);
+        let bvh_tree = Bvh::build_par(&mut simplices);
 
         Self {
             bvh_tree,
@@ -460,7 +460,9 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let quality = mock_quality(1.0);
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
+        let models = vec![Model::from(InterpolateModel {
+            qualities: faces[0],
+        })];
         let qualities = vec![quality; 4];
         let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
         let q = mesh.query(Point3::new(5.0, 5.0, 5.0));
@@ -488,7 +490,9 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let qualities_vec: Vec<Quality> = (0..4).map(|i| mock_quality(i as Real)).collect();
-        let models = vec![Model::from(InterpolateModel { qualities: faces[0] })];
+        let models = vec![Model::from(InterpolateModel {
+            qualities: faces[0],
+        })];
         let mesh = MeshModel::new(v, faces, models, qualities_vec, 0, None, String::new());
         let q = mesh.query(Point3::new(0.25, 0.25, 0.25));
         assert!(q.is_some());
@@ -502,7 +506,14 @@ mod tests {
     fn test_constant_model_returns_fixed_quality() {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let q_fixed = Quality { rho: 42.0, vp: 1.0, vs: 2.0, qp: 3.0, qs: 4.0, alpha: 1.0 };
+        let q_fixed = Quality {
+            rho: 42.0,
+            vp: 1.0,
+            vs: 2.0,
+            qp: 3.0,
+            qs: 4.0,
+            alpha: 1.0,
+        };
         let qualities = vec![q_fixed];
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
         let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());

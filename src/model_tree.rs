@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use approx::abs_diff_eq;
+use bvh::bounding_hierarchy::BoundingHierarchy;
 use bvh::bvh::{Bvh, BvhNode};
 use deepsize::{Context, DeepSizeOf};
 use serde::Serialize;
@@ -44,7 +45,7 @@ impl ModelTree {
         for (i, model) in models.iter_mut().enumerate() {
             model.id = i;
         }
-        let bvh_tree = Bvh::build(&mut models);
+        let bvh_tree = Bvh::build_par(&mut models);
         Self { bvh_tree, models }
     }
 
@@ -92,7 +93,13 @@ fn blend_accumulate(
 impl Query for ModelTree {
     type Explanation = Explanation;
 
-    fn query(&self, point: Point3<Real>, existing: Option<Quality>, lo: u8, hi: u8) -> Option<Quality> {
+    fn query(
+        &self,
+        point: Point3<Real>,
+        existing: Option<Quality>,
+        lo: u8,
+        hi: u8,
+    ) -> Option<Quality> {
         blend_accumulate(
             existing,
             priority_ray_iterator(&self.bvh_tree, &self.models, point, lo as Real, hi as Real),
@@ -131,7 +138,10 @@ impl Query for ModelTree {
         for (i, (priority, q)) in
             priority_ray_iterator(&self.bvh_tree, &self.models, point, 0.0, 255.0).enumerate()
         {
-            contributions.push(ModelContribution { priority, quality: q });
+            contributions.push(ModelContribution {
+                priority,
+                quality: q,
+            });
             blended = Some(match blended {
                 None => q,
                 Some(ref current) => {
@@ -149,7 +159,11 @@ impl Query for ModelTree {
                 }
             });
         }
-        Explanation { contributions, output: blended, termination }
+        Explanation {
+            contributions,
+            output: blended,
+            termination,
+        }
     }
 }
 
@@ -166,19 +180,35 @@ mod tests {
 
     fn cube_mesh(priority: u8, val: Real, alpha: Real) -> MeshModel {
         let v: Vec<Point3<Real>> = vec![
-            Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0), Point3::new(1.0, 1.0, 0.0),
-            Point3::new(0.0, 0.0, 1.0), Point3::new(1.0, 0.0, 1.0),
-            Point3::new(0.0, 1.0, 1.0), Point3::new(1.0, 1.0, 1.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
+            Point3::new(1.0, 0.0, 1.0),
+            Point3::new(0.0, 1.0, 1.0),
+            Point3::new(1.0, 1.0, 1.0),
         ];
         let faces = vec![
-            Point4::new(0usize, 1, 2, 4), Point4::new(3, 1, 2, 7),
-            Point4::new(5, 1, 4, 7),     Point4::new(6, 2, 4, 7),
+            Point4::new(0usize, 1, 2, 4),
+            Point4::new(3, 1, 2, 7),
+            Point4::new(5, 1, 4, 7),
+            Point4::new(6, 2, 4, 7),
             Point4::new(1, 2, 4, 7),
         ];
-        let q = Quality { rho: val, vp: val, vs: val, qp: val, qs: val, alpha };
+        let q = Quality {
+            rho: val,
+            vp: val,
+            vs: val,
+            qp: val,
+            qs: val,
+            alpha,
+        };
         let qualities = vec![q; v.len()];
-        let models = faces.iter().map(|f| Model::from(InterpolateModel { qualities: *f })).collect();
+        let models = faces
+            .iter()
+            .map(|f| Model::from(InterpolateModel { qualities: *f }))
+            .collect();
         MeshModel::new(v, faces, models, qualities, priority, None, String::new())
     }
 
@@ -187,15 +217,26 @@ mod tests {
     #[test]
     fn test_query_hit_and_miss() {
         let tree = ModelTree::new(vec![cube_mesh(0, 5.0, 1.0)]);
-        assert_relative_eq!(tree.query(PT, None, 0, 255).unwrap().rho, 5.0, epsilon = 1e-4);
-        assert!(tree.query(Point3::new(10.0, 10.0, 10.0), None, 0, 255).is_none());
+        assert_relative_eq!(
+            tree.query(PT, None, 0, 255).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
+        assert!(
+            tree.query(Point3::new(10.0, 10.0, 10.0), None, 0, 255)
+                .is_none()
+        );
     }
 
     #[test]
     fn test_priority_ordering() {
         // Lower priority number wins regardless of insertion order.
         let tree = ModelTree::new(vec![cube_mesh(1, 10.0, 1.0), cube_mesh(0, 5.0, 1.0)]);
-        assert_relative_eq!(tree.query(PT, None, 0, 255).unwrap().rho, 5.0, epsilon = 1e-4);
+        assert_relative_eq!(
+            tree.query(PT, None, 0, 255).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
     }
 
     #[test]
@@ -209,20 +250,43 @@ mod tests {
     #[test]
     fn test_query_bounded() {
         let tree = ModelTree::new(vec![cube_mesh(10, 5.0, 1.0), cube_mesh(200, 99.0, 1.0)]);
-        assert_relative_eq!(tree.query(PT, None, 0, 127).unwrap().rho, 5.0, epsilon = 1e-4);
-        assert_relative_eq!(tree.query(PT, None, 128, 255).unwrap().rho, 99.0, epsilon = 1e-4);
+        assert_relative_eq!(
+            tree.query(PT, None, 0, 127).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
+        assert_relative_eq!(
+            tree.query(PT, None, 128, 255).unwrap().rho,
+            99.0,
+            epsilon = 1e-4
+        );
         // Exact boundary: priority 50 is outside 128-255
-        assert!(tree.query(PT, None, 128, 255).map(|q| q.rho == 99.0).unwrap_or(false));
+        assert!(
+            tree.query(PT, None, 128, 255)
+                .map(|q| q.rho == 99.0)
+                .unwrap_or(false)
+        );
     }
 
     #[test]
     fn test_blend_into_existing() {
         let tree = ModelTree::new(vec![cube_mesh(0, 4.0, 0.5)]);
-        let existing = Some(Quality { rho: 10.0, vp: 10.0, vs: 10.0, qp: 10.0, qs: 10.0, alpha: 0.5 });
+        let existing = Some(Quality {
+            rho: 10.0,
+            vp: 10.0,
+            vs: 10.0,
+            qp: 10.0,
+            qs: 10.0,
+            alpha: 0.5,
+        });
         let q = tree.query(PT, existing, 0, 255).unwrap();
         // alpha = 0.5 + 0.5*(1-0.5) = 0.75; rho = (0.5/0.75)*10 + (0.25/0.75)*4
         assert_relative_eq!(q.alpha, 0.75, epsilon = 1e-4);
-        assert_relative_eq!(q.rho, (0.5 / 0.75) * 10.0 + (0.25 / 0.75) * 4.0, epsilon = 1e-4);
+        assert_relative_eq!(
+            q.rho,
+            (0.5 / 0.75) * 10.0 + (0.25 / 0.75) * 4.0,
+            epsilon = 1e-4
+        );
     }
 
     #[test]
@@ -244,14 +308,29 @@ mod tests {
     #[test]
     fn test_constant_model() {
         let v = vec![
-            Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0),
-            Point3::new(0.0, 1.0, 0.0), Point3::new(0.0, 0.0, 1.0),
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(0.0, 0.0, 1.0),
         ];
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let q = Quality { rho: 42.0, vp: 1.0, vs: 1.0, qp: 1.0, qs: 1.0, alpha: 1.0 };
+        let q = Quality {
+            rho: 42.0,
+            vp: 1.0,
+            vs: 1.0,
+            qp: 1.0,
+            qs: 1.0,
+            alpha: 1.0,
+        };
         let models = vec![Model::from(ConstantModel { quality: 0usize })];
         let mesh = MeshModel::new(v, faces, models, vec![q], 0, None, String::new());
         let tree = ModelTree::new(vec![mesh]);
-        assert_relative_eq!(tree.query(Point3::new(0.1, 0.1, 0.1), None, 0, 255).unwrap().rho, 42.0, epsilon = 1e-4);
+        assert_relative_eq!(
+            tree.query(Point3::new(0.1, 0.1, 0.1), None, 0, 255)
+                .unwrap()
+                .rho,
+            42.0,
+            epsilon = 1e-4
+        );
     }
 }

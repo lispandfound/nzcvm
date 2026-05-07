@@ -87,11 +87,14 @@ class ClampLayer:
                 min=min_ratio * vs if min_ratio else None,
                 max=max_ratio * vs if max_ratio else None,
             )
-            is_vp = qualities.coords["component"] == Component.VP.value
-            qualities = xr.where(
-                is_vp,
-                vp_clipped.expand_dims({"component": [Component.VP.value]}),
-                qualities,
+            qualities = xr.concat(
+                [
+                    qualities.drop_sel(component=Component.VP),
+                    vp_clipped.assign_coords(component=Component.VP).expand_dims(
+                        "component"
+                    ),
+                ],
+                dim="component",
             )
 
         block["qualities"] = qualities

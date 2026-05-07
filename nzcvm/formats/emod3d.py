@@ -19,6 +19,18 @@ VPFILE = "vp3dfile.p"
 VSFILE = "vs3dfile.s"
 DTYPE = np.float32
 
+KM_PER_S = 1 / 1000.0
+
+
+def _prepare_component(qualities: xr.DataArray, component: Component) -> da.Array:
+    contiguous_chunking = {0: "auto", 1: "auto", 2: -1}
+    return (
+        qualities.sel(component=component)
+        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
+        .data.rechunk(contiguous_chunking)
+        * KM_PER_S
+    )
+
 
 def to_emod3d(dtree: xr.DataTree, directory: Path):
     """Write a single-block velocity model to an EMOD3D binary directory.
@@ -64,27 +76,21 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
         len(grid[Coordinate.K]),
     )
 
-    rho = np.memmap(
+    rho_target = np.memmap(
         directory / RHOFILE, shape=output_shape, mode="r+", dtype=np.float32
     )
-    vp = np.memmap(directory / VPFILE, shape=output_shape, mode="r+", dtype=np.float32)
-    vs = np.memmap(directory / VSFILE, shape=output_shape, mode="r+", dtype=np.float32)
+    vp_target = np.memmap(
+        directory / VPFILE, shape=output_shape, mode="r+", dtype=np.float32
+    )
+    vs_target = np.memmap(
+        directory / VSFILE, shape=output_shape, mode="r+", dtype=np.float32
+    )
 
-    contiguous_chunking = {0: "auto", 1: "auto", 2: -1}
-    sources = [
-        grid["qualities"]
-        .sel(component=str(Component.RHO))
-        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
-        .data.rechunk(contiguous_chunking),
-        grid["qualities"]
-        .sel(component=str(Component.VP))
-        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
-        .data.rechunk(contiguous_chunking),
-        grid["qualities"]
-        .sel(component=str(Component.VS))
-        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
-        .data.rechunk(contiguous_chunking),
-    ]
-    targets = [rho, vp, vs]
+    qualities = grid["qualities"]
+    rho_source = _prepare_component(qualities, Component.RHO)
+    vp_source = _prepare_component(qualities, Component.VP)
+    vs_source = _prepare_component(qualities, Component.VS)
+    sources = [rho_source, vp_source, vs_source]
+    targets = [rho_target, vp_target, vs_target]
 
     da.store(sources, targets, lock=True)

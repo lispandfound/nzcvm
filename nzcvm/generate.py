@@ -29,7 +29,6 @@ nzcvm.curvilinear_mesh : Low-level mesh boundary and fill-between functions.
 
 import numpy as np
 import xarray as xr
-import dask.array as da
 import dask
 from pyproj import Transformer
 

@@ -383,7 +383,7 @@ mod nzcvm {
             y: PyReadonlyArray1<Real>,
             z: PyReadonlyArray1<Real>,
             params: QueryParams,
-        ) -> Bound<'py, PyArray2<Real>> {
+        ) -> PyResult<Bound<'py, PyArray2<Real>>> {
             let lo = params.priority_lo;
             let hi = params.priority_hi;
             // Acquire the array views while the GIL is held; the views hold
@@ -392,6 +392,12 @@ mod nzcvm {
             let ys = y.as_array();
             let zs = z.as_array();
             let n = xs.len();
+            if ys.len() != n || zs.len() != n {
+                return Err(PyValueError::new_err(format!(
+                    "x, y, z must have the same length; got x={}, y={}, z={}",
+                    n, ys.len(), zs.len(),
+                )));
+            }
             let mut buf = Array2::<Real>::zeros((n, 6));
             py.detach(|| {
                 azip!((mut out_lane in buf.rows_mut(), &xi in &xs, &yi in &ys, &zi in &zs) {
@@ -406,7 +412,7 @@ mod nzcvm {
                     }
                 });
             });
-            buf.into_pyarray(py)
+            Ok(buf.into_pyarray(py))
         }
 
         /// Print a human-readable summary of the model tree to stdout.

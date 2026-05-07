@@ -608,6 +608,11 @@ class ModelTree:
         x = np.asarray(x, dtype=np.float32)
         y = np.asarray(y, dtype=np.float32)
         z = np.asarray(z, dtype=np.float32)
+        if x.shape != y.shape or x.shape != z.shape:
+            raise ValueError(
+                f"x, y, z must have the same shape; "
+                f"got x={x.shape}, y={y.shape}, z={z.shape}"
+            )
         orig_shape = x.shape
         lo, hi = model_range.value
         params = QueryParams(lo, hi)

@@ -18,13 +18,12 @@ mesh_refinements = [
     # Good practice to break layer up, it will fast path the second layer down
     # to the highly efficient model query.
     { resolution = 100.0, bottom = 3500.0, name = "top layer", deformation = 0.0 },
-    { resolution = 100.0, bottom = 36000.0, name = "next layer", deformation = 0.0 },
 ]
 transpose = false
 origin_crs = 4326
 origin_x = 0
 origin_y = 0
-cell_registration = "centre"
+cell_registration = "corner"
 
 [grid.chunks]
 i = 128

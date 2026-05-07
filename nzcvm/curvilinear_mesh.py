@@ -78,6 +78,5 @@ def fill_between(
     xarray.DataArray
         3-D DataArray with dims ``(I, J, K)``.
     """
-    mesh = (1 - k_da) * top_surface + k_da * bottom_surface
-    mesh = mesh.transpose(Coordinate.I, Coordinate.J, Coordinate.K)
+    mesh = top_surface * (1 - k_da) + bottom_surface * k_da
     return mesh

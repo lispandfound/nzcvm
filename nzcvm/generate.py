@@ -3,12 +3,13 @@
 :func:`skeleton_velocity_model` is the main entry point. It:
 
 1. Builds per-refinement 2-D grid datasets with physical ``x``/``y``
-   coordinate arrays, optionally offset by half a cell for
-   ``cell_registration=CellRegistration.CENTRE``.
+   coordinate arrays (initially as nodes).
 2. Loads the topographic surface from ``velocity_model_spec.grid.surface``.
 3. Calls :func:`fill_grid` to populate each dataset with the 3-D curvilinear
    ``z``, ``depth``, and broadcast ``x``/``y`` arrays.
-4. Assembles everything into an :class:`xarray.DataTree`.
+4. If ``cell_registration=CellRegistration.CENTRE``, applies a 3D convolution
+   to the populated variables to yield true cell centrepoints.
+5. Assembles everything into an :class:`xarray.DataTree`.
 
 Coordinates are chunked lazily using explicit block sizes defined in the model
 configuration (:attr:`~nzcvm.model_spec.Grid.chunks`). This ensures predictable
@@ -29,7 +30,9 @@ nzcvm.curvilinear_mesh : Low-level mesh boundary and fill-between functions.
 
 import numpy as np
 import xarray as xr
+import dask.array as da
 import dask
+import scipy as sp
 from pyproj import Transformer
 
 from nzcvm import curvilinear_mesh
@@ -84,20 +87,47 @@ def _compute_surface_elevation(
     ).persist()
 
 
-def _logical_k_indices(
-    nk: int, cell_registration: CellRegistration, dtype: np.dtype, k_offset: int = 0
-) -> xr.DataArray:
+def _logical_k_indices(nk: int, dtype: np.dtype, k_offset: int = 0) -> xr.DataArray:
+    """Always generate nodal boundary K indices, regardless of registration."""
     k_indices = np.arange(nk) + k_offset
     k_coord = np.linspace(0.0, 1.0, num=nk, dtype=dtype)
-    if cell_registration == CellRegistration.CENTRE:
-        k_coord = (k_coord[1:] + k_coord[:-1]) / 2
-        k_indices = k_indices[:-1]
 
     return xr.DataArray(
         k_coord,
         dims=Coordinate.K,
         coords={Coordinate.K: k_indices},
     )
+
+
+def _convolve_to_centres(grid: xr.Dataset) -> xr.Dataset:
+    # 2x2x2 averaging kernel
+    kernel = np.full((2, 2, 2), 0.125, dtype=np.float32)
+
+    def _apply_convolve(dask_array):
+        # map_overlap handles sharing the chunk boundaries (depth=1 shares 1 adjacent cell)
+        return da.map_overlap(
+            sp.ndimage.convolve,
+            dask_array,
+            depth=1,  # 1 cell overlap needed for a 2x2x2 kernel
+            boundary="none",  # Don't pad the global edges
+            weights=kernel,
+            mode="constant",  # Scipy local mode (overridden by map_overlap)
+            cval=np.nan,
+        )
+
+    convolved = grid.copy()
+
+    # Apply to each 3D variable
+    for var in [Coordinate.X, Coordinate.Y, Coordinate.Z, "depth"]:
+        if var in grid:
+            convolved[var].data = _apply_convolve(grid[var].data)
+
+    # Clean up the global boundaries just like the shift method
+    convolved = convolved.dropna(Coordinate.I, how="all")
+    convolved = convolved.dropna(Coordinate.J, how="all")
+    convolved = convolved.dropna(Coordinate.K, how="all")
+
+    return convolved
 
 
 def _populate_grid(
@@ -107,15 +137,15 @@ def _populate_grid(
     k_chunk_size: int,
     cell_registration: CellRegistration,
     k_offset: int = 0,
-) -> xr.DataArray:
-    """Fill one 2-D grid dataset with 3-D coordinates in-place.
+) -> tuple[xr.Dataset, xr.DataArray, int]:
+    """Fill one 2-D grid dataset with 3-D coordinates.
 
     Parameters
     ----------
     grid :
-        2-D grid dataset to populate (modified in-place).
+        2-D grid dataset to populate.
     top_elevation :
-        Top-of-layer elevation.
+        Top-of-layer elevation (nodal).
     surface_elevation :
         Topographic surface elevation of the grid, used to
         compute ``depth``.
@@ -126,8 +156,12 @@ def _populate_grid(
 
     Returns
     -------
+    grid : xarray.Dataset
+        The populated 3-D dataset (convolved to centres if applicable).
     bottom_surface : xarray.DataArray
-        The computed bottom boundary of this grid.
+        The computed nodal bottom boundary of this grid.
+    nk : int
+        The number of nodes evaluated for the vertical extent.
     """
 
     bottom_surface, nk = curvilinear_mesh.curvilinear_mesh_boundary(
@@ -137,9 +171,9 @@ def _populate_grid(
         grid.attrs["deformation"],
     )
 
-    k_da = _logical_k_indices(
-        nk, cell_registration, grid[Coordinate.X].dtype, k_offset
-    ).chunk({Coordinate.K: k_chunk_size})
+    k_da = _logical_k_indices(nk, grid[Coordinate.X].dtype, k_offset).chunk(
+        {Coordinate.K: k_chunk_size}
+    )
 
     grid[Coordinate.Z] = curvilinear_mesh.fill_between(
         top_elevation,
@@ -155,7 +189,11 @@ def _populate_grid(
 
     grid["depth"] = grid[Coordinate.Z] - surface_elevation
 
-    return bottom_surface
+    # If requested, convolve all nodes to centres at the very end
+    if cell_registration == CellRegistration.CENTRE:
+        grid = _convolve_to_centres(grid)
+
+    return grid, bottom_surface, nk
 
 
 def _annotate_topo_metadata(grids: list[xr.Dataset], elevation: xr.DataArray) -> None:
@@ -202,7 +240,7 @@ def fill_grid(
     current_top_elevation = elevation
     total_nk = 0
 
-    for grid in grids:
+    for i, grid in enumerate(grids):
         grid_coords = {
             Coordinate.I: grid.coords[Coordinate.I],
             Coordinate.J: grid.coords[Coordinate.J],
@@ -210,7 +248,7 @@ def fill_grid(
         top_elevation = current_top_elevation.sel(grid_coords)
         grid_elevation = elevation.sel(grid_coords)
 
-        current_top_elevation = _populate_grid(
+        grid, current_top_elevation, nk = _populate_grid(
             grid,
             top_elevation,
             grid_elevation,
@@ -218,8 +256,9 @@ def fill_grid(
             cell_registration,
             total_nk,
         )
+        grids[i] = grid
         current_top_elevation = current_top_elevation.persist()
-        total_nk += len(grid.coords[Coordinate.K])
+        total_nk += nk
 
     _annotate_topo_metadata(grids, elevation)
     return grids
@@ -228,13 +267,11 @@ def fill_grid(
 def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTree:
     """Build and populate a curvilinear velocity model DataTree.
 
-    1. Creates per-refinement 2-D grid datasets with physical ``x``/``y``
-       arrays (with optional cell-centre half-cell offset when
-       ``grid.cell_registration == CellRegistration.CENTRE``).
-       These are explicitly chunked based on the model configuration.
+    1. Creates per-refinement 2-D nodal grid datasets explicitly chunked based
+       on the model configuration.
     2. Loads the topographic surface from ``velocity_model_spec.grid.surface``.
     3. Calls :func:`fill_grid` to add 3-D ``z``, ``depth``, and broadcast
-       ``x``/``y`` variables to each dataset.
+       ``x``/``y`` variables to each dataset (converting to centres if specified).
     4. Assembles the datasets into an :class:`xarray.DataTree`.
 
     Parameters
@@ -260,16 +297,10 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
     }
     k_chunk_size = grid_spec.chunks[Coordinate.K]
 
-    # Determine global indexing based on the finest resolution.
+    # Determine global indexing based ALWAYS on the nodal minimum resolution boundary
     minimum_resolution = min(r.resolution for r in grid_spec.mesh_refinements)
-    if cell_reg == CellRegistration.CORNER:
-        ni_global = int(np.ceil(grid_spec.extent_x / minimum_resolution)) + 1
-        nj_global = int(np.ceil(grid_spec.extent_y / minimum_resolution)) + 1
-        offset = 0.0
-    else:  # "centre"
-        ni_global = int(np.ceil(grid_spec.extent_x / minimum_resolution))
-        nj_global = int(np.ceil(grid_spec.extent_y / minimum_resolution))
-        offset = 0.5  # half-cell offset in units of minimum_resolution
+    ni_global = int(np.ceil(grid_spec.extent_x / minimum_resolution)) + 1
+    nj_global = int(np.ceil(grid_spec.extent_y / minimum_resolution)) + 1
 
     grids = []
     for refinement in grid_spec.mesh_refinements:
@@ -279,8 +310,8 @@ def skeleton_velocity_model(velocity_model_spec: VelocityModelSpec) -> xr.DataTr
         xj = np.arange(0, nj_global, step, dtype=np.int64)
 
         x_raw, y_raw = np.meshgrid(
-            ((xi + offset) * minimum_resolution).astype(np.float32),
-            ((xj + offset) * minimum_resolution).astype(np.float32),
+            (xi * minimum_resolution).astype(np.float32),
+            (xj * minimum_resolution).astype(np.float32),
             indexing="ij",
         )
 

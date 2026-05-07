@@ -62,6 +62,20 @@ class ElyTaperLayer:
         self.next_layer = next_layer
 
     def _ely_transform(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+        # TODO (Performance): This method calls `self.next_layer` up to three times
+        # for every chunk that intersects the taper zone:
+        #   1. basin query  (ModelRange.BASINS)
+        #   2. background query (full ModelRange.ALL)
+        #   3. taper reference query (ModelRange.TOMOGRAPHY at a synthetic z_t slice)
+        # Each call crosses the Rust FFI, rebuilds the Dask task graph, and may
+        # trigger independent Rust query_many invocations.  The recommended
+        # architectural change is to introduce a single compound query that returns
+        # all three result sets in one Rust call, or to cache / batch the model
+        # queries before entering the xr.map_blocks callback so that each chunk
+        # only crosses the FFI boundary once.  An intermediate improvement is to
+        # fuse calls 1 and 2 by querying ALL models once and deriving the basin
+        # sub-result via a priority mask, eliminating the redundant full-domain
+        # traversal.
         is_in_taper = chunk["depth"] < self.z_t
 
         # If the whole chunk is below the taper, skip Ely entirely.

@@ -364,19 +364,20 @@ def crs_transform(x, y, *, transformer: Transformer):
     """
     if isinstance(x, xr.DataArray) or isinstance(y, xr.DataArray):
 
-        def _extract_x(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
-            xo, _ = transformer.transform(xi, yi)
-            return np.asarray(xo)
+        def _transform_both(
+            xi: np.ndarray, yi: np.ndarray
+        ) -> tuple[np.ndarray, np.ndarray]:
+            xo, yo = transformer.transform(xi, yi)
+            return np.asarray(xo).astype(np.float32, copy=False), np.asarray(yo).astype(np.float32, copy=False)
 
-        def _extract_y(xi: np.ndarray, yi: np.ndarray) -> np.ndarray:
-            _, yo = transformer.transform(xi, yi)
-            return np.asarray(yo)
-
-        x_out = xr.apply_ufunc(
-            _extract_x, x, y, dask="parallelized", output_dtypes=[np.float32]
-        )
-        y_out = xr.apply_ufunc(
-            _extract_y, x, y, dask="parallelized", output_dtypes=[np.float32]
+        x_out, y_out = xr.apply_ufunc(
+            _transform_both,
+            x,
+            y,
+            input_core_dims=[[], []],
+            output_core_dims=[[], []],
+            dask="parallelized",
+            output_dtypes=[np.float32, np.float32],
         )
         return x_out, y_out
     return transformer.transform(np.asarray(x), np.asarray(y))

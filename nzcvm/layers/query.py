@@ -49,7 +49,6 @@ class ModelLayer:
     def _query(self, x, y, z, **kwargs):
         logger.debug(f"Querying model for block of size {x.size}")
         return self.model.query_many_raw(x, y, z, **kwargs)
-        logger.debug("Query complete")
 
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         """Query the model for every block node and add a ``qualities`` variable.

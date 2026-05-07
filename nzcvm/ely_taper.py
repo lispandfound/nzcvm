@@ -75,6 +75,16 @@ def ely_vs_profile(
     qp = xr.full_like(rho, 100.0)
     qs = xr.full_like(rho, 50.0)
     alpha = xr.full_like(rho, 1.0)
+    # TODO (Performance): Building `darr` via six separate `expand_dims` calls
+    # followed by `xr.concat` creates six intermediate single-component DataArrays
+    # and then concatenates them into a seventh array along the `component` axis.
+    # For Dask-backed inputs this produces a fragmented task graph — one
+    # expand_dims task per component per chunk — rather than a single vectorised
+    # stack operation.  Replace with `da.stack([rho.data, vp.data, vs.data,
+    # qp.data, qs.data, alpha.data], axis=-1)` wrapped in an `xr.DataArray` with
+    # the appropriate dims and `component` coordinate.  This collapses all six
+    # per-component subgraphs into a single `dask.array.stack` node, reducing
+    # scheduler overhead proportionally to the number of chunks.
     qualities = [rho, vp, vs, qp, qs, alpha]
     qualities = [
         a.expand_dims(component=[name], axis=-1)

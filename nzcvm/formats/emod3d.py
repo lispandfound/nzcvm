@@ -93,4 +93,13 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
     sources = [rho_source, vp_source, vs_source]
     targets = [rho_target, vp_target, vs_target]
 
+    # TODO (Performance): `da.store(..., lock=True)` uses a single global lock,
+    # serialising writes to rho, vp, and vs files even though they are completely
+    # independent memory-mapped targets.  On NFS, this means only one Dask worker
+    # writes at a time, turning what should be three parallel I/O streams into a
+    # sequential bottleneck.  Replace with per-file threading.Lock() objects (one
+    # per memmap target) and pass them as a list: `da.store(sources, targets,
+    # lock=[rho_lock, vp_lock, vs_lock])`.  With chunk sizes aligned to the NFS
+    # stripe width, each worker will write to a distinct file region without
+    # contention, allowing all three files to be populated concurrently.
     da.store(sources, targets, lock=True)

@@ -59,7 +59,7 @@ class CrsTransformLayer:
         xarray.Dataset
         """
 
-        block = block.copy()
+        block = block.copy(deep=False)
         x_out, y_out = crs_transform(
             block[Coordinate.X], block[Coordinate.Y], transformer=self.transformer
         )

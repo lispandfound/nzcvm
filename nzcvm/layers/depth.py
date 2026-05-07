@@ -57,7 +57,7 @@ class DepthTransformLayer:
             Same dataset with ``z`` replaced by absolute elevation.
         """
 
-        block = block.copy()
+        block = block.copy(deep=False)
         x_top = block[Coordinate.X.value].isel({Coordinate.K: 0})
         y_top = block[Coordinate.Y.value].isel({Coordinate.K: 0})
 

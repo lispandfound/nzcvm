@@ -86,6 +86,17 @@ def map_over_datasets_with_glob(
 def execute_model_pipeline(
     velocity_model: xr.DataTree, pipeline: QueryLayer
 ) -> xr.DataTree:
+    # TODO (Performance): `map_over_datasets_with_glob` (and the underlying
+    # `map_over_datasets_with_path`) iterates every grid node sequentially in a
+    # Python for-loop.  Each grid dataset is independent — they share no
+    # coordinate arrays after `fill_grid` — so the pipeline calls can be
+    # dispatched in parallel.  The recommended change is to submit each
+    # `pipeline(block)` call as a `dask.delayed` task and then reassemble the
+    # DataTree from the futures, or to use `concurrent.futures.ThreadPoolExecutor`
+    # (GIL is released inside the Rust hot loop, so threading is effective here).
+    # This is especially impactful for multi-refinement models where the fine
+    # near-surface grid and the coarser deep grids have no data dependencies on
+    # each other.
     def func(_path: NodePath, block: xr.Dataset, **_kwargs) -> xr.Dataset:
         return pipeline(block)
 

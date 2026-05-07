@@ -98,7 +98,7 @@ def to_sfile(dtree, filename):
                     sfile_name,
                     shape=data.shape,
                     chunks=data.chunksize,
-                    dtype=data.dtype,
+                    dtype=np.float32,
                 )
 
                 sources.append(data)

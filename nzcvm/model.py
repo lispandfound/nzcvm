@@ -608,22 +608,12 @@ class ModelTree:
         x = np.asarray(x, dtype=np.float32)
         y = np.asarray(y, dtype=np.float32)
         z = np.asarray(z, dtype=np.float32)
-        # TODO (Performance): np.column_stack allocates a fresh contiguous (N, 3)
-        # float32 array by copying all three coordinate vectors.  This is the
-        # single largest allocation at the Python–Rust FFI boundary and costs one
-        # extra full-input-size copy per Dask chunk.  The Rust `query_many`
-        # signature currently requires a single (N, 3) array; changing it to accept
-        # three separate (N,) arrays (x, y, z) via `PyReadonlyArray1` would let the
-        # Python side pass NumPy views directly without any copy.  The hot loop in
-        # `lib.rs` already destructures xyz_row[0..2], so the Rust-side change is
-        # minimal.  Until then, ensure `x`, `y`, `z` are already 1-D before this
-        # call to avoid a second ravel allocation inside column_stack.
-        xyz = np.column_stack([x.ravel(), y.ravel(), z.ravel()])
+        orig_shape = x.shape
         lo, hi = model_range.value
         params = QueryParams(lo, hi)
         logger.debug("Querying for chunk qualities for range: %s.", model_range)
-        buf = self._raw.query_many(xyz, params)
-        return buf.reshape(x.shape + (6,))
+        buf = self._raw.query_many(x.ravel(), y.ravel(), z.ravel(), params)
+        return buf.reshape(orig_shape + (6,))
 
     def query_many(
         self,

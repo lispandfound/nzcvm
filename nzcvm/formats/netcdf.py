@@ -65,5 +65,4 @@ def to_netcdf(velocity_model: xr.DataTree, path: Path):
     hdf5plugin.register(("zfp", "blosc"))
     velocity_model = velocity_model.map_over_datasets(_normalise_dataset_attributes)
     velocity_model = velocity_model.map_over_datasets(_translate_compressor_to_hdf5)
-    breakpoint()
     velocity_model.to_netcdf(path, engine="h5netcdf", mode="w")

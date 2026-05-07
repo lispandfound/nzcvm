@@ -7,10 +7,15 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 from nzcvm.components import Component
 from nzcvm.layers.protocol import QueryLayer
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 ClampSpec = dict[str, tuple[float | None, float | None]]
+
+
+def _bound(val, default):
+    return float(val) if val is not None else default
 
 
 class ClampLayer:
@@ -52,27 +57,47 @@ class ClampLayer:
 
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         block = self.next_layer(block, **kwargs)
+        qualities = block["qualities"]
 
-        for component, (lo, hi) in self.clamps.items():
-            if component not in block["qualities"].coords["component"]:
-                continue
-            logger.debug("Clamping component %r to bounds (%r, %r)", component, lo, hi)
-            quality = block.qualities.sel(component=component)
-            block.qualities.loc[dict(component=component)] = quality.clip(
-                min=lo, max=hi
+        # Build per-component clip bounds as DataArrays aligned on the component dim
+        lo_vals = {c: _bound(lo, -np.inf) for c, (lo, _) in self.clamps.items()}
+        hi_vals = {c: _bound(hi, np.inf) for c, (_, hi) in self.clamps.items()}
+
+        if lo_vals or hi_vals:
+            components = qualities.coords["component"].values
+
+            lo_arr = xr.DataArray(
+                [lo_vals.get(c, -np.inf) for c in components],
+                coords={"component": components},
+                dims="component",
             )
+            hi_arr = xr.DataArray(
+                [hi_vals.get(c, np.inf) for c in components],
+                coords={"component": components},
+                dims="component",
+            )
+            logger.debug(f"clamp settings: {lo_arr} - {hi_arr}")
+            qualities = qualities.clip(min=lo_arr, max=hi_arr)
 
         if ratios := self.clamps.get("vp_vs_ratio"):
             min_ratio, max_ratio = ratios
-            vs = block["qualities"].sel(component=Component.VS)
-            vp = block["qualities"].sel(component=Component.VP)
-
-            vp_max = max_ratio * vs if max_ratio else None
-            vp_min = min_ratio * vs if min_ratio else None
-            block.qualities.loc[dict(component=Component.VP)] = vp.clip(
-                min=vp_min, max=vp_max
+            vs = qualities.sel(component=Component.VS)
+            vp = qualities.sel(component=Component.VP)
+            vp_clipped = vp.clip(
+                min=min_ratio * vs if min_ratio else None,
+                max=max_ratio * vs if max_ratio else None,
+            )
+            qualities = xr.concat(
+                [
+                    qualities.drop_sel(component=Component.VP),
+                    vp_clipped.assign_coords(component=Component.VP).expand_dims(
+                        "component"
+                    ),
+                ],
+                dim="component",
             )
 
+        block["qualities"] = qualities
         return block
 
     def __rich_console__(

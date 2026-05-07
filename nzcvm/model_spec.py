@@ -58,6 +58,7 @@ from mashumaro.types import Discriminator
 from nzcvm.coordinates import (
     NO_ORIGIN,
     WGS84_CRS,
+    Coordinate,
 )
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.ely import ElyTaperLayer
@@ -166,6 +167,9 @@ class MeshRefinement(ConfigObject):
     deformation: float
 
 
+DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: 32}
+
+
 @dataclass
 class Grid(ConfigObject):
     """Horizontal and vertical grid configuration for the velocity model.
@@ -222,6 +226,8 @@ class Grid(ConfigObject):
     origin_crs: Any = WGS84_CRS
     origin_x: float = NO_ORIGIN
     origin_y: float = NO_ORIGIN
+
+    chunks: dict[Coordinate, int] = field(default_factory=lambda: DEFAULT_CHUNK_SIZES)
 
 
 @dataclass

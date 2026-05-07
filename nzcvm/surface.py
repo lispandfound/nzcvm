@@ -11,10 +11,14 @@ from pathlib import Path
 import numpy as np
 import pyvista as pv
 import shapely
+import logging
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
+from .nzcvm import PySurfaceModel, surface_model
 
 DEFAULT_TOLERANCE = 1e-4
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -39,11 +43,9 @@ class Surface:
     nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
 
-    mesh: pv.DataSet
-    hull: shapely.Geometry
+    _inner: PySurfaceModel
     bounds: np.ndarray
     n_points: int
-    interpolation_tolerance: float
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -63,53 +65,11 @@ class Surface:
         ValueError
             If any query point falls outside the surface boundaries.
         """
+        logger.debug(f"Calculating z values for x, y (size = {x.size}).")
+        pts = np.stack((x.flatten(), y.flatten()), axis=-1)
 
-        pts = np.stack((x.flatten(), y.flatten(), np.zeros(x.size)), axis=-1)
-
-        outside_hull = ~shapely.contains_xy(self.hull, pts[:, :2])
-
-        if outside_hull.any():
-            bad_indices = np.where(outside_hull)[0]
-            bad_coords = pts[bad_indices, :2]
-
-            note = (
-                f"Failure Summary:\n"
-                f"- Total points checked: {x.size}\n"
-                f"- Total failed: {len(bad_coords)}\n"
-                f"- Failure Rate: {len(bad_coords) / x.size:.2%}\n"
-            )
-            e = ValueError("Points not in convex hull of surface boundary.")
-            e.add_note(note)
-
-            raise e
-
-        query_cloud = pv.PolyData(pts)
-
-        sampled = query_cloud.sample(
-            self.mesh,
-            tolerance=self.interpolation_tolerance,
-            snap_to_closest_point=False,
-        )
-
-        z = np.array(sampled.point_data[self.mesh.active_scalars_name])
-
-        mask = sampled.point_data["vtkValidPointMask"] == 0
-        if mask.any():
-            bad_indices = np.where(mask)[0]
-            bad_coords = pts[bad_indices, :2]
-            bad_z = z[bad_indices]
-
-            note = (
-                f"Failure Summary:\n"
-                f"- Total points checked: {x.size}\n"
-                f"- Total failed: {len(bad_coords)}\n"
-                f"- Failure Rate: {len(bad_coords) / x.size:.2%}\n"
-                f"- First 3 failures:\n{bad_coords[:3]}\nmapping to\n{bad_z[:3]}"
-            )
-            e = ValueError("Z values from interpolation invalid (out of bounds).")
-            e.add_note(note)
-            raise e
-
+        z = self._inner.query_many(pts)
+        logger.debug("Query complete.")
         return z.reshape(x.shape).astype(x.dtype)
 
     def __rich_console__(
@@ -125,68 +85,38 @@ class Surface:
         yield tree
 
 
-def build_surface_interpolator(mesh_data: pv.DataSet) -> Surface:
-    """Wrap a PyVista dataset as a :class:`Surface` interpolator.
+def build_surface_interpolator(mesh_data: pv.StructuredGrid) -> Surface:
+    logger.debug("Triangulating model surface")
+    surf = mesh_data.extract_surface(algorithm="dataset_surface").triangulate()
 
-    If the dataset has no active scalars, the z-coordinates of the mesh
-    points are used as the elevation scalar.
+    logger.debug("Building vertices and faces")
+    z = surf.points[:, 2].astype(np.float32)
+    vertices = surf.points[:, :2].astype(np.float32)
 
-    Parameters
-    ----------
-    mesh_data :
-        A PyVista surface mesh. Should be a 2-D surface (e.g. a
-        ``PolyData`` or ``UnstructuredGrid`` with elevation data).
+    raw_faces = surf.faces.reshape(-1, 4)  # Reshape to (N, 4)
+    faces = raw_faces[:, 1:].astype(np.uint64)  # Drop the padding column (the '3's)
 
-    Returns
-    -------
-    Surface
+    logger.debug("Constructing inner model")
+    inner = surface_model(vertices, faces, z)
+    logger.debug("Inner model constructed.")
 
-    See Also
-    --------
-    read_surface_from_path : Load a surface directly from a file.
-    """
-    interpolation_tolerance_raw = mesh_data.field_data.get("interpolation_tolerance")
-
-    if interpolation_tolerance_raw is not None:
-        interpolation_tolerance = interpolation_tolerance_raw.item()
-    else:
-        interpolation_tolerance = DEFAULT_TOLERANCE
-
-    if mesh_data.active_scalars_name is None:
-        # If no scalars are active, we use the Z coordinates themselves
-        mesh_data["z"] = mesh_data.points[:, 2]
-        mesh_data.set_active_scalars("z")
-
-    z = mesh_data.points[:, 2]
-    z_min = z.min()
-    z_max = z.max()
-
-    # Now flatten the mesh so that interpolation works at z=0.
-    mesh_data.points[:, 2] = 0.0
-
-    hull = shapely.buffer(
-        shapely.convex_hull(shapely.multipoints(mesh_data.points[:, :2])),
-        DEFAULT_TOLERANCE,
-    )
-    shapely.prepare(hull)
-
-    bounds = mesh_data.bounds
+    # Calculate bounds for the Python wrapper
+    z_min, z_max = z.min(), z.max()
+    bounds = surf.bounds
 
     return Surface(
-        mesh=mesh_data,
-        hull=hull,
-        interpolation_tolerance=interpolation_tolerance,
+        _inner=inner,
         bounds=np.array(
             [
-                bounds.x_min,
-                bounds.y_min,
-                z_min,
-                bounds.x_max,
-                bounds.y_max,
-                z_max,
+                bounds[0],
+                bounds[2],
+                z_min,  # x_min, y_min, z_min
+                bounds[1],
+                bounds[3],
+                z_max,  # x_max, y_max, z_max
             ]
         ),
-        n_points=mesh_data.n_points,
+        n_points=surf.n_points,
     )
 
 
@@ -207,5 +137,6 @@ def read_surface_from_path(surface_path: Path) -> Surface:
     --------
     build_surface_interpolator : Build a ``Surface`` from an in-memory mesh.
     """
-    mesh_data: pv.DataSet = pv.read(surface_path)  # ty: ignore[invalid-assignment]
+    mesh_data = pv.read(surface_path)
+    assert isinstance(mesh_data, pv.StructuredGrid)
     return build_surface_interpolator(mesh_data)

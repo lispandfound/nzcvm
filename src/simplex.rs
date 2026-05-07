@@ -134,19 +134,18 @@ impl Contains<Real, 3, Simplex> for Simplex {
     #[inline(always)]
     fn contains(&self, query_point: &Point3<Real>) -> Option<Simplex> {
         let diff = query_point - self.c3;
+        // This duplication of the matrix multiply from
+        // `barycentric_coordinates` is deliberate. `l3` is not needed here, so
+        // the subtraction is skipped.
+
         let l = self.inv_matrix * diff;
 
         let sum = l.x + l.y + l.z;
 
-        // Bitwise `&` (not `&&`) is intentional: it evaluates all four
-        // conditions without short-circuiting, avoiding branch mispredictions
-        // in the hot BVH traversal loop.  This duplication of the matrix
-        // multiply from `barycentric_coordinates` is deliberate — `l3` is not
-        // needed here, so the subtraction is skipped.
         if (l.x >= -CONTAINMENT_EPS)
-            & (l.y >= -CONTAINMENT_EPS)
-            & (l.z >= -CONTAINMENT_EPS)
-            & (sum <= 1.0 + CONTAINMENT_EPS)
+            && (l.y >= -CONTAINMENT_EPS)
+            && (l.z >= -CONTAINMENT_EPS)
+            && (sum <= 1.0 + CONTAINMENT_EPS)
         {
             Some(*self)
         } else {

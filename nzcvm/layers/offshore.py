@@ -31,15 +31,15 @@ from nzcvm.layers.protocol import QueryLayer
 from nzcvm.model import ModelRange
 
 import shapely
-from scipy.spatial import cKDTree
+from scipy.spatial import KDTree
 from numba import njit
 
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Pure calculation functions (module-level, dependency-free, easily testable)
-# ---------------------------------------------------------------------------
+# TODO: An efficiency can be made by observing that exact distances don't have
+# to be calculated for segments > max distance from shoreline. Come back and
+# clean this up with a BVHTree implementation from the rust side.
 
 
 @njit(fastmath=True)
@@ -123,7 +123,7 @@ def compute_offshore_distance(
     y_flat: np.ndarray,
     coastline: shapely.Geometry,
     segments: np.ndarray,
-    tree: cKDTree,
+    tree: KDTree,
     k_neighbours: int = 10,
 ) -> np.ndarray:
     """Compute the distance (metres) from each 2-D point to the nearest coastline segment.
@@ -131,7 +131,7 @@ def compute_offshore_distance(
     Points classified as *onshore* (inside the coastline polygon) receive
     distance ``0.0``.  Points *offshore* receive the Euclidean distance to the
     nearest segment, found by querying ``k_neighbours`` candidate segment
-    midpoints in a pre-built :class:`~scipy.spatial.cKDTree` and then
+    midpoints in a pre-built :class:`~scipy.spatial.KDTree` and then
     computing the exact analytical distance to those candidates via
     :func:`_numba_point_to_segments`.
 
@@ -148,9 +148,12 @@ def compute_offshore_distance(
     segments : np.ndarray, shape (S, 2, 2)
         All coastline line segments as ``[start_xy, end_xy]`` pairs, in
         metres.  Produced by decomposing the coastline boundary ring(s).
-    tree : cKDTree
+    tree : KDTree
         KD-tree of segment midpoints (shape ``(S, 2)``), used to retrieve
         the ``k_neighbours`` nearest candidate segments quickly.
+    max_distance : float
+        The maximum distance to return from the tree. This is useful for basin
+        model considerations where basin depth is saturated with distance.
     k_neighbours : int, optional
         Number of nearest segment midpoints to retrieve from *tree* before
         computing exact distances.  Default ``10``; clamped to
@@ -336,7 +339,7 @@ class OffshoreBasin:
         Prepared Shapely geometry used for onshore/offshore classification.
     segments : np.ndarray, shape (S, 2, 2)
         All coastline segments extracted from the boundary ring(s).
-    tree : cKDTree
+    tree : KDTree
         KD-tree of segment midpoints for fast nearest-neighbour lookups.
     basin_depth : pd.DataFrame
         Distance-to-depth look-up table (as supplied, unmodified).
@@ -386,14 +389,12 @@ class OffshoreBasin:
 
         self.segments = np.array(extracted_segments, dtype=np.float64)
 
-        # 3. Build a cKDTree on segment midpoints for O(log S) nearest lookup.
         midpoints = self.segments.mean(axis=1)
-        self.tree = cKDTree(midpoints)
+        self.tree = KDTree(midpoints)
 
+        logger.info("Segment tree constructed.")
         self.basin_depth = basin_depth
 
-        # 4. Compute top_depth from bottom_depth and cache as numpy arrays to
-        #    avoid repeated DataFrame overhead in the hot path.
         self.model = model.copy()
         self.model["top_depth"] = np.insert(
             self.model["bottom_depth"].iloc[:-1], 0, 0.0
@@ -401,7 +402,6 @@ class OffshoreBasin:
         self._model_top_depths: np.ndarray = self.model["top_depth"].to_numpy()
         self._model_values: np.ndarray = self.model[list(Component)].to_numpy()
 
-        # 5. Cache basin depth look-up vectors.
         self._basin_distances: np.ndarray = basin_depth["distance"].to_numpy()
         self._basin_bottom_depths: np.ndarray = basin_depth["bottom_depth"].to_numpy()
 
@@ -581,8 +581,6 @@ class OffshoreBasin:
         background = self.next_layer(chunk, **kwargs)
         logger.debug("Assigning basin qualities using offshore basin model")
         offshore_qualities = self._assign_qualities(chunk[Coordinate.DEPTH])
-        logger.debug(f"Qualities assigned {offshore_qualities}")
-        logger.debug(f"Basin qualities to blend {basins}")
 
         basin_alpha = basins["qualities"].sel(component=Component.ALPHA.value)
 
@@ -599,11 +597,6 @@ class OffshoreBasin:
         offshore_blended_qualities.loc[{"component": Component.ALPHA.value}] = 1.0
 
         result = background.copy()
-        logger.debug(f"Num offshore = {np.count_nonzero(is_offshore)}.")
-        logger.debug(f"Num above basin = {np.count_nonzero(is_above_basin)}.")
-        logger.debug(
-            f"Num assigned = {np.count_nonzero(is_above_basin & is_offshore)}."
-        )
         result["qualities"] = xr.where(
             is_above_basin & is_offshore,
             offshore_blended_qualities,

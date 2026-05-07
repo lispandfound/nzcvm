@@ -104,7 +104,6 @@ class ElyTaperLayer:
             dask="parallelized",
             output_dtypes=[np.float32],
         )
-        logger.debug(f"Vs30 range: {vs30.min()} - {vs30.max()}")
 
         # Select a z-layer of the block
         # The array [0] as the selection is important because it preserves the k

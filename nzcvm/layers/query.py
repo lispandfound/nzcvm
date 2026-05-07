@@ -1,6 +1,7 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
 from typing import Any
+import logging
 
 import numpy as np
 import xarray as xr
@@ -10,6 +11,8 @@ from rich.tree import Tree
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
 from nzcvm.model import Model
+
+logger = logging.getLogger(__name__)
 
 
 class ModelLayer:
@@ -43,6 +46,11 @@ class ModelLayer:
         """
         self.model = model
 
+    def _query(self, x, y, z, **kwargs):
+        logger.debug(f"Querying model for block of size {x.size}")
+        return self.model.query_many_raw(x, y, z, **kwargs)
+        logger.debug("Query complete")
+
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         """Query the model for every block node and add a ``qualities`` variable.
 
@@ -61,8 +69,9 @@ class ModelLayer:
         component_names = list(Component)
 
         block = block.copy(deep=False)
+
         qualities = xr.apply_ufunc(
-            self.model.query_many_raw,
+            self._query,
             block[Coordinate.X.value],
             block[Coordinate.Y.value],
             block[Coordinate.Z.value],

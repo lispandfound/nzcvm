@@ -182,7 +182,7 @@ def generate(
     summary.add_row(
         "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
     )
-    summary.add_row("Refinements", str(len(velocity_model_spec.grid.mesh_refinements)))
+    summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
     console.print(summary)
 
     with console.status("Initialising velocity model"):

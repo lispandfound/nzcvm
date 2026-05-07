@@ -23,7 +23,6 @@ Layer types
 from nzcvm.layers.affine import AffineTransformLayer
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.crs import CrsTransformLayer
-from nzcvm.layers.depth import DepthTransformLayer
 from nzcvm.layers.ely import ElyTaperLayer
 from nzcvm.layers.protocol import QueryLayer
 from nzcvm.layers.query import ModelLayer

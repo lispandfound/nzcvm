@@ -161,8 +161,6 @@ class MeshRefinement(ConfigObject):
     resolution: float
     # Bottom of interface layer in *elevation*.
     bottom: float
-    # Name for the mesh refinement (useful for debugging only)
-    name: str
     # Deformation of this layer, floating point between 0 and 1.
     deformation: float
 
@@ -188,7 +186,7 @@ class Grid(ConfigObject):
     origin_lon, origin_lat :
         Geographic origin of the local grid in *origin_crs* (longitude,
         latitude).
-    mesh_refinements :
+    refinements :
         Ordered list of :class:`MeshRefinement` objects.  Must contain at
         least one entry; the *bottom* of the last entry sets the model bottom.
     cell_registration :
@@ -219,20 +217,21 @@ class Grid(ConfigObject):
     origin_lat: float
 
     # Mesh refinements.
-    mesh_refinements: list[MeshRefinement]
+    refinements: dict[str, MeshRefinement]
 
     cell_registration: CellRegistration = CellRegistration.CORNER
     transpose: bool = False
     origin_crs: Any = WGS84_CRS
     origin_x: float = NO_ORIGIN
     origin_y: float = NO_ORIGIN
+    optimise_chunks: bool = False
 
     chunks: dict[Coordinate, int] = field(default_factory=lambda: DEFAULT_CHUNK_SIZES)
 
 
 @dataclass
 class LayerConfig(ConfigObject):
-    pass
+    def build(self, next_layer: Any) -> Any: ...
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +439,7 @@ class ModelLayerConfig(LayerConfig):
     model_path: Path | None = None
     model_glob: str = "*.vtkhdf"
 
-    def build(self) -> Any:
+    def build(self, next_layer: Any) -> Any:
         """Load the model files and return a :class:`~nzcvm.layers.query.ModelLayer`.
 
         The model path is resolved from *model_path*, falling back to the
@@ -457,6 +456,9 @@ class ModelLayerConfig(LayerConfig):
         FileNotFoundError
             If *model_path* does not exist.
         """
+        if next_layer is not None:
+            raise ValueError("Model layer does not compose with downstream layers.")
+
         if self.model_path is not None:
             resolved = self.model_path
         else:
@@ -510,7 +512,7 @@ class VelocityModelSpec(ConfigObject):
     nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree.
     """
 
-    metadata: ModelMetadata = field(default_factory=ModelMetadata)  # ty: ignore[no-matching-overload]
+    metadata: ModelMetadata = field(default_factory=ModelMetadata)
     grid: Grid = field(default_factory=Grid)  # ty: ignore[no-matching-overload]
     layers: list[
         Annotated[
@@ -535,25 +537,25 @@ class VelocityModelSpec(ConfigObject):
             If any resolution is not an integer multiple of the minimum, or if
             resolutions decrease with depth.
         """
-        refinements = self.grid.mesh_refinements
+        refinements = self.grid.refinements
         if len(refinements) < 2:
             return
-        by_depth = sorted(refinements, key=lambda r: r.bottom)
-        minimum_resolution = min(r.resolution for r in by_depth)
-        for r in by_depth:
+        by_depth = sorted(refinements.items(), key=lambda r: r[1].bottom)
+        minimum_resolution = min(r.resolution for _, r in by_depth)
+        for name, r in by_depth:
             ratio = r.resolution / minimum_resolution
             if abs(ratio - round(ratio)) > 1e-9:
                 raise ValueError(
-                    f"Mesh refinement {r.name!r}: resolution {r.resolution} is "
+                    f"Mesh refinement {name!r}: resolution {r.resolution} is "
                     f"not an integer multiple of the finest resolution "
                     f"{minimum_resolution}.  All resolutions must divide each other."
                 )
-        for a, b in zip(by_depth, by_depth[1:]):
+        for (a_name, a), (b_name, b) in zip(by_depth, by_depth[1:]):
             if a.resolution > b.resolution:
                 raise ValueError(
                     f"Mesh refinements must go from finer to coarser resolution "
-                    f"as depth increases.  Refinement {a.name!r} ({a.resolution} m) "
-                    f"at bottom {a.bottom} is coarser than {b.name!r} "
+                    f"as depth increases.  Refinement {a_name!r} ({a.resolution} m) "
+                    f"at bottom {a.bottom} is coarser than {b_name!r} "
                     f"({b.resolution} m) at bottom {b.bottom}."
                 )
 
@@ -587,7 +589,7 @@ class VelocityModelSpec(ConfigObject):
             )
 
         # Build from the innermost layer outward.
-        pipeline: Any = self.layers[-1].build()
+        pipeline: Any = self.layers[-1].build(None)
         for config in reversed(self.layers[:-1]):
             pipeline = config.build(pipeline)
         return pipeline

@@ -54,8 +54,8 @@ def _normalise_dataset_attributes(dset: xr.Dataset) -> xr.Dataset:
         for k, v in dset.attrs.items()
         if (v != 0 and v)
     }
-    if "mesh_refinements" in attributes:
-        attributes.pop("mesh_refinements")
+    if "refinements" in attributes:
+        attributes.pop("refinements")
     dset.attrs = attributes
     return dset
 

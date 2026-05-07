@@ -180,54 +180,54 @@ def rotate(
                 [[st, ct, 0.0], [ct, -st, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
             )
         return r
-    elif dims == 3 and axis:
-        # ── 3-D ──────────────────────────────────────────────────────────────
-        ax = axis.lower()
-        if ax == "z":
-            if ccw:
-                r = np.array(
-                    [
-                        [ct, -st, 0.0, 0.0],
-                        [st, ct, 0.0, 0.0],
-                        [0.0, 0.0, 1.0, 0.0],
-                        [0.0, 0.0, 0.0, 1.0],
-                    ],
-                    dtype=np.float32,
-                )
-            else:
-                r = np.array(
-                    [
-                        [st, ct, 0.0, 0.0],
-                        [ct, -st, 0.0, 0.0],
-                        [0.0, 0.0, 1.0, 0.0],
-                        [0.0, 0.0, 0.0, 1.0],
-                    ],
-                    dtype=np.float32,
-                )
-        elif ax == "x":
+    assert dims == 3 and axis
+
+    ax = axis.lower()
+    if ax == "z":
+        if ccw:
             r = np.array(
                 [
-                    [1.0, 0.0, 0.0, 0.0],
-                    [0.0, ct, -st, 0.0],
-                    [0.0, st, ct, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                ],
-                dtype=np.float32,
-            )
-        elif ax == "y":
-            r = np.array(
-                [
-                    [ct, 0.0, st, 0.0],
-                    [0.0, 1.0, 0.0, 0.0],
-                    [-st, 0.0, ct, 0.0],
+                    [ct, -st, 0.0, 0.0],
+                    [st, ct, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
                     [0.0, 0.0, 0.0, 1.0],
                 ],
                 dtype=np.float32,
             )
         else:
-            raise ValueError(f"axis must be 'x', 'y', or 'z'; got {axis!r}")
+            r = np.array(
+                [
+                    [st, ct, 0.0, 0.0],
+                    [ct, -st, 0.0, 0.0],
+                    [0.0, 0.0, 1.0, 0.0],
+                    [0.0, 0.0, 0.0, 1.0],
+                ],
+                dtype=np.float32,
+            )
+    elif ax == "x":
+        r = np.array(
+            [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, ct, -st, 0.0],
+                [0.0, st, ct, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+    elif ax == "y":
+        r = np.array(
+            [
+                [ct, 0.0, st, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [-st, 0.0, ct, 0.0],
+                [0.0, 0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+    else:
+        raise ValueError(f"axis must be 'x', 'y', or 'z'; got {axis!r}")
 
-        return r
+    return r
 
 
 def scale(sx: float = 1.0, sy: float = 1.0, sz: float | None = None) -> Affine:
@@ -368,7 +368,9 @@ def crs_transform(x, y, *, transformer: Transformer):
             xi: np.ndarray, yi: np.ndarray
         ) -> tuple[np.ndarray, np.ndarray]:
             xo, yo = transformer.transform(xi, yi)
-            return np.asarray(xo).astype(np.float32, copy=False), np.asarray(yo).astype(np.float32, copy=False)
+            return np.asarray(xo).astype(np.float32, copy=False), np.asarray(yo).astype(
+                np.float32, copy=False
+            )
 
         x_out, y_out = xr.apply_ufunc(
             _transform_both,

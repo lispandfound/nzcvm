@@ -152,17 +152,15 @@ def generate(
     ] = False,
     log_level: str = "WARNING",
     log_file: Path | None = None,
-    host: str | None = None,
-    address: str = ":8787",
+    dashboard_address: str = ":8787",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
     configure_logging(log_level, log_file)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     with (
         LocalCluster(
-            host=host,
-            dashboard_address=address,
             processes=False,
+            dashboard_address=dashboard_address,
             n_workers=1,
             threads_per_worker=resolved_n_threads,
         ) as cluster,

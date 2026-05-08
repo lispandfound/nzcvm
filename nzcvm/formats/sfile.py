@@ -9,7 +9,8 @@ from typing import ClassVar
 import dask.array as da
 import h5py
 import numpy as np
-from dask.distributed import Lock
+import threading
+import queue
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
@@ -37,18 +38,47 @@ COMPONENT_MAP = {
 SURFACE_GROUP = "Z_interfaces"
 
 
+class AsyncHDF5Writer:
+    def __init__(self, filename, max_buffer=10):
+        self.queue = queue.Queue(maxsize=max_buffer)
+        self.filename = filename
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._write_loop, daemon=True)
+        self.thread.start()
+
+    def _write_loop(self):
+        # Open the file ONCE in this thread to avoid overhead
+        with h5py.File(self.filename, "r+") as f:
+            while not (self.stop_event.is_set() and self.queue.empty()):
+                try:
+                    # Timeout allows checking stop_event
+                    path, key, value = self.queue.get(timeout=1)
+                    f[path][key] = value
+                    self.queue.task_done()
+                except queue.Empty:
+                    continue
+
+    def enqueue(self, path, key, value):
+        # This blocks compute threads when RAM pressure (queue size) is high
+        self.queue.put((path, key, value))
+
+    def close(self):
+        self.stop_event.set()
+        self.thread.join()
+
+
 class HDF5StoreTarget:
-    _handle_registry: ClassVar[dict[str, h5py.File]] = {}
+    _handle_registry: ClassVar[dict[str, AsyncHDF5Writer]] = {}
 
     def __init__(self, filename: str, datapath: str):
         self.filename = filename
         self.datapath = datapath
 
     @classmethod
-    def register_handle(cls, filename: str, mode: str = "r+"):
+    def register_handle(cls, filename: str):
         """Ensures a file handle is open and cached in the registry."""
         if filename not in cls._handle_registry:
-            cls._handle_registry[filename] = h5py.File(filename, mode)
+            cls._handle_registry[filename] = AsyncHDF5Writer(filename)
         return cls._handle_registry[filename]
 
     @classmethod
@@ -59,10 +89,8 @@ class HDF5StoreTarget:
             handle.close()
 
     def __setitem__(self, key, value):
-
-        handle = self.register_handle(self.filename)
-
-        handle[self.datapath][key] = value
+        # This will block if the writer's queue is full
+        self._handle_registry[self.filename].enqueue(self.datapath, key, value)
 
 
 def to_sfile(dtree, filename):
@@ -145,7 +173,7 @@ def to_sfile(dtree, filename):
         )
 
     try:
-        HDF5StoreTarget.register_handle(filename, mode="r+")
+        HDF5StoreTarget.register_handle(filename)
 
         da.store(sources, targets, lock=False)
 

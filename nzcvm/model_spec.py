@@ -165,7 +165,7 @@ class MeshRefinement(ConfigObject):
     deformation: float
 
 
-DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: 32}
+DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: 128}
 
 
 @dataclass

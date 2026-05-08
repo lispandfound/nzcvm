@@ -36,7 +36,6 @@ impl DeepSizeOf for SurfaceModel {
 impl SurfaceModel {
     /// Create a surface model from raw geometry.
     ///
-    /// Note: `vertices` are 3D, but the internal BVH is built on their 2D projections.
     pub fn new(
         vertices: Vec<Point2<Real>>,
         faces: Vec<Point3<usize>>, // Triangle indices

@@ -36,9 +36,9 @@ deformation = 0.0
 
 
 [grid.chunks]
-i = 128
-j = 128
-k = 128
+i = 256
+j = 256
+k = 256
 
 [[layers]]
 type = "clamp"

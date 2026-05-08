@@ -81,21 +81,16 @@ class ClampLayer:
 
         if ratios := self.clamps.get("vp_vs_ratio"):
             min_ratio, max_ratio = ratios
+            original_dims = qualities.dims
             vs = qualities.sel(component=Component.VS)
             vp = qualities.sel(component=Component.VP)
             vp_clipped = vp.clip(
                 min=min_ratio * vs if min_ratio else None,
                 max=max_ratio * vs if max_ratio else None,
             )
-            qualities = xr.concat(
-                [
-                    qualities.drop_sel(component=Component.VP),
-                    vp_clipped.assign_coords(component=Component.VP).expand_dims(
-                        "component"
-                    ),
-                ],
-                dim="component",
-            )
+            is_vp = qualities.coords["component"] == Component.VP
+            # TODO: evaluate if I can get rid of the transposition, this is introduced by xr.where
+            qualities = xr.where(is_vp, vp_clipped, qualities).transpose(*original_dims)
 
         block["qualities"] = qualities
         return block

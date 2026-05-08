@@ -70,12 +70,12 @@ class ClampLayer:
                 [lo_vals.get(c, -np.inf) for c in components],
                 coords={"component": components},
                 dims="component",
-            )
+            ).astype(np.float32)
             hi_arr = xr.DataArray(
                 [hi_vals.get(c, np.inf) for c in components],
                 coords={"component": components},
                 dims="component",
-            )
+            ).astype(np.float32)
             logger.debug(f"clamp settings: {lo_arr} - {hi_arr}")
             qualities = qualities.clip(min=lo_arr, max=hi_arr)
 

@@ -17,7 +17,7 @@ from rich.panel import Panel
 from rich.progress import Progress
 from rich.table import Table
 
-from nzcvm.model import Model
+from nzcvm.model import ModelTree
 
 memory = Memory(platformdirs.user_cache_dir("nzcvm"), verbose=0)
 
@@ -88,7 +88,7 @@ def save_to_parquet(xs, ys, times, aabb_tests, simplex_tests, output_path):
 
 def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
     console.print(f"[bold blue]Loading {len(model_paths)} model(s)...[/bold blue]")
-    mesh_model = Model.load_models(*model_paths)
+    mesh_model = ModelTree.load_models(*model_paths)
 
     min_bounds, max_bounds = mesh_model.aabb
     nz_land = get_nz_land_polygon()
@@ -134,7 +134,9 @@ def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
         f"{max(s.simplex_tests for s in results)}",
     )
     table.add_row(
-        "Model Hit Rate", f"{(total_hits / n_samples) * 100:.1f}%", f"{total_hits} hits"
+        "ModelTree Hit Rate",
+        f"{(total_hits / n_samples) * 100:.1f}%",
+        f"{total_hits} hits",
     )
     table.add_row(
         "Query time",

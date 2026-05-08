@@ -17,7 +17,8 @@ nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, Self
+from typing import Any, Protocol, Self, ClassVar
+from collections import Counter
 
 import logging
 import numpy as np
@@ -32,6 +33,8 @@ from nzcvm import nzcvm  # ty: ignore[unresolved-import]
 from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 from nzcvm.components import Component
+
+import weakref
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
@@ -382,29 +385,26 @@ class ModelTree:
     ModelTree.query_many : Vectorised multi-point query returning an xarray Dataset.
     """
 
+    _store: ClassVar[dict[int, PyModelTree]] = dict()
+
+    @property
+    def _raw(self) -> PyModelTree:
+        return ModelTree._store[self._key]
+
     def __init__(
         self,
         internal: PyModelTree | list[MeshModel],
-        model_map: dict | None = None,
+        model_map: dict[int, str] | None = None,
     ):
-        """
-        Parameters
-        ----------
-        internal :
-            Either a compiled Rust ``PyModelTree`` object (legacy path) or a
-            list of :class:`MeshModel` instances that will be combined into a
-            tree.
-        model_map :
-            Optional mapping from integer model index to a human-readable
-            name, used as a fallback when a model has no embedded name.
-        """
-        self._raw: PyModelTree
         if isinstance(internal, list):
             raw_list = [m._raw for m in internal]
-            self._raw = nzcvm.model_tree(raw_list)
-        else:
-            self._raw = internal
-        self.model_map = model_map or {}
+            internal = nzcvm.model_tree(raw_list)
+
+        self._key = id(internal)
+
+        ModelTree._store[self._key] = internal
+
+        self.model_map = model_map or dict()
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
@@ -701,9 +701,8 @@ class ModelTree:
         """Render the model tree as a rich tree for ``rich.print``."""
         yield self.view()
 
-
-#: Backward-compatible alias — ``Model`` was renamed to :class:`ModelTree`.
-Model = ModelTree
+    # def __del__(self):
+    #     ModelTree._store.pop(self._key, None)
 
 
 def _mesh_model_from_pyvista(

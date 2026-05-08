@@ -4,9 +4,12 @@ Writes a multi-grid velocity model in the NZCVM sfile HDF5 format used by
 downstream seismic simulation tools.
 """
 
+from typing import ClassVar
+
 import dask.array as da
 import h5py
 import numpy as np
+from dask.distributed import Lock
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
@@ -34,18 +37,38 @@ COMPONENT_MAP = {
 SURFACE_GROUP = "Z_interfaces"
 
 
-def to_sfile(dtree, filename):
-    """Write *dtree* to *filename* in the NZCVM sfile HDF5 format.
+class HDF5StoreTarget:
+    _handle_registry: ClassVar[dict[str, h5py.File]] = {}
 
-    Parameters
-    ----------
-    dtree :
-        DataTree produced by the query pipeline, with children under
-        ``/grid`` and root attributes including ``azimuth``.
-    filename :
-        Destination HDF5 file path.
-    """
+    def __init__(self, filename: str, datapath: str):
+        self.filename = filename
+        self.datapath = datapath
+
+    @classmethod
+    def register_handle(cls, filename: str, mode: str = "r+"):
+        """Ensures a file handle is open and cached in the registry."""
+        if filename not in cls._handle_registry:
+            cls._handle_registry[filename] = h5py.File(filename, mode)
+        return cls._handle_registry[filename]
+
+    @classmethod
+    def close_all(cls):
+        """Clean up handles after the compute is finished."""
+        for filename in list(cls._handle_registry.keys()):
+            handle = cls._handle_registry.pop(filename)
+            handle.close()
+
+    def __setitem__(self, key, value):
+
+        handle = self.register_handle(self.filename)
+
+        handle[self.datapath][key] = value
+
+
+def to_sfile(dtree, filename):
     grid_group = dtree["/grid"]
+
+    # PHASE 1: Skeleton creation (Same as before)
     with h5py.File(filename, "w") as f:
         f.attrs.create(
             ORIGIN_AZIM_ATTR,
@@ -61,82 +84,70 @@ def to_sfile(dtree, filename):
         f.attrs.create(NGRIDS_ATTR, data=np.int32(len(dtree["grid"])), dtype=np.int32)
 
         mat_group = f.create_group(MATERIAL_GROUP)
-        surface_group = f.create_group(SURFACE_GROUP)
+        _surface_group = f.create_group(SURFACE_GROUP)
 
         sources = []
         targets = []
-        # Sort grids in vertical order
+
         grids = sorted(
             dtree["grid"].children.values(),
             key=lambda grid: grid.attrs["minimum_top_depth"],
         )
-        f.attrs.create(
-            MIN_RESOLUTION_ATTR,
-            data=min(grid.attrs["resolution"] for grid in grids),
-            dtype=np.float64,
-        )
+
         for i, dataset in enumerate(grids):
-            # SW4 expects grids in the format "grid_i".
             grid_name = f"grid_{i}"
             grid_h5 = mat_group.create_group(grid_name)
-
-            grid_h5.attrs.create(
-                HORIZONTAL_ATTR,
-                data=float(dataset.attrs["resolution"]),
-                dtype=np.float64,
-            )
-            grid_h5.attrs.create(
-                NUMBER_OF_COMPONENTS_ATTR,
-                data=np.int32(len(COMPONENT_MAP)),
-                dtype=np.int32,
+            grid_h5.attrs.update(
+                {
+                    HORIZONTAL_ATTR: float(dataset.attrs["resolution"]),
+                    NUMBER_OF_COMPONENTS_ATTR: np.int32(len(COMPONENT_MAP)),
+                }
             )
 
+            # Setup Material Model Datasets
             for sfile_name, var_name in COMPONENT_MAP.items():
                 data = dataset["qualities"].sel(component=str(var_name)).data
+                ds_path = f"{MATERIAL_GROUP}/{grid_name}/{sfile_name}"
 
-                dset = grid_h5.create_dataset(
-                    sfile_name,
-                    shape=data.shape,
-                    chunks=data.chunksize,
-                    dtype=np.float32,
+                # Pre-allocate the dataset skeleton
+                f.create_dataset(
+                    ds_path, shape=data.shape, chunks=data.chunksize, dtype=np.float32
                 )
 
                 sources.append(data)
-                targets.append(dset)
+                # Instead of the h5py dataset object, we append our custom target
+                targets.append(HDF5StoreTarget(filename, ds_path))
 
+            # Setup Surface Datasets
             if i == 0:
                 top = dataset[Coordinate.Z].isel({Coordinate.K: 0}).data
-                top_surface = surface_group.create_dataset(
-                    "z_values_0",
-                    shape=top.shape,
-                    chunks=top.chunksize,
-                    dtype=top.dtype,
+                ds_path = f"{SURFACE_GROUP}/z_values_0"
+                f.create_dataset(
+                    ds_path, shape=top.shape, chunks=top.chunksize, dtype=top.dtype
                 )
                 sources.append(top)
-                targets.append(top_surface)
+                targets.append(HDF5StoreTarget(filename, ds_path))
 
             bottom = dataset[Coordinate.Z].isel({Coordinate.K: -1}).data
-            bottom_surface = surface_group.create_dataset(
-                f"z_values_{i + 1}",
-                shape=bottom.shape,
-                chunks=bottom.chunksize,
-                dtype=bottom.dtype,
+            ds_path = f"{SURFACE_GROUP}/z_values_{i + 1}"
+            f.create_dataset(
+                ds_path, shape=bottom.shape, chunks=bottom.chunksize, dtype=bottom.dtype
             )
             sources.append(bottom)
-            targets.append(bottom_surface)
+            targets.append(HDF5StoreTarget(filename, ds_path))
 
         global_min = grids[0].attrs["topo_min"]
-        global_bottom_surface = (
-            grids[-1][Coordinate.Z].isel({Coordinate.K: -1}).data.max()
-        )
-        global_bottom_surface_realised = np.array([np.nan])
-        sources.append(global_bottom_surface)
-        targets.append(global_bottom_surface_realised)
+        global_bottom_val = grids[-1][Coordinate.Z].isel({Coordinate.K: -1}).data.max()
 
-        da.store(sources, targets)
-
-        global_max = global_bottom_surface_realised.item()
-
+        global_max = global_bottom_val.compute()
         f.attrs.create(
             MIN_MAX_DEPTH_ATTR, data=[global_min, global_max], dtype=np.float64
         )
+
+    try:
+        HDF5StoreTarget.register_handle(filename, mode="r+")
+
+        da.store(sources, targets, lock=False)
+
+    finally:
+        HDF5StoreTarget.close_all()

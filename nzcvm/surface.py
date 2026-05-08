@@ -5,12 +5,12 @@ interpolation, used by :class:`nzcvm.layers.DepthTransformLayer` to
 convert depth-below-surface coordinates into absolute elevations.
 """
 
-from dataclasses import dataclass
+from typing import ClassVar
+
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-import shapely
 import logging
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
@@ -21,7 +21,6 @@ DEFAULT_TOLERANCE = 1e-4
 logger = logging.getLogger(__name__)
 
 
-@dataclass
 class Surface:
     """A lazily-sampled surface interpolator backed by a PyVista mesh.
 
@@ -43,9 +42,20 @@ class Surface:
     nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
 
-    _inner: PySurfaceModel
     bounds: np.ndarray
     n_points: int
+    _key: int
+    _store: ClassVar[dict[int, PySurfaceModel]] = dict()
+
+    def __init__(self, mesh: PySurfaceModel, bounds: np.ndarray, n_points: int) -> None:
+        self.bounds = bounds
+        self.n_points = n_points
+        self._key = id(mesh)
+        Surface._store[self._key] = mesh
+
+    @property
+    def _inner(self) -> PySurfaceModel:
+        return Surface._store[self._key]
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -76,13 +86,16 @@ class Surface:
         self, _console: Console, _options: ConsoleOptions
     ) -> RenderResult:
         """Render surface metadata as a rich tree."""
-        tree = Tree("Surface Interpolation (PyVista)")
+        tree = Tree("Surface Interpolation")
         tree.add("Kind: Linear/Sample")
         tree.add(
             f"Bounds: [X: {self.bounds[0]:.0f}-{self.bounds[3]:.0f}, Y: {self.bounds[1]:.0f}-{self.bounds[4]:.0f}, Z: {self.bounds[2]:.0f}-{self.bounds[5]:.0f}]"
         )
         tree.add(f"Number of points in surface: {self.n_points:,}")
         yield tree
+
+    # def __del__(self):
+    #     Surface._store.pop(self._key, None)
 
 
 def build_surface_interpolator(mesh_data: pv.StructuredGrid) -> Surface:
@@ -105,7 +118,7 @@ def build_surface_interpolator(mesh_data: pv.StructuredGrid) -> Surface:
     bounds = surf.bounds
 
     return Surface(
-        _inner=inner,
+        inner,
         bounds=np.array(
             [
                 bounds[0],

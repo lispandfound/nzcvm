@@ -10,7 +10,7 @@ from rich.tree import Tree
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
-from nzcvm.model import Model
+from nzcvm.model import ModelTree
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class ModelLayer:
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
-    Calls :meth:`~nzcvm.model.Model.query_many_raw` on every ``/grid/*``
+    Calls :meth:`~nzcvm.model.ModelTree.query_many_raw` on every ``/grid/*``
     node and writes the returned material properties (``rho``, ``vp``,
     ``vs``, ``qp``, ``qs``, ``alpha``) as dataset variables.
 
@@ -37,7 +37,7 @@ class ModelLayer:
 
     _MODEL_KWARGS = ["model_range"]
 
-    def __init__(self, model: Model) -> None:
+    def __init__(self, model: ModelTree) -> None:
         """
         Parameters
         ----------

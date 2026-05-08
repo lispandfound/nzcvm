@@ -387,7 +387,7 @@ class OffshoreBasin:
             for i in range(len(coords) - 1):
                 extracted_segments.append([coords[i], coords[i + 1]])
 
-        self.segments = np.array(extracted_segments, dtype=np.float64)
+        self.segments = np.array(extracted_segments, dtype=np.float32)
 
         midpoints = self.segments.mean(axis=1)
         self.tree = KDTree(midpoints)
@@ -440,8 +440,8 @@ class OffshoreBasin:
             Onshore points return ``0.0``.
         """
         distances = compute_offshore_distance(
-            x.ravel().astype(np.float64),
-            y.ravel().astype(np.float64),
+            x.ravel(),
+            y.ravel(),
             self.coastline,
             self.segments,
             self.tree,
@@ -591,10 +591,9 @@ class OffshoreBasin:
             offshore_qualities * (1 - basin_alpha)
         )
 
-        # TODO (Scientific Review): Alpha is forced to 1.0 after blending.
-        # This prevents downstream layers from overwriting offshore values.
-        # Confirm that this is the intended coverage-propagation behaviour.
-        offshore_blended_qualities.loc[{"component": Component.ALPHA.value}] = 1.0
+        offshore_blended_qualities.loc[{"component": Component.ALPHA.value}] = (
+            np.float32(1.0)
+        )
 
         result = background.copy()
         result["qualities"] = xr.where(

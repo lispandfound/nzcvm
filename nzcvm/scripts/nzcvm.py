@@ -1,5 +1,7 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from distributed import Client
+
 from nzcvm.graph import export_datatree_graph
 
 import os
@@ -128,17 +130,9 @@ def generate(
         int | None,
         typer.Option(help="Number of threads to spawn to query the model.", min=1),
     ] = None,
-    profile: Annotated[bool, typer.Option(help="If set, profile this run.")] = False,
     graph: Annotated[
         bool, typer.Option(help="If set, export the dask graph for this run.")
     ] = False,
-    progress: Annotated[bool, typer.Option(help="If set, show progress.")] = True,
-    dt: Annotated[
-        float, typer.Option(help="Resource profiler sample rate (seconds).", min=0.0)
-    ] = 0.25,
-    profile_output: Annotated[
-        Path, typer.Option(help="Profile report output path.")
-    ] = Path("dask_profile.html"),
     graph_output: Annotated[
         Path, typer.Option(help="Dask graph output location.")
     ] = Path("dask_graph.svg"),
@@ -166,49 +160,41 @@ def generate(
     """Generate a NZCVM velocity model from a config file."""
     configure_logging(log_level, log_file)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
-    dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
-
-    console.print(
-        Panel.fit(
-            f"[highlight]NZCVM[/highlight] | Velocity Model Generator\n"
-            f"[info]Threads:[/info] {resolved_n_threads}",
-            border_style="cyan",
+    with Client(
+        processes=False,
+        n_workers=1,
+        threads_per_worker=resolved_n_threads,
+    ) as _client:
+        console.print(
+            Panel.fit(
+                f"[highlight]NZCVM[/highlight] | Velocity Model Generator\n"
+                f"[info]Threads:[/info] {resolved_n_threads}",
+                border_style="cyan",
+            )
         )
-    )
 
-    velocity_model_spec = VelocityModelSpec.read_config(config, config_format)
+        velocity_model_spec = VelocityModelSpec.read_config(config, config_format)
 
-    summary = Table(show_header=False, box=rich.box.SIMPLE)
-    summary.add_row(
-        "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
-    )
-    summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
-    console.print(summary)
+        summary = Table(show_header=False, box=rich.box.SIMPLE)
+        summary.add_row(
+            "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
+        )
+        summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
+        console.print(summary)
 
-    with console.status("Initialising velocity model"):
-        velocity_model = skeleton_velocity_model(velocity_model_spec)
+        with console.status("Initialising velocity model"):
+            velocity_model = skeleton_velocity_model(velocity_model_spec)
 
-    print(velocity_model)
-    with console.status("Building layer pipeline"):
-        model_pipeline = velocity_model_spec.build_pipeline()
-    rich.print(model_pipeline)
+        with console.status("Building layer pipeline"):
+            model_pipeline = velocity_model_spec.build_pipeline()
+        rich.print(model_pipeline)
 
-    velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
-    if graph:
-        with console.status("Storing dask graph"):
-            export_datatree_graph(velocity_model, graph_output)
+        velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
+        print(velocity_model)
+        if graph:
+            with console.status("Storing dask graph"):
+                export_datatree_graph(velocity_model, graph_output)
 
-    progress_ctx = TqdmCallback(desc="Generating Model") if progress else nullcontext()
-    profiler = Profiler() if profile else nullcontext()
-    res_prof = ResourceProfiler(dt=dt) if profile else nullcontext()
-
-    with profiler as prof, res_prof as rprof, progress_ctx:
         formats.write_velocity_model(
             velocity_model, output, output_format, quantise_arrays=quantise
-        )
-
-    if profile and prof and rprof:
-        visualize([rprof, prof], filename=profile_output)
-        console.print(
-            f"[info]Profile report generated:[/info] [path]{profile_output}[/path]"
         )

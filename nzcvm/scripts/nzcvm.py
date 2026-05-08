@@ -1,25 +1,21 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-from distributed import Client
+from distributed import Client, LocalCluster
 
 from nzcvm.graph import export_datatree_graph
 
 import os
-from contextlib import nullcontext
 from pathlib import Path
 from typing import Annotated
 
-import dask
 import psutil
 import rich
 import rich.box
 import typer
 import logging.config
-from dask.diagnostics import Profiler, ResourceProfiler, visualize
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from tqdm.dask import TqdmCallback
 
 from nzcvm import formats
 from nzcvm.generate import skeleton_velocity_model
@@ -156,15 +152,22 @@ def generate(
     ] = False,
     log_level: str = "WARNING",
     log_file: Path | None = None,
+    host: str | None = None,
+    address: str = ":8787",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
     configure_logging(log_level, log_file)
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
-    with Client(
-        processes=False,
-        n_workers=1,
-        threads_per_worker=resolved_n_threads,
-    ) as _client:
+    with (
+        LocalCluster(
+            host=host,
+            dashboard_address=address,
+            processes=False,
+            n_workers=1,
+            threads_per_worker=resolved_n_threads,
+        ) as cluster,
+        Client(cluster) as _client,
+    ):
         console.print(
             Panel.fit(
                 f"[highlight]NZCVM[/highlight] | Velocity Model Generator\n"

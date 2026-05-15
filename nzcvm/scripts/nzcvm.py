@@ -18,9 +18,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from nzcvm import formats
-from nzcvm.generate import skeleton_velocity_model
-from nzcvm.model_spec import VelocityModelSpec, VelocityModelSpecFormat
-from nzcvm.layers.helpers import execute_model_pipeline
+from nzcvm.config import VelocityModelSpec, VelocityModelSpecFormat
+from nzcvm.layers import pipeline
 from nzcvm.scripts import (
     construct_mesh,
     convert_tomography,
@@ -183,19 +182,19 @@ def generate(
         summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
         console.print(summary)
 
-        with console.status("Initialising velocity model"):
-            velocity_model = skeleton_velocity_model(velocity_model_spec)
-
         with console.status("Building layer pipeline"):
-            model_pipeline = velocity_model_spec.build_pipeline()
+            model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
+
+        # with console.status("Initialising velocity model"):
+        #     velocity_model = skeleton_velocity_model(velocity_model_spec)
         rich.print(model_pipeline)
 
-        velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
-        print(velocity_model)
-        if graph:
-            with console.status("Storing dask graph"):
-                export_datatree_graph(velocity_model, graph_output)
+        # velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
+        # print(velocity_model)
+        # if graph:
+        #     with console.status("Storing dask graph"):
+        #         export_datatree_graph(velocity_model, graph_output)
 
-        formats.write_velocity_model(
-            velocity_model, output, output_format, quantise_arrays=quantise
-        )
+        # formats.write_velocity_model(
+        #     velocity_model, output, output_format, quantise_arrays=quantise
+        # )

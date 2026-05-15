@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any, Protocol, Self, ClassVar
-from collections import Counter
 
 import logging
 import numpy as np
@@ -267,11 +266,18 @@ class MeshModel:
         self._raw = raw
 
     @classmethod
+    def from_path(cls, path: Path) -> Self:
+        model = pv.read(path)
+        if not isinstance(model, pv.UnstructuredGrid):
+            raise ValueError(f"Model is not an unstructured grid, received {model!r}")
+        return cls.from_mesh(model)
+
+    @classmethod
     def from_mesh(
         cls,
         mesh: pv.UnstructuredGrid,
         name: str | None = None,
-    ) -> "MeshModel":
+    ) -> Self:
         """Build a :class:`MeshModel` from a PyVista ``UnstructuredGrid``.
 
         Parameters
@@ -435,12 +441,7 @@ class ModelTree:
 
         mesh_models = []
         for p in mesh_paths:
-            model = pv.read(p)
-            if not isinstance(model, pv.UnstructuredGrid):
-                raise ValueError(
-                    f"Model {p} is not an unstructured grid (received {type(p)!r})."
-                )
-            mesh_models.append(_mesh_model_from_pyvista(model, name=p.stem))
+            mesh_models.append(MeshModel.from_path(p)._raw)
 
         raw = nzcvm.model_tree(mesh_models)
         return cls(raw)

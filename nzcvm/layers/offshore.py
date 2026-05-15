@@ -15,7 +15,19 @@ surface, so depth = 0 m is at the surface and depth = 500 m is 500 m below.
 All distances and depths are in **metres**.
 """
 
-from typing import Any
+import functools
+
+from pathlib import Path
+
+import gzip
+
+from nzcvm.config.layers.offshore import (
+    OffshoreBasinConfig,
+    VelocityModel1D,
+    DepthModel,
+)
+
+from typing import Any, Callable
 import logging
 
 import numpy as np
@@ -27,7 +39,7 @@ from rich.tree import Tree
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
-from nzcvm.layers.protocol import QueryLayer
+from nzcvm.layers.core import Layer
 from nzcvm.model import ModelRange
 
 import shapely
@@ -195,78 +207,81 @@ def compute_offshore_distance(
     return distances
 
 
-def interpolate_basin_depth(
-    offshore_distance: np.ndarray,
-    distances: np.ndarray,
-    bottom_depths: np.ndarray,
+def step_interpolator(
+    x: np.ndarray,
+    xp: np.ndarray,
+    fp: np.ndarray,
 ) -> np.ndarray:
-    """Interpolate the offshore basin depth at given horizontal distances from the coast.
-
-    Uses :func:`numpy.interp` (piecewise-linear, clamped at the endpoints of
-    *distances*) to map each element of *offshore_distance* to a basin bottom
-    depth.
-
-    Parameters
-    ----------
-    offshore_distance : np.ndarray
-        Horizontal distances from the coastline, in metres (≥ 0).
-        Values below the minimum of *distances* are clamped to the first
-        entry; values above the maximum are clamped to the last entry.
-    distances : np.ndarray, shape (L,)
-        Reference distances (metres) for the look-up table, strictly
-        increasing.
-    bottom_depths : np.ndarray, shape (L,)
-        Basin bottom depths (metres, positive downward) corresponding to
-        each entry in *distances*.
-
-    Returns
-    -------
-    np.ndarray, same shape and dtype as *offshore_distance*
-        Interpolated basin bottom depth (metres, positive downward) for
-        each query distance.
-    """
-    return np.interp(offshore_distance, distances, bottom_depths)
+    idx = np.searchsorted(xp, x, side="right") - 1
+    idx = np.clip(idx, 0, len(xp) - 1)
+    return fp[idx]
 
 
-def assign_qualities_from_depth(
-    depth_flat: np.ndarray,
-    top_depths: np.ndarray,
-    model_values: np.ndarray,
-) -> np.ndarray:
-    """Look up 1-D velocity-model properties for a flat array of depth values.
+def _read_compressed_shapely_wkb(path: Path) -> shapely.Geometry:
+    with gzip.open(path) as handle:
+        return shapely.from_wkb(handle.read())
 
-    Performs a step-function (nearest-left-neighbour) interpolation: each
-    depth is assigned the properties of the deepest layer whose top is at or
-    above that depth.  Depths shallower than the first layer top are assigned
-    the first layer's properties (clamped); depths below the last layer top
-    are assigned the last layer's properties (clamped).
 
-    Parameters
-    ----------
-    depth_flat : np.ndarray, shape (N,)
-        Query depths in metres, positive downward (NZTM2000 EPSG:2193
-        vertical datum: surface = 0 m, deeper = larger positive values).
-        No special sentinel for null/no-data; pass NaN-free arrays only.
-    top_depths : np.ndarray, shape (L,)
-        Top-of-layer depths (metres, positive downward), **strictly
-        increasing**, one entry per layer.  The first entry is typically
-        ``0.0`` (surface).
-    model_values : np.ndarray, shape (L, C)
-        Material property values for each layer.  Column order must match
-        :class:`~nzcvm.components.Component` enumeration order:
-        ``rho`` (kg m⁻³), ``vp`` (m s⁻¹), ``vs`` (m s⁻¹),
-        ``qp`` (dimensionless), ``qs`` (dimensionless),
-        ``alpha`` (dimensionless, 0 = fully unconstrained, 1 = fully
-        constrained by a basin model).
+def _extract_segments(geometry: shapely.Geometry) -> np.ndarray:
+    boundary = geometry.boundary
+    lines = boundary.geoms if hasattr(boundary, "geoms") else [boundary]
 
-    Returns
-    -------
-    np.ndarray, shape (N, C)
-        Material property values for each query depth.
-    """
-    idx = np.searchsorted(top_depths, depth_flat, side="right") - 1
-    idx = np.clip(idx, 0, len(top_depths) - 1)
-    return model_values[idx]
+    extracted_segments = []
+    for line in lines:
+        coords = np.array(line.coords)
+        for i in range(len(coords) - 1):
+            extracted_segments.append([coords[i], coords[i + 1]])
+
+    return np.array(extracted_segments)
+
+
+def _extract_qualities(layers: list[VelocityModel1D]) -> np.ndarray:
+    qualities = []
+
+    for layer in layers:
+        layer_dict = layer.to_dict()
+        qualities.append([layer_dict[component] for component in Component])
+
+    return np.array(qualities).astype(np.float32)
+
+
+def _build_depth_interpolator(
+    basin_depth: list[DepthModel],
+) -> Callable[[np.ndarray], np.ndarray]:
+
+    distance_layers = sorted(basin_depth, key=lambda layer: layer.distance)
+    distances = np.array([layer.distance for layer in distance_layers]).astype(
+        np.float32
+    )
+    depths = np.array([layer.bottom_depth for layer in distance_layers]).astype(
+        np.float32
+    )
+
+    return functools.partial(
+        np.interp,
+        xp=distances,
+        fp=depths,
+    )
+
+
+def _build_model_interpolator(
+    model: list[VelocityModel1D], absolute_bottom: float
+) -> Callable[[np.ndarray], np.ndarray]:
+    layers = sorted(model, key=lambda model: model.bottom_depth)
+
+    # Trim excess layers from velocity model
+    end_idx = max(
+        range(len(layers)), key=lambda i: layers[i].bottom_depth < absolute_bottom
+    )
+    layers = layers[: end_idx + 1]
+
+    top_depths = [0.0]
+    top_depths.extend(layer.bottom_depth for layer in layers[:-1])
+    top_depths: np.ndarray = np.array(top_depths).astype(np.float32)
+
+    model_values = _extract_qualities(layers)
+
+    return functools.partial(step_interpolator, xp=top_depths, fp=model_values)
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +289,7 @@ def assign_qualities_from_depth(
 # ---------------------------------------------------------------------------
 
 
-class OffshoreBasin:
+class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
     """Pipeline layer that applies a depth-distance offshore velocity model.
 
     The layer fills the near-surface ocean region with 1-D background
@@ -352,13 +367,7 @@ class OffshoreBasin:
     nzcvm.layers.ely.ElyTaperLayer : Onshore near-surface taper layer.
     """
 
-    def __init__(
-        self,
-        coastline: shapely.Geometry,
-        basin_depth: pd.DataFrame,
-        model: pd.DataFrame,
-        next_layer: QueryLayer,
-    ) -> None:
+    def __init__(self, config: OffshoreBasinConfig, next_layer: Layer) -> None:
         """
         Parameters
         ----------
@@ -372,52 +381,22 @@ class OffshoreBasin:
         next_layer : QueryLayer
             Downstream layer invoked after the transform.
         """
-        # 1. Prepare geometry for fast containment checks (no copy needed).
-        shapely.prepare(coastline)
-        self.coastline = coastline
+        super().__init__(next_layer)
 
-        # 2. Decompose boundary ring(s) into flat (S, 2, 2) segment array for Numba.
-        logger.info("Building segment KDTree for fast distance calculation...")
-        boundary = self.coastline.boundary
-        lines = boundary.geoms if hasattr(boundary, "geoms") else [boundary]
+        self.coastline = _read_compressed_shapely_wkb(config.coastline)
+        shapely.prepare(self.coastline)
 
-        extracted_segments = []
-        for line in lines:
-            coords = np.array(line.coords)
-            for i in range(len(coords) - 1):
-                extracted_segments.append([coords[i], coords[i + 1]])
-
-        self.segments = np.array(extracted_segments, dtype=np.float32)
+        self.segments = _extract_segments(self.coastline).astype(np.float32)
 
         midpoints = self.segments.mean(axis=1)
         self.tree = KDTree(midpoints)
+        self.n_layers = len(config.model)
 
-        logger.info("Segment tree constructed.")
-        self.basin_depth = basin_depth
-
-        self.model = model.copy()
-        self.model["top_depth"] = np.insert(
-            self.model["bottom_depth"].iloc[:-1], 0, 0.0
+        self.depth_interpolator = _build_depth_interpolator(config.basin_depth)
+        self._absolute_bottom = max(layer.bottom_depth for layer in config.basin_depth)
+        self.model_interpolator = _build_model_interpolator(
+            config.model, self._absolute_bottom
         )
-        self._model_top_depths: np.ndarray = self.model["top_depth"].to_numpy()
-        self._model_values: np.ndarray = self.model[list(Component)].to_numpy()
-
-        self._basin_distances: np.ndarray = basin_depth["distance"].to_numpy()
-        self._basin_bottom_depths: np.ndarray = basin_depth["bottom_depth"].to_numpy()
-
-        self.next_layer = next_layer
-
-    @property
-    def bottom_depth(self) -> float:
-        """Maximum basin depth (metres, positive downward).
-
-        Returns
-        -------
-        float
-            The deepest ``bottom_depth`` entry in the basin-depth look-up
-            table.  Points below this depth are never modified by this layer.
-        """
-        return float(self._basin_bottom_depths.max())
 
     def _offshore_distance(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Return the coastline distance for a 2-D grid of projected coordinates.
@@ -448,30 +427,6 @@ class OffshoreBasin:
         )
         return distances.astype(x.dtype).reshape(x.shape)
 
-    def _basin_depth(self, offshore_distance: np.ndarray) -> np.ndarray:
-        """Interpolate basin bottom depth (metres) from offshore distance (metres).
-
-        Thin wrapper around :func:`interpolate_basin_depth` that uses the
-        precomputed distance/depth arrays from the basin-depth look-up table.
-
-        Parameters
-        ----------
-        offshore_distance : np.ndarray
-            Horizontal distances from the coastline (metres, ≥ 0).
-
-        Returns
-        -------
-        np.ndarray
-            Basin bottom depth (metres, positive downward), same shape as
-            *offshore_distance*.  Values are clamped to the extent of the
-            look-up table.
-        """
-        return interpolate_basin_depth(
-            offshore_distance,
-            self._basin_distances,
-            self._basin_bottom_depths,
-        )
-
     def _assign_qualities(self, depths: xr.DataArray) -> xr.DataArray:
         """Look up 1-D model qualities for a depth DataArray.
 
@@ -493,9 +448,7 @@ class OffshoreBasin:
             :class:`~nzcvm.components.Component` order.
         """
         depth_flat = depths.values.ravel()
-        sampled_data = assign_qualities_from_depth(
-            depth_flat, self._model_top_depths, self._model_values
-        )
+        sampled_data = self.model_interpolator(depth_flat)
         new_shape = depths.shape + (len(Component),)
         return xr.DataArray(
             sampled_data.reshape(new_shape),
@@ -526,7 +479,7 @@ class OffshoreBasin:
             ``(i, j, k, component)``.
         """
         # Fast path 1: entire chunk is below the maximum basin depth.
-        is_above_model_bottom_depth = chunk[Coordinate.DEPTH] < self.bottom_depth
+        is_above_model_bottom_depth = chunk[Coordinate.DEPTH] < self._absolute_bottom
         if not np.any(is_above_model_bottom_depth):
             logger.debug("Chunk below maximum basin depth, skipping calculation.")
             return self.next_layer(chunk, **kwargs)
@@ -564,7 +517,7 @@ class OffshoreBasin:
             return self.next_layer(chunk, **kwargs)
 
         basin_depth = xr.apply_ufunc(
-            self._basin_depth,
+            self.depth_interpolator,
             offshore_distance,
             input_core_dims=[[]],
             output_core_dims=[[]],
@@ -653,7 +606,7 @@ class OffshoreBasin:
             Dataset with ``qualities`` DataArray of shape
             ``(i, j, k, component)`` and a ``component`` coordinate.
         """
-        if block.attrs["minimum_top_depth"] >= self.bottom_depth:
+        if block.attrs["minimum_top_depth"] >= self._absolute_bottom:
             return self.next_layer(block, **kwargs)
 
         return xr.map_blocks(
@@ -661,17 +614,17 @@ class OffshoreBasin:
         )
 
     def __rich_console__(
-        self, _console: Console, _options: ConsoleOptions
+        self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         """Render the pipeline chain as a rich tree."""
         tree = Tree("[bold blue]Offshore Basin Layer[/bold blue]")
         (min_x, min_y, max_x, max_y) = map(round, shapely.bounds(self.coastline))
-        tree.add(f"Bounds: X={min_x:,}-{max_x:,}, Y={min_y:,}-{max_y:,}")
-        bottom_depth = self.bottom_depth
-        tree.add(f"Bottom depth: ({bottom_depth} m)")
+        tree.add(
+            f"Bounds: [X: {min_x:,}-{max_x:,}, Y: {min_y:,}-{max_y:,}, Depth: 0-{round(self._absolute_bottom):,}]"
+        )
         coordinate_count = shapely.count_coordinates(self.coastline)
-        tree.add(f"Coordinate count: {coordinate_count:,}")
-        n_layers = len(self.model)
-        tree.add(f"Basin model ({n_layers} layers)")
+        tree.add(f"Coastline geometry vertices: {coordinate_count:,}")
+
+        tree.add(f"Basin model: {self.n_layers} layers")
         tree.add(self.next_layer)
         yield tree

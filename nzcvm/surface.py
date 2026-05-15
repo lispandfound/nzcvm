@@ -89,13 +89,11 @@ class Surface:
         tree = Tree("Surface Interpolation")
         tree.add("Kind: Linear/Sample")
         tree.add(
-            f"Bounds: [X: {self.bounds[0]:.0f}-{self.bounds[3]:.0f}, Y: {self.bounds[1]:.0f}-{self.bounds[4]:.0f}, Z: {self.bounds[2]:.0f}-{self.bounds[5]:.0f}]"
+            f"Bounds: [X: {self.bounds[0]:.0f}-{self.bounds[3]:.0f}, Y: {self.bounds[1]:.0f}-{self.bounds[4]:.0f}]"
         )
+        tree.add(f"Value Range: {self.bounds[2]:.0f}-{self.bounds[5]:.0f}")
         tree.add(f"Number of points in surface: {self.n_points:,}")
         yield tree
-
-    # def __del__(self):
-    #     Surface._store.pop(self._key, None)
 
 
 def build_surface_interpolator(mesh_data: pv.StructuredGrid) -> Surface:

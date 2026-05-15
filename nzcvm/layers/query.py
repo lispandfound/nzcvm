@@ -1,5 +1,8 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
+from nzcvm.config.layers.query import QueryLayerConfig
+from nzcvm.layers.core import Layer
+
 from typing import Any
 import logging
 
@@ -15,7 +18,7 @@ from nzcvm.model import ModelTree
 logger = logging.getLogger(__name__)
 
 
-class ModelLayer:
+class QueryLayer(Layer, config_cls=QueryLayerConfig):
     """Pipeline layer that queries a velocity :class:`~nzcvm.model.Model`.
 
     Calls :meth:`~nzcvm.model.ModelTree.query_many_raw` on every ``/grid/*``
@@ -26,25 +29,19 @@ class ModelLayer:
     ----------
     model :
         Velocity model to query.
-
-    See Also
-    --------
-    nzcvm.layers.CoordinateTransformLayer : Apply before this layer when
-        input coordinates are in a local grid frame.
-    nzcvm.layers.DepthTransformLayer : Apply before this layer when input
-        z-values are depths below the surface.
     """
 
     _MODEL_KWARGS = ["model_range"]
 
-    def __init__(self, model: ModelTree) -> None:
+    def __init__(self, config: QueryLayerConfig, next_layer: Layer[Any]) -> None:
         """
         Parameters
         ----------
         model :
             Velocity model to query.
         """
-        self.model = model
+        super().__init__(next_layer)
+        self.model = ModelTree.load_models(*config.model_path.rglob(config.model_glob))
 
     def _query(self, x, y, z, **kwargs):
         logger.debug(f"Querying model for block of size {x.size}")
@@ -88,7 +85,7 @@ class ModelLayer:
         return block
 
     def __rich_console__(
-        self, _console: Console, _options: ConsoleOptions
+        self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         """Render the model layer as a rich tree."""
         tree = Tree("[bold blue]Model Query[/bold blue]")

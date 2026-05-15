@@ -1,6 +1,8 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
-from typing import Any
+from nzcvm.config.layers.ely import ElyLayerConfig
+
+from typing import Any, Self
 
 import numpy as np
 import xarray as xr
@@ -12,14 +14,14 @@ from rich.tree import Tree
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
-from nzcvm.layers.protocol import QueryLayer
+from nzcvm.layers.core import Layer
 from nzcvm.model import ModelRange
-from nzcvm.surface import Surface
+from nzcvm.surface import read_surface_from_path
 
 logger = logging.getLogger(__name__)
 
 
-class ElyTaperLayer:
+class ElyTaperLayer(Layer, config_cls=ElyLayerConfig):
     """Pipeline layer that calculates the Ely tapered near-surface velocities outside of basins.
 
     The algorithm follows three steps:
@@ -44,22 +46,16 @@ class ElyTaperLayer:
     nzcvm.layers.DepthTransformLayer : Typically applied downstream.
     """
 
-    def __init__(
-        self, interpolator: Surface, z_t: float, next_layer: QueryLayer
-    ) -> None:
+    def __init__(self, config: ElyLayerConfig, next_layer: Layer[Any]) -> None:
         """
         Parameters
         ----------
-        interpolator : Surface
-            Surface Vs30 interpolator.
-        z_t : float
-            The taper depth for the taper.
         next_layer :
             Downstream layer invoked after the transform.
         """
-        self.interpolator = interpolator
-        self.z_t = z_t
-        self.next_layer = next_layer
+        super().__init__(next_layer)
+        self.interpolator = read_surface_from_path(config.vs30)
+        self.z_t = config.z_t
 
     def _ely_transform(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         # TODO (Performance): This method calls `self.next_layer` up to three times
@@ -214,7 +210,7 @@ class ElyTaperLayer:
         )
 
     def __rich_console__(
-        self, _console: Console, _options: ConsoleOptions
+        self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         """Render the pipeline chain as a rich tree."""
         tree = Tree("[bold blue]Ely GTL Layer[/bold blue]")

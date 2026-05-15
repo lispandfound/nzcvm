@@ -1,12 +1,16 @@
 """Pipeline layer for enforcing minimum/maximum bounds on Components."""
 
-from typing import Any
+from nzcvm.config.layers.clamp import ClampLayerConfig
+
+from typing import Any, Self
 import xarray as xr
 import logging
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 from nzcvm.components import Component
-from nzcvm.layers.protocol import QueryLayer
+from nzcvm.layers.core import Layer
+
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -18,7 +22,7 @@ def _bound(val, default):
     return float(val) if val is not None else default
 
 
-class ClampLayer:
+class ClampLayer(Layer, config_cls=ClampLayerConfig):
     """Pipeline layer that enforces per-component min/max bounds.
 
     Either bound can be ``None`` to indicate no constraint on that side.
@@ -46,47 +50,49 @@ class ClampLayer:
     ... )
     """
 
-    def __init__(self, clamps: ClampSpec, next_layer: QueryLayer) -> None:
-        for component, (lo, hi) in clamps.items():
-            if lo is not None and hi is not None and lo > hi:
-                raise ValueError(
-                    f"{component}: minimum ({lo}) must not exceed maximum ({hi})."
-                )
-        self.clamps = clamps
-        self.next_layer = next_layer
+    def __init__(self, config: ClampLayerConfig, next_layer: Layer[Any]) -> None:
+        super().__init__(next_layer)
+        self.max_vp_vs_ratio = config.max_vp_vs_ratio
+        self.min_vp_vs_ratio = config.min_vp_vs_ratio
+
+        self.lo_vals = {
+            c: _bound(clamp.min, -np.inf) for c, clamp in config.clamps.items()
+        }
+        self.hi_vals = {
+            c: _bound(clamp.max, np.inf) for c, clamp in config.clamps.items()
+        }
 
     def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
         block = self.next_layer(block, **kwargs)
         qualities = block["qualities"]
 
         # Build per-component clip bounds as DataArrays aligned on the component dim
-        lo_vals = {c: _bound(lo, -np.inf) for c, (lo, _) in self.clamps.items()}
-        hi_vals = {c: _bound(hi, np.inf) for c, (_, hi) in self.clamps.items()}
 
-        if lo_vals or hi_vals:
+        if self.lo_vals or self.hi_vals:
             components = qualities.coords["component"].values
 
             lo_arr = xr.DataArray(
-                [lo_vals.get(c, -np.inf) for c in components],
+                [self.lo_vals.get(c, -np.inf) for c in components],
                 coords={"component": components},
                 dims="component",
             ).astype(np.float32)
             hi_arr = xr.DataArray(
-                [hi_vals.get(c, np.inf) for c in components],
+                [self.hi_vals.get(c, np.inf) for c in components],
                 coords={"component": components},
                 dims="component",
             ).astype(np.float32)
             logger.debug(f"clamp settings: {lo_arr} - {hi_arr}")
             qualities = qualities.clip(min=lo_arr, max=hi_arr)
 
-        if ratios := self.clamps.get("vp_vs_ratio"):
-            min_ratio, max_ratio = ratios
+        if self.max_vp_vs_ratio or self.min_vp_vs_ratio:
             original_dims = qualities.dims
             vs = qualities.sel(component=Component.VS)
             vp = qualities.sel(component=Component.VP)
+            min_vp = self.min_vp_vs_ratio * vs if self.min_vp_vs_ratio else None
+            max_vp = self.max_vp_vs_ratio * vs if self.max_vp_vs_ratio else None
             vp_clipped = vp.clip(
-                min=min_ratio * vs if min_ratio else None,
-                max=max_ratio * vs if max_ratio else None,
+                min=min_vp,
+                max=max_vp,
             )
             is_vp = qualities.coords["component"] == Component.VP
             # TODO: evaluate if I can get rid of the transposition, this is introduced by xr.where
@@ -96,13 +102,13 @@ class ClampLayer:
         return block
 
     def __rich_console__(
-        self, _console: Console, _options: ConsoleOptions
+        self, console: Console, options: ConsoleOptions
     ) -> RenderResult:
         tree = Tree("[bold blue]Clamp Layer[/bold blue]")
-        for component, (lo, hi) in self.clamps.items():
-            lo_str = f"{lo}" if lo is not None else "−∞"
-            hi_str = f"{hi}" if hi is not None else "+∞"
-            tree.add(f"{component}: {lo_str} … {hi_str}")
+        for component in set(self.lo_vals) | set(self.hi_vals):
+            lo = self.lo_vals.get(component, -np.inf)
+            hi = self.hi_vals.get(component, np.inf)
+            tree.add(f"{component}: {lo} … {hi}")
 
         tree.add(self.next_layer)
         yield tree

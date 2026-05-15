@@ -19,7 +19,7 @@ transpose = false
 origin_crs = 4326
 origin_x = 0
 origin_y = 0
-cell_registration = "corner"
+cell_registration = "centre"
 # If set, repack chunks to minimise waste while trying to be close to user specified chunks
 optimise_chunks = true
 
@@ -42,11 +42,11 @@ k = 256
 
 [[layers]]
 type = "clamp"
+min_vp_vs_ratio = 1.73
+max_vp_vs_ratio = 4.0
+
 [layers.clamps.vs]
 min = 500.0
-[layers.clamps.vp_vs_ratio]
-min = 1.73
-max = 4.0
 
 
 [[layers]]
@@ -101,6 +101,6 @@ vs30 = "./vs30.vtk"
 z_t = 450.0
 
 [[layers]]
-type = "model"
+type = "query"
 model_path = "./basins"
 model_glob = "ep2020.vtkhdf"

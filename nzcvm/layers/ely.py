@@ -1,8 +1,11 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
+from nzcvm.qualities import Qualities
+from nzcvm.grids import Grid
+
 from nzcvm.config.layers.ely import ElyLayerConfig
 
-from typing import Any, Self
+from typing import Any
 
 import numpy as np
 import xarray as xr
@@ -57,7 +60,11 @@ class ElyTaperLayer(Layer, config_cls=ElyLayerConfig):
         self.interpolator = read_surface_from_path(config.vs30)
         self.z_t = config.z_t
 
-    def _ely_transform(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def _ely_transform(
+        self,
+        grid: Grid,
+        **kwargs: Any,
+    ) -> Qualities:
         # TODO (Performance): This method calls `self.next_layer` up to three times
         # for every chunk that intersects the taper zone:
         #   1. basin query  (ModelRange.BASINS)
@@ -72,38 +79,28 @@ class ElyTaperLayer(Layer, config_cls=ElyLayerConfig):
         # fuse calls 1 and 2 by querying ALL models once and deriving the basin
         # sub-result via a priority mask, eliminating the redundant full-domain
         # traversal.
-        is_in_taper = chunk["depth"] < self.z_t
+        is_in_taper = grid.depth < self.z_t
 
         # If the whole chunk is below the taper, skip Ely entirely.
         if not np.any(is_in_taper):
             logger.debug("Chunk outside taper, skipping Ely taper calculation.")
-            return self.next_layer(chunk, **kwargs)
+            return self.next_layer(grid, **kwargs)
         # Ask the next layer *only* for the basins.
         basin_kwargs = kwargs.copy()
         basin_kwargs["model_range"] = ModelRange.BASINS
-        basins = self.next_layer(chunk, **basin_kwargs)
-
-        alpha = basins["qualities"].sel(component=Component.ALPHA)
+        basins = self.next_layer(grid, **basin_kwargs)
 
         # Inside basins we don't have to compute the tomography or Ely taper.
-        if np.allclose(alpha, 1.0):
+        if np.allclose(basins.alpha, 1.0):
             logger.debug("Chunk inside basin, skipping Ely taper calculation.")
             return basins
 
-        background = self.next_layer(chunk, **kwargs)
+        background = self.next_layer(grid, **kwargs)
 
-        safe_z = chunk["depth"].clip(max=self.z_t)
+        safe_z = grid.depth.clip(max=self.z_t)
 
-        x_top = (
-            chunk[Coordinate.X.value]
-            .isel({Coordinate.K: 0})
-            .drop_vars(Coordinate.K.value)
-        )
-        y_top = (
-            chunk[Coordinate.Y.value]
-            .isel({Coordinate.K: 0})
-            .drop_vars(Coordinate.K.value)
-        )
+        x_top = grid.x.isel({Coordinate.K: 0}).drop_vars(Coordinate.K.value)
+        y_top = grid.y.isel({Coordinate.K: 0}).drop_vars(Coordinate.K.value)
 
         vs30 = xr.apply_ufunc(
             self.interpolator.transform,
@@ -118,74 +115,39 @@ class ElyTaperLayer(Layer, config_cls=ElyLayerConfig):
         # Select a z-layer of the block
         # The array [0] as the selection is important because it preserves the k
         # axis for downstream layers.
-        surface_layer = chunk.isel({Coordinate.K: [0]}).copy()
+        surface_layer = grid.z.isel({Coordinate.K: [0]})
 
         # This hack sets the reference elevation to an equivalent to depth = 450m below topography
-        surface_layer[Coordinate.Z.value] -= (
-            surface_layer[Coordinate.DEPTH.value] - self.z_t
-        )
-        surface_layer[Coordinate.DEPTH.value] = self.z_t
+        surface_layer.z -= surface_layer.depth - self.z_t
+        surface_layer.depth = self.z_t
 
         # Calculate bounding taper qualities using *ONLY* the tomography
         tomo_kwargs = kwargs.copy()
         tomo_kwargs["model_range"] = ModelRange.TOMOGRAPHY
 
-        taper_qualities = self.next_layer(surface_layer, **tomo_kwargs).isel(
-            # Drop the k coordinate so that the Ely profile broadcasts the calculation out again.
-            {Coordinate.K: 0}
-        )
-        taper_vp = (
-            taper_qualities["qualities"]
-            .sel(component=Component.VP.value)
-            .drop_vars("component")
-        )
-        taper_vs = (
-            taper_qualities["qualities"]
-            .sel(component=Component.VS.value)
-            .drop_vars("component")
-        )
+        taper_qualities = self.next_layer(surface_layer, **tomo_kwargs)
 
         # Calculate complete ely qualities using safe_z.
         ely_qualities = ely_vs_profile(
             safe_z,
             vs30,
-            taper_vp,
-            taper_vs,
+            taper_qualities.vp,
+            taper_qualities.vs,
             z_t=self.z_t,
         )
 
-        # Blend the basins over the Ely taper. `basin_alpha` has the
-        # same spatial dims as the block; xarray broadcasts it across the
-        # component dimension automatically for non-alpha components.
-        basin_alpha = basins["qualities"].sel(component=Component.ALPHA.value)
-        ely_blended_qualities = (basins["qualities"] * basin_alpha) + (
-            ely_qualities * (1 - basin_alpha)
-        )
+        # Blend the basins over the Ely taper.
 
-        # Handle alpha separately using Porter-Duff "over":
-        # a_out = a_basin + (1 - a_basin) * a_ely
-        ely_alpha = ely_qualities.sel(component=Component.ALPHA.value)
-        blended_alpha = basin_alpha + ((1 - basin_alpha) * ely_alpha)
-        ely_blended_qualities.loc[{"component": Component.ALPHA.value}] = blended_alpha
+        ely_blended_qualities = basins.blend(ely_qualities)
 
-        result = background.copy()
-        result["qualities"] = xr.where(
-            is_in_taper, ely_blended_qualities, background["qualities"]
-        )
-        return result
+        return xr.where(is_in_taper, ely_blended_qualities, background)
 
     def _template(self, block: xr.Dataset) -> xr.Dataset:
         component_names = list(Component)
-        template = block.copy(deep=False)
-        # Lazily define the shape of the output qualities without actually
-        # computing anything. xr.map_blocks needs to know exactly what the
-        # output shapes will be.
-        template["qualities"] = template[Coordinate.X.value].expand_dims(
-            component=component_names, axis=-1
-        )
+
         return template
 
-    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
         """Apply the Ely taper and delegate to the next layer.
 
         Parameters
@@ -199,15 +161,16 @@ class ElyTaperLayer(Layer, config_cls=ElyLayerConfig):
         xarray.Dataset
             Same dataset with ``qualities`` calculated according to Ely taper relations.
         """
+        bounds = grid.bounds
         if (
-            block.attrs["minimum_top_depth"] >= self.z_t
+            bounds.depth_min >= self.z_t
             or kwargs.get("model_range") == ModelRange.BASINS
         ):
-            return self.next_layer(block, **kwargs)
-
-        return xr.map_blocks(
-            self._ely_transform, block, kwargs=kwargs, template=self._template(block)
+            return self.next_layer(grid, **kwargs)
+        dset = grid.map_blocks(
+            self._ely_transform, kwargs=kwargs, template=self._template(grid)
         )
+        return Qualities.from_dataset(dset)
 
     def __rich_console__(
         self, console: Console, options: ConsoleOptions

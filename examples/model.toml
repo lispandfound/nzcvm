@@ -4,6 +4,7 @@ authors = []
 references = []
 
 [grid]
+type = "sw4"
 surface = "dem.vtk"
 # 100km by 100km
 extent_x = 600000.0

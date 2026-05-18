@@ -2,6 +2,8 @@
 
 # So that we can use the Layer[Any] without string quotes which look ugly.
 from __future__ import annotations
+from nzcvm.grids import Grid
+from nzcvm.qualities import Qualities
 import typing
 from nzcvm.config.layers import LayerConfig
 from typing import TypeVar, Any
@@ -39,7 +41,7 @@ class Layer(ABC):
             Layer.registry[config_cls] = value
 
     @abstractmethod
-    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
         """Apply this layer to *block* and return the result."""
         ...
 

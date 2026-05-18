@@ -11,8 +11,6 @@ The public API has two functions:
 import xarray as xr
 import numpy as np
 
-from nzcvm.coordinates import Coordinate
-
 
 def curvilinear_mesh_boundary(
     elevation: xr.DataArray,

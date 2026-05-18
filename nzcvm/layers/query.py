@@ -1,5 +1,8 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
+from nzcvm.grids import Grid
+from nzcvm.qualities import Qualities
+
 from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.layers.core import Layer
 
@@ -47,7 +50,7 @@ class QueryLayer(Layer, config_cls=QueryLayerConfig):
         logger.debug(f"Querying model for block of size {x.size}")
         return self.model.query_many_raw(x, y, z, **kwargs)
 
-    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
         """Query the model for every block node and add a ``qualities`` variable.
 
         Parameters
@@ -64,13 +67,11 @@ class QueryLayer(Layer, config_cls=QueryLayerConfig):
         """
         component_names = list(Component)
 
-        block = block.copy(deep=False)
-
         qualities = xr.apply_ufunc(
             self._query,
-            block[Coordinate.X.value],
-            block[Coordinate.Y.value],
-            block[Coordinate.Z.value],
+            grid.x,
+            grid.y,
+            grid.z,
             input_core_dims=[[], [], []],
             output_core_dims=[["component"]],
             dask="parallelized",
@@ -80,9 +81,9 @@ class QueryLayer(Layer, config_cls=QueryLayerConfig):
         )
 
         qualities = qualities.assign_coords({"component": component_names})
-        block["qualities"] = qualities
+        dset = qualities.to_dataset("component")
 
-        return block
+        return Qualities.from_dataset(dset)
 
     def __rich_console__(
         self, console: Console, options: ConsoleOptions

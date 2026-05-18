@@ -1,8 +1,13 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from nzcvm.layers.pipeline import execute_model_pipeline
+
+from nzcvm.velocity_model import VelocityModel
+from nzcvm.config import VelocityModelConfigFormat, VelocityModelConfig
+
+
 from distributed import Client, LocalCluster
 
-from nzcvm.graph import export_datatree_graph
 
 import os
 from pathlib import Path
@@ -18,7 +23,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from nzcvm import formats
-from nzcvm.config import VelocityModelSpec, VelocityModelSpecFormat
+
 from nzcvm.layers import pipeline
 from nzcvm.scripts import (
     construct_mesh,
@@ -138,11 +143,11 @@ def generate(
         ),
     ] = formats.Format.INFERRED,
     config_format: Annotated[
-        VelocityModelSpecFormat,
+        VelocityModelConfigFormat,
         typer.Option(
             help="Config format to read. You can usually leave this as inferred."
         ),
-    ] = VelocityModelSpecFormat.INFERRED,
+    ] = VelocityModelConfigFormat.INFERRED,
     quantise: Annotated[
         bool,
         typer.Option(
@@ -173,18 +178,20 @@ def generate(
             )
         )
 
-        velocity_model_spec = VelocityModelSpec.read_config(config, config_format)
+        velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
 
-        summary = Table(show_header=False, box=rich.box.SIMPLE)
-        summary.add_row(
-            "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
-        )
-        summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
-        console.print(summary)
+        # summary = Table(show_header=False, box=rich.box.SIMPLE)
+        # summary.add_row(
+        #     "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
+        # )
+        # summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
+        # console.print(summary)
+        velocity_model = VelocityModel.from_config(velocity_model_spec)
 
         with console.status("Building layer pipeline"):
             model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
 
+        velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
         # with console.status("Initialising velocity model"):
         #     velocity_model = skeleton_velocity_model(velocity_model_spec)
         rich.print(model_pipeline)

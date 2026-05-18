@@ -20,7 +20,7 @@ import xarray as xr
 
 from nzcvm.coordinates import Coordinate
 from nzcvm.generate import fill_grid
-from nzcvm.model_spec import CellRegistration
+from nzcvm.velocity_model import CellRegistration
 
 
 # ---------------------------------------------------------------------------

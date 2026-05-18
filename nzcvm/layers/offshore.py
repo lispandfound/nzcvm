@@ -15,6 +15,11 @@ surface, so depth = 0 m is at the surface and depth = 500 m is 500 m below.
 All distances and depths are in **metres**.
 """
 
+from nzcvm.qualities import Qualities
+from nzcvm import qualities
+
+from nzcvm.grids import Grid
+
 import functools
 
 from pathlib import Path
@@ -427,7 +432,7 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
         )
         return distances.astype(x.dtype).reshape(x.shape)
 
-    def _assign_qualities(self, depths: xr.DataArray) -> xr.DataArray:
+    def _assign_qualities(self, depths: xr.DataArray) -> Qualities:
         """Look up 1-D model qualities for a depth DataArray.
 
         Delegates to :func:`assign_qualities_from_depth` with the precomputed
@@ -450,13 +455,15 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
         depth_flat = depths.values.ravel()
         sampled_data = self.model_interpolator(depth_flat)
         new_shape = depths.shape + (len(Component),)
-        return xr.DataArray(
+        darr = xr.DataArray(
             sampled_data.reshape(new_shape),
             coords={**depths.coords, "component": list(Component)},
             dims=(*depths.dims, "component"),
         )
+        dset = darr.to_dataset(dim="component")
+        return Qualities.from_dataset(dset)
 
-    def _offshore_taper(self, chunk: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def _offshore_taper(self, grid: Grid, **kwargs: Any) -> xr.Dataset:
         """Apply the offshore taper to a single computed dask chunk.
 
         Called by :meth:`__call__` via ``xr.map_blocks``; *chunk* is always
@@ -479,25 +486,24 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
             ``(i, j, k, component)``.
         """
         # Fast path 1: entire chunk is below the maximum basin depth.
-        is_above_model_bottom_depth = chunk[Coordinate.DEPTH] < self._absolute_bottom
+
+        is_above_model_bottom_depth = grid.depth < self._absolute_bottom
         if not np.any(is_above_model_bottom_depth):
             logger.debug("Chunk below maximum basin depth, skipping calculation.")
-            return self.next_layer(chunk, **kwargs)
+            return self.next_layer(grid, **kwargs)
 
         # Query basins to obtain the alpha (coverage) field.
         basin_kwargs = kwargs.copy()
         basin_kwargs["model_range"] = ModelRange.BASINS
-        basins = self.next_layer(chunk, **basin_kwargs)
-
-        alpha = basins["qualities"].sel(component=Component.ALPHA)
+        basins = self.next_layer(grid, **basin_kwargs)
 
         # Fast path 2: entire chunk lies inside a fully modelled basin.
-        if np.allclose(alpha, 1.0):
+        if np.allclose(basins.alpha, 1.0):
             logger.debug("Chunk inside modelled basin, skipping offshore calculation.")
             return basins
 
-        x = chunk[Coordinate.X].isel({Coordinate.K: 0})
-        y = chunk[Coordinate.Y].isel({Coordinate.K: 0})
+        x = grid.x.isel({Coordinate.K: 0})
+        y = grid.y.isel({Coordinate.K: 0})
         logger.debug("Calculating offshore distances")
 
         offshore_distance = xr.apply_ufunc(
@@ -506,7 +512,7 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
             y,
             input_core_dims=[[], []],
             output_core_dims=[[]],
-            output_dtypes=[chunk[Coordinate.X].dtype],
+            output_dtypes=[grid.x.dtype],
         )
         logger.debug("Offshore distances calculated")
         is_offshore = offshore_distance > 0
@@ -514,7 +520,7 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
         # Fast path 3: entire chunk is onshore.
         if not np.any(is_offshore):
             logger.debug("Chunk entirely within onshore region, skipping calculation.")
-            return self.next_layer(chunk, **kwargs)
+            return self.next_layer(grid, **kwargs)
 
         basin_depth = xr.apply_ufunc(
             self.depth_interpolator,
@@ -523,64 +529,27 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
             output_core_dims=[[]],
             output_dtypes=[offshore_distance.dtype],
         )
-        basin_depth, _ = xr.broadcast(basin_depth, chunk[Coordinate.DEPTH])
-        is_above_basin = chunk[Coordinate.DEPTH] < basin_depth
+        basin_depth, _ = xr.broadcast(basin_depth, grid.depth)
+        is_above_basin = grid.depth < basin_depth
 
         # Fast path 4: entire chunk is below the interpolated basin surface.
         if not np.any(is_above_basin):
             logger.debug("Chunk below basin surface, skipping calculation.")
-            return self.next_layer(chunk, **kwargs)
+            return self.next_layer(grid, **kwargs)
 
-        background = self.next_layer(chunk, **kwargs)
+        background = self.next_layer(grid, **kwargs)
         logger.debug("Assigning basin qualities using offshore basin model")
-        offshore_qualities = self._assign_qualities(chunk[Coordinate.DEPTH])
+        offshore_qualities = self._assign_qualities(grid.depth)
 
-        basin_alpha = basins["qualities"].sel(component=Component.ALPHA.value)
+        offshore_blended_qualities = basins.blend(offshore_qualities)
 
-        # TODO (Scientific Review): Linear velocity blend weighted by basin alpha.
-        # For sharp basin edges a harmonic or log-space blend of vp/vs/rho may
-        # be more physically appropriate.  Confirm with domain expert.
-        offshore_blended_qualities = (basins["qualities"] * basin_alpha) + (
-            offshore_qualities * (1 - basin_alpha)
-        )
-
-        offshore_blended_qualities.loc[{"component": Component.ALPHA.value}] = (
-            np.float32(1.0)
-        )
-
-        result = background.copy()
-        result["qualities"] = xr.where(
+        return xr.where(
             is_above_basin & is_offshore,
             offshore_blended_qualities,
-            background["qualities"],
+            background,
         )
-        return result
 
-    def _template(self, block: xr.Dataset) -> xr.Dataset:
-        """Build a lazy template Dataset for ``xr.map_blocks``.
-
-        ``xr.map_blocks`` requires a template that describes the shape and
-        coordinates of the output without triggering computation.
-
-        Parameters
-        ----------
-        block : xr.Dataset
-            Source block; only the coordinates are used.
-
-        Returns
-        -------
-        xr.Dataset
-            Shallow copy of *block* with a ``qualities`` DataArray whose
-            last dimension is ``component``.
-        """
-        component_names = list(Component)
-        template = block.copy(deep=False)
-        template["qualities"] = template[Coordinate.X.value].expand_dims(
-            component=component_names, axis=-1
-        )
-        return template
-
-    def __call__(self, block: xr.Dataset, **kwargs: Any) -> xr.Dataset:
+    def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
         """Apply the offshore taper to *block* and delegate to the next layer.
 
         Dispatches to :meth:`_offshore_taper` via ``xr.map_blocks`` so the
@@ -606,12 +575,14 @@ class OffshoreBasinLayer(Layer, config_cls=OffshoreBasinConfig):
             Dataset with ``qualities`` DataArray of shape
             ``(i, j, k, component)`` and a ``component`` coordinate.
         """
-        if block.attrs["minimum_top_depth"] >= self._absolute_bottom:
-            return self.next_layer(block, **kwargs)
-
-        return xr.map_blocks(
-            self._offshore_taper, block, kwargs=kwargs, template=self._template(block)
+        if grid.bounds.depth_min >= self._absolute_bottom:
+            return self.next_layer(grid, **kwargs)
+        dset = grid.map_blocks(
+            self._offshore_taper,
+            kwargs=kwargs,
+            template=qualities.template_like(grid.x),
         )
+        return Qualities.from_dataset(dset)
 
     def __rich_console__(
         self, console: Console, options: ConsoleOptions

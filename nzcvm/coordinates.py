@@ -21,7 +21,7 @@ See Also
 --------
 nzcvm.layers.affine.AffineTransformLayer : Pipeline layer that applies an affine.
 nzcvm.layers.crs.CrsTransformLayer : Pipeline layer that applies a CRS transform.
-nzcvm.model_spec.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
+nzcvm.velocity_model.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
 """
 
 from enum import StrEnum, auto
@@ -383,3 +383,11 @@ def crs_transform(x, y, *, transformer: Transformer):
         )
         return x_out, y_out
     return transformer.transform(np.asarray(x), np.asarray(y))
+
+
+def apply_affine_transform(
+    transform: Affine, x: xr.DataArray, y: xr.DataArray
+) -> tuple[xr.DataArray, xr.DataArray]:
+    x_prime = transform[0, 0] * x + transform[0, 1] * y + transform[0, 2]
+    y_prime = transform[1, 0] * y + transform[1, 1] * y + transform[1, 2]
+    return x_prime, y_prime

@@ -48,8 +48,8 @@ from nzcvm.layers.core import Layer
 from nzcvm.model import ModelRange
 
 import shapely
-from scipy.spatial import KDTree
-from numba import njit, guvectorize
+import shapely.ops
+from numba import guvectorize
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +142,9 @@ class Coastline:
 
     @classmethod
     def build(cls, coastline_path: Path) -> Self:
-        coastline = _read_compressed_shapely_wkb(coastline_path)
+        coastline = shapely.ops.orient(
+            _read_compressed_shapely_wkb(coastline_path), sign=1.0
+        )
 
         segments = _extract_segments(coastline).astype(np.float32)
 
@@ -162,22 +164,17 @@ class Coastline:
             x_flat = x_chunk.ravel()
             y_flat = y_chunk.ravel()
 
-            # 1. Pack into Shapely points array for spatial query
             pts = shapely.points(x_flat, y_flat)
 
-            # 2. Immutable broad-phase lookup: Find the single NEAREST segment
-            # index for every single point in the chunk.
-            logger.debug("Querying thread-safe STRtree for nearest segments")
             nearest_idx, distance = self.tree.query_nearest(
                 pts, return_distance=True, all_matches=False
             )
-            nearest_idx = nearest_idx[0]
-            distance = distance.astype(np.float32)
+            nearest_idx = nearest_idx[1]
 
+            distance = distance.astype(np.float32)
             candidate_segments = self.segments[nearest_idx]
             pts_array = np.column_stack((x_flat, y_flat))
 
-            logger.debug("Executing Numba analytical projection loop")
             distances_flat = _signed_segment_distance(
                 pts_array, distance, candidate_segments
             )
@@ -191,7 +188,7 @@ class Coastline:
             input_core_dims=[[], []],
             output_core_dims=[[]],
             output_dtypes=[x.dtype],
-            dask="parallelized",  # Safely multithreaded over Dask blocks
+            dask="parallelized",
         )
 
 

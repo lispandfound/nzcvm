@@ -163,11 +163,12 @@ def generate(
         velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
         velocity_model = VelocityModel.from_config(velocity_model_spec)
 
-        with console.status("Building layer pipeline"):
-            model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
+        with (
+            console.status("Building layer pipeline"),
+            pipeline.model_pipeline(velocity_model_spec.layers) as model_pipe,
+        ):
+            velocity_model = execute_model_pipeline(velocity_model, model_pipe)
 
-        velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
-
-        formats.write_velocity_model(
-            velocity_model, output, output_format, quantise_arrays=quantise
-        )
+            formats.write_velocity_model(
+                velocity_model, output, output_format, quantise_arrays=quantise
+            )

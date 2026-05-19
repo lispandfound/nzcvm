@@ -1,11 +1,5 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
-from distributed import Lock
-
-from pathlib import Path
-
-import functools
-
 from typing import Any, Callable
 import logging
 import numpy as np
@@ -20,8 +14,14 @@ from nzcvm.ely_taper import ely_vs_profile
 from nzcvm.model import ModelRange
 from nzcvm.surface import read_surface_from_path, Surface
 from nzcvm.layers.pipeline import query
+from nzcvm.layers.registry import register_dask_type
 
 logger = logging.getLogger(__name__)
+
+# Register dask serialisation for Surface: when distributed encounters a
+# Surface as a task argument it stores it in the global REGISTRY by UUID
+# and passes only the UUID, avoiding any attempt to pickle the Rust object.
+register_dask_type(Surface)
 
 
 def _ely_transform(
@@ -53,6 +53,10 @@ def _ely_transform(
     x_top = grid.x.isel({Coordinate.K: 0}).drop_vars(Coordinate.K.value)
     y_top = grid.y.isel({Coordinate.K: 0}).drop_vars(Coordinate.K.value)
 
+    # _ely_transform runs inside a map_blocks task where the chunk is already
+    # computed (non-dask), so the inputs to apply_ufunc are plain numpy arrays.
+    # apply_ufunc therefore calls interpolator.transform directly and eagerly —
+    # no new dask tasks are created and no further serialisation occurs.
     vs30 = xr.apply_ufunc(
         interpolator.transform,
         x_top,
@@ -96,14 +100,6 @@ def _ely_transform(
     return xr.where(is_in_taper, ely_blended_qualities, background)
 
 
-SURFACE_READ_LOCK = Lock("vtk-surface-lock")
-
-
-@functools.cache
-def load_surface(vs30: Path) -> Surface:
-    return read_surface_from_path(vs30)
-
-
 @query.register
 def query(
     config: ElyLayerConfig,
@@ -120,9 +116,10 @@ def query(
     ):
         return next_layer(grid, **kwargs)
 
-    # Load file IO state safely before map_blocks boundaries
-    with SURFACE_READ_LOCK:
-        interpolator = load_surface(config.vs30)
+    # Load the surface before any map_blocks boundary so it is never allocated
+    # inside a dask task.  Pass it as an explicit kwarg so dask can see and
+    # serialise it via the registered dask_serialize(Surface) handler.
+    interpolator = read_surface_from_path(config.vs30)
 
     dset = grid.map_blocks(
         _ely_transform,

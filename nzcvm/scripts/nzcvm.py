@@ -1,25 +1,24 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from dask.diagnostics.progress import ProgressBar
+
+from dask.diagnostics.profile import ResourceProfiler
+
+import contextlib
+import dask
+import logging
 from nzcvm.layers.pipeline import execute_model_pipeline
 
 from nzcvm.velocity_model import VelocityModel
 from nzcvm.config import VelocityModelConfigFormat, VelocityModelConfig
 
 
-from distributed import Client, LocalCluster
-
-
-import os
 from pathlib import Path
 from typing import Annotated
 
 import psutil
-import rich
-import rich.box
 import typer
-import logging.config
-from rich.console import Console
-from rich.panel import Panel
+from nzcvm.logging import configure_logging, LogProgress
 
 from nzcvm import formats
 
@@ -31,52 +30,6 @@ from nzcvm.scripts import (
     tree_stats,
     view,
 )
-
-console = Console()
-
-
-def configure_logging(level: str, log_path: Path | None) -> None:
-    logging_config = {
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "standard": {
-                "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
-            },
-        },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "formatter": "standard",
-                "level": level,
-                "stream": "ext://sys.stdout",
-            },
-        },
-        "loggers": {
-            "": {  # root logger
-                "handlers": ["console"],
-                "level": level,
-                "propagate": True,
-            },
-            "dask": {"level": level, "propagate": True},
-            "hdf5plugin": {"level": level, "propagate": True},
-        },
-    }
-
-    if log_path:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        logging_config["handlers"]["file"] = {
-            "class": "logging.handlers.RotatingFileHandler",
-            "formatter": "standard",
-            "level": level,
-            "filename": str(log_path),
-            "maxBytes": 10485760,
-            "backupCount": 5,
-            "encoding": "utf8",
-        }
-        logging_config["loggers"][""]["handlers"] = ["file"]
-
-    logging.config.dictConfig(logging_config)
 
 
 def num_cores() -> int:
@@ -136,38 +89,45 @@ def generate(
             help="If set, quantise the output in NetCDF/Zarr formats using ZFP"
         ),
     ] = False,
+    profile: Annotated[
+        bool,
+        typer.Option(
+            help="If set, profile the pipeline execution with the given rate (in seconds)"
+        ),
+    ] = False,
+    progress: Annotated[bool, typer.Option(help="If set, show task progress")] = False,
     log_level: str = "WARNING",
     log_file: Path | None = None,
-    dashboard_address: str = ":8787",
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
     configure_logging(log_level, log_file)
+
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
-    with (
-        LocalCluster(
-            processes=False,
-            dashboard_address=dashboard_address,
-            n_workers=1,
-            threads_per_worker=resolved_n_threads,
-        ) as cluster,
-        Client(cluster) as _client,
-    ):
-        console.print(
-            Panel.fit(
-                f"[highlight]NZCVM[/highlight] | Velocity Model Generator\n"
-                f"[info]Threads:[/info] {resolved_n_threads}",
-                border_style="cyan",
-            )
-        )
+    logger = logging.getLogger(__name__)
 
-        velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
+    logger.info(f"Running with {resolved_n_threads} threads.")
+    exit_stack = contextlib.ExitStack()
+    thread_context = dask.config.set(
+        scheduler="threads", num_workers=resolved_n_threads
+    )
+    exit_stack.enter_context(thread_context)
+
+    if profile:
+        exit_stack.enter_context(ResourceProfiler(dt=0.1))
+
+    if progress:
+        exit_stack.enter_context(ProgressBar())
+
+    exit_stack.enter_context(LogProgress())
+
+    velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
+    logger.debug("Building model pipeline")
+    model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
+    logger.debug("Model pipeline built")
+
+    with exit_stack:
         velocity_model = VelocityModel.from_config(velocity_model_spec)
-
-        with console.status("Building layer pipeline"):
-            model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
-
         velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
-
         formats.write_velocity_model(
             velocity_model, output, output_format, quantise_arrays=quantise
         )

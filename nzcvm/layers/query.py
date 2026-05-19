@@ -1,9 +1,5 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
-from nzcvm.layers.pipeline import query
-
-from pathlib import Path
-
 from nzcvm.grids import Grid
 from nzcvm.qualities import Qualities, QualitiesSchema
 
@@ -15,50 +11,40 @@ import logging
 
 import numpy as np
 import xarray as xr
-from rich.console import Console, ConsoleOptions, RenderResult
-from rich.tree import Tree
 
 from nzcvm.components import Component
 from nzcvm.model import ModelTree
-import functools
 
-from dask.distributed import Lock
 
 logger = logging.getLogger(__name__)
 
-MODEL_READ_LOCK = Lock("vtk-hdf5-lock")
 
+class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
+    _MODEL_KWARGS = {"model_range"}
 
-@functools.cache
-def load_mesh(path: Path, glob: str) -> ModelTree:
-    logger.debug(f"Reading models ({glob}) from {path}")
-    return ModelTree.load_models(*path.rglob(glob))
+    def __init__(self, config: QueryLayerConfig, next_layer: Layer) -> None:
+        super().__init__(config, next_layer)
+        models = config.model_path.rglob(config.model_glob)
+        self.model = ModelTree.load_models(*models)
 
+    def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
+        component_names = list(Component)
 
-_MODEL_KWARGS = {"model_range"}
+        qualities = xr.apply_ufunc(
+            self.model.query_many_raw,
+            grid.x,
+            grid.y,
+            grid.z,
+            input_core_dims=[[], [], []],
+            output_core_dims=[["component"]],
+            dask="parallelized",
+            kwargs={
+                key: kwargs[key] for key in QueryLayer._MODEL_KWARGS if key in kwargs
+            },
+            output_dtypes=[np.float32],
+            dask_gufunc_kwargs={"output_sizes": {"component": len(component_names)}},
+        )
 
-
-@query.register
-def query(config: QueryLayerConfig, grid: Grid, next_layer: Any, **kwargs) -> Qualities:
-    component_names = list(Component)
-
-    with MODEL_READ_LOCK:
-        model = load_mesh(config.model_path, config.model_glob)
-
-    logger.debug(f"Model object: {model}")
-    qualities = xr.apply_ufunc(
-        model.query_many_raw,
-        grid.x,
-        grid.y,
-        grid.z,
-        input_core_dims=[[], [], []],
-        output_core_dims=[["component"]],
-        dask="parallelized",
-        kwargs={key: kwargs[key] for key in _MODEL_KWARGS if key in kwargs},
-        output_dtypes=[np.float32],
-        dask_gufunc_kwargs={"output_sizes": {"component": len(component_names)}},
-    )
-
-    qualities = qualities.assign_coords({"component": component_names})
-    dset = qualities.to_dataset("component")
-    return QualitiesSchema.from_dataset(dset)
+        qualities = qualities.assign_coords({"component": component_names})
+        dset = qualities.to_dataset("component")
+        return QualitiesSchema.from_dataset(dset)

@@ -45,8 +45,6 @@ from mashumaro.codecs.toml import TOMLDecoder
 from mashumaro.codecs.yaml import YAMLDecoder
 
 # This import just registers all the layers, so while it isn't used directly its plugin architecture is.
-from nzcvm.config import layers as _layers
-from nzcvm.config import grids
 from nzcvm.config.core import ConfigObject
 from nzcvm.config.metadata import ModelMetadata
 

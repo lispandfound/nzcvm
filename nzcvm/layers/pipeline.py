@@ -1,6 +1,9 @@
+import typing
+
+from nzcvm.layers.core import Layer, layer_from_config
 from nzcvm.grids import Grid
 from nzcvm.qualities import Qualities
-import functools
+from types import SimpleNamespace
 from nzcvm.velocity_model import VelocityModel
 from nzcvm.config.layers import LayerConfig
 from typing import Any, Callable
@@ -11,25 +14,25 @@ class PipelineError(Exception):
     pass
 
 
-def build_pipeline(configs: list[LayerConfig]) -> Callable[[Grid], Qualities]:
+def build_pipeline(configs: list[LayerConfig]) -> Layer:
     if not configs:
         raise ValueError("Pipeline configuration list cannot be empty.")
 
-    pipeline: Callable[..., Qualities] = functools.partial(
-        query,
-        configs[-1],
-        next_layer=lambda g: ValueError(f"Unable to assign qualities for {g}"),
-    )
+    def fail(grid: Grid, **_kwargs: Any) -> None:
+        e = ValueError("Grid out of bounds of any layer")
+        e.add_note(str(grid))
+        raise e
 
-    for config in reversed(configs[:-1]):
-        pipeline = functools.partial(query, config, next_layer=pipeline)
+    sentinel = SimpleNamespace()
+    sentinel.__call__ = fail
+
+    pipeline = typing.cast(Layer, sentinel)
+
+    for config in reversed(configs):
+        layer_type = layer_from_config(config)
+        pipeline = layer_type(config, pipeline)
 
     return pipeline
-
-
-@functools.singledispatch
-def query(config: Any, grid: Grid, next_layer: Any, **kwargs: Any) -> Qualities:
-    raise ValueError(f'Unsupported layer configuration type: "{type(config)}"')
 
 
 def execute_model_pipeline(

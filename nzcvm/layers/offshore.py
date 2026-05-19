@@ -17,9 +17,6 @@ All distances and depths are in **metres**.
 
 from dataclasses import dataclass
 
-from nzcvm.config.layers.ely import ElyLayerConfig
-
-from nzcvm.layers.pipeline import query
 
 from nzcvm.qualities import Qualities, QualitiesSchema
 from nzcvm import qualities
@@ -38,14 +35,12 @@ from nzcvm.config.layers.offshore import (
     DepthModel,
 )
 
-from typing import Any, Callable, Self
+from typing import Any, Self
 import logging
 
 import numpy as np
 import xarray as xr
 
-from rich.console import Console, ConsoleOptions, RenderResult
-from rich.tree import Tree
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
@@ -54,7 +49,7 @@ from nzcvm.model import ModelRange
 
 import shapely
 from scipy.spatial import KDTree
-from numba import njit
+from numba import njit, guvectorize
 
 logger = logging.getLogger(__name__)
 
@@ -62,162 +57,6 @@ logger = logging.getLogger(__name__)
 # TODO: An efficiency can be made by observing that exact distances don't have
 # to be calculated for segments > max distance from shoreline. Come back and
 # clean this up with a BVHTree implementation from the rust side.
-
-
-@njit(fastmath=True)
-def _numba_point_to_segments(points: np.ndarray, segments: np.ndarray) -> np.ndarray:
-    """Compute the minimum Euclidean distance from each 2-D point to a set of candidate line segments.
-
-    Uses the analytical projection formula: the closest point on a segment
-    ``AB`` to ``P`` is ``A + t*(B-A)`` where ``t = clamp(dot(P-A, B-A) /
-    dot(B-A, B-A), 0, 1)``.  Compiled by Numba with ``fastmath=True`` so
-    IEEE-754 strict-associativity is relaxed in exchange for speed.
-
-    Parameters
-    ----------
-    points : np.ndarray, shape (N, 2)
-        Query points in projected coordinates (metres, NZTM2000 EPSG:2193).
-    segments : np.ndarray, shape (N, K, 2, 2)
-        ``K`` candidate line segments for each of the ``N`` query points.
-        Axis layout: ``[point_index, segment_index, endpoint_index (0=A/1=B),
-        xy_index]``.
-
-    Returns
-    -------
-    np.ndarray, shape (N,), dtype same as *points*
-        Minimum distance (metres) from each point to its closest candidate
-        segment.  Always ≥ 0.
-    """
-    N = points.shape[0]
-    K = segments.shape[1]
-    min_distances = np.empty(N, dtype=points.dtype)
-
-    for i in range(N):
-        px = points[i, 0]
-        py = points[i, 1]
-
-        best_dist = np.inf
-
-        for j in range(K):
-            ax = segments[i, j, 0, 0]
-            ay = segments[i, j, 0, 1]
-            bx = segments[i, j, 1, 0]
-            by = segments[i, j, 1, 1]
-
-            vx = bx - ax
-            vy = by - ay
-            wx = px - ax
-            wy = py - ay
-
-            # Dot products for projection
-            c1 = wx * vx + wy * vy
-            if c1 <= 0:
-                # Closest to endpoint A
-                dx = px - ax
-                dy = py - ay
-                dist = np.sqrt(dx * dx + dy * dy)
-            else:
-                c2 = vx * vx + vy * vy
-                if c2 <= c1:
-                    # Closest to endpoint B
-                    dx = px - bx
-                    dy = py - by
-                    dist = np.sqrt(dx * dx + dy * dy)
-                else:
-                    # Closest to the segment interior
-                    b = c1 / c2
-                    proj_x = ax + b * vx
-                    proj_y = ay + b * vy
-                    dx = px - proj_x
-                    dy = py - proj_y
-                    dist = np.sqrt(dx * dx + dy * dy)
-
-            if dist < best_dist:
-                best_dist = dist
-
-        min_distances[i] = best_dist
-
-    return min_distances
-
-
-def compute_offshore_distance(
-    x: np.ndarray,
-    y: np.ndarray,
-    coastline: shapely.Geometry,
-    segments: np.ndarray,
-    tree: KDTree,
-    k_neighbours: int = 10,
-) -> np.ndarray:
-    """Compute the distance (metres) from each 2-D point to the nearest coastline segment.
-
-    Points classified as *onshore* (inside the coastline polygon) receive
-    distance ``0.0``.  Points *offshore* receive the Euclidean distance to the
-    nearest segment, found by querying ``k_neighbours`` candidate segment
-    midpoints in a pre-built :class:`~scipy.spatial.KDTree` and then
-    computing the exact analytical distance to those candidates via
-    :func:`_numba_point_to_segments`.
-
-    Parameters
-    ----------
-    x_flat : np.ndarray, shape (N,)
-        Easting coordinates in NZTM2000 (EPSG:2193), metres.
-    y_flat : np.ndarray, shape (N,)
-        Northing coordinates in NZTM2000 (EPSG:2193), metres.
-    coastline : shapely.Geometry
-        Prepared Shapely polygon (or multi-polygon) representing the land
-        boundary.  Must already have been prepared with
-        :func:`shapely.prepare` for vectorised containment checks.
-    segments : np.ndarray, shape (S, 2, 2)
-        All coastline line segments as ``[start_xy, end_xy]`` pairs, in
-        metres.  Produced by decomposing the coastline boundary ring(s).
-    tree : KDTree
-        KD-tree of segment midpoints (shape ``(S, 2)``), used to retrieve
-        the ``k_neighbours`` nearest candidate segments quickly.
-    max_distance : float
-        The maximum distance to return from the tree. This is useful for basin
-        model considerations where basin depth is saturated with distance.
-    k_neighbours : int, optional
-        Number of nearest segment midpoints to retrieve from *tree* before
-        computing exact distances.  Default ``10``; clamped to
-        ``len(segments)`` if fewer segments exist.
-
-    Returns
-    -------
-    np.ndarray, shape (N,), dtype same as *x_flat*
-        Distance (metres) from each input point to the nearest coastline
-        segment.  Onshore points return ``0.0``.
-    """
-    x_shape = x.shape
-    x_flat = x.ravel()
-    y_flat = y.ravel()
-    is_onshore = shapely.contains_xy(coastline, x_flat, y_flat)
-
-    distances = np.zeros(len(x_flat), dtype=x_flat.dtype)
-    offshore_mask = ~is_onshore
-
-    if np.any(offshore_mask):
-        offshore_x = x_flat[offshore_mask]
-        offshore_y = y_flat[offshore_mask]
-        offshore_pts = np.column_stack((offshore_x, offshore_y))
-
-        logger.debug("Looking up nearest segments in KDTree")
-        K = min(k_neighbours, len(segments))
-        _, idxs = tree.query(offshore_pts, k=K)
-
-        # Ensure idxs is always 2-D so segment indexing is uniform.
-        if K == 1:
-            idxs = idxs[:, np.newaxis]
-
-        # Shape: (NumOffshorePoints, K, 2 endpoints, 2 coordinates)
-        candidate_segments = segments[idxs]
-
-        logger.debug("Calculating exact analytical distance via Numba")
-        distances[offshore_mask] = _numba_point_to_segments(
-            offshore_pts, candidate_segments
-        ).astype(x_flat.dtype)
-        logger.debug("Distance calculation complete")
-
-    return distances.reshape(x_shape)
 
 
 def step_interpolator(
@@ -278,36 +117,81 @@ def _build_model_interpolator(
     return top_depths, model_qualities
 
 
+@guvectorize(
+    ["void(float32[:], float32[:], float32[:,:], float32[:])"],
+    "(d),(),(s,d)->()",  # Update the layout here
+    nopython=True,
+    fastmath=True,
+)
+def _signed_segment_distance(point, distance, candidates, out):
+    cross_product = (candidates[1, 0] - candidates[0, 0]) * (
+        point[1] - candidates[0, 1]
+    ) - (candidates[1, 1] - candidates[0, 1]) * (point[0] - candidates[0, 0])
+
+    out[0] = 0.0 if cross_product >= 0.0 else distance[0]
+
+
 @dataclass(frozen=True)
 class Coastline:
-    """Encapsulates the geometry, segments, and spatial index for distance calculations."""
+    """Encapsulates geometry arrays and a thread-safe STRtree for exact distance metrics."""
 
-    coastline: shapely.Geometry
     segments: np.ndarray  # shape: (S, 2, 2)
-    tree: KDTree
+    # TODO: Replace with geo-index to remove overhead creating points in the _compute_chunk_dist
+    # Requires https://github.com/georust/geo-index/issues/150 to be fixed.
+    tree: shapely.STRtree
 
     @classmethod
     def build(cls, coastline_path: Path) -> Self:
         coastline = _read_compressed_shapely_wkb(coastline_path)
-        shapely.prepare(coastline)
+
         segments = _extract_segments(coastline).astype(np.float32)
-        midpoints = segments.mean(axis=1)
-        tree = KDTree(midpoints)
-        return cls(coastline, segments, tree)
+
+        lines = [shapely.geometry.LineString(seg) for seg in segments]
+        tree = shapely.STRtree(lines)
+
+        return cls(segments=segments, tree=tree)
 
     def distance(self, x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
+        """
+        Calculates offshore signed distance fields using an immutable STRtree
+        and a fast Numba vector backend.
+        """
+
+        def _compute_chunk_dist(x_chunk, y_chunk):
+            orig_shape = x_chunk.shape
+            x_flat = x_chunk.ravel()
+            y_flat = y_chunk.ravel()
+
+            # 1. Pack into Shapely points array for spatial query
+            pts = shapely.points(x_flat, y_flat)
+
+            # 2. Immutable broad-phase lookup: Find the single NEAREST segment
+            # index for every single point in the chunk.
+            logger.debug("Querying thread-safe STRtree for nearest segments")
+            nearest_idx, distance = self.tree.query_nearest(
+                pts, return_distance=True, all_matches=False
+            )
+            nearest_idx = nearest_idx[0]
+            distance = distance.astype(np.float32)
+
+            candidate_segments = self.segments[nearest_idx]
+            pts_array = np.column_stack((x_flat, y_flat))
+
+            logger.debug("Executing Numba analytical projection loop")
+            distances_flat = _signed_segment_distance(
+                pts_array, distance, candidate_segments
+            )
+
+            return distances_flat.reshape(orig_shape)
+
         return xr.apply_ufunc(
-            compute_offshore_distance,
+            _compute_chunk_dist,
             x,
             y,
-            kwargs=dict(
-                coastline=self.coastline,
-                segments=self.segments,
-                tree=self.tree,
-            ),
             input_core_dims=[[], []],
             output_core_dims=[[]],
             output_dtypes=[x.dtype],
+            dask="parallelized",  # Safely multithreaded over Dask blocks
         )
 
 
@@ -363,135 +247,123 @@ class OffshoreModel:
         return QualitiesSchema.from_dataset(dset)
 
 
-def _offshore_taper(
-    grid: Grid,
-    coastline: Coastline,
-    model: OffshoreModel,
-    next_layer: Callable[..., Qualities],
-    **kwargs: Any,
-) -> xr.Dataset:
-    """Apply the offshore taper to a single computed dask chunk.
+class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinConfig):
+    def __init__(self, config: OffshoreBasinConfig, next_layer: Layer):
+        super().__init__(config, next_layer)
+        logger.debug("Building coastline model")
+        self.coastline = Coastline.build(config.coastline)
+        self.model = OffshoreModel.build(config.basin_depth, config.model)
+        self.next_layer = next_layer
 
-    Called by :meth:`__call__` via ``xr.map_blocks``; *chunk* is always
-    a computed (non-lazy) Dataset.  Contains four ordered fast-path
-    guards that short-circuit the expensive distance and quality
-    calculations when possible.
+    def _offshore_taper(
+        self,
+        grid: Grid,
+        **kwargs: Any,
+    ) -> xr.Dataset:
+        """Apply the offshore taper to a single computed dask chunk.
 
-    Parameters
-    ----------
-    chunk : xr.Dataset
-        Computed dataset block with spatial variables ``x``, ``y``,
-        ``depth`` and index dimensions ``i``, ``j``, ``k``.
-    **kwargs
-        Pipeline keyword arguments forwarded to *next_layer*.
+        Called by :meth:`__call__` via ``xr.map_blocks``; *chunk* is always
+        a computed (non-lazy) Dataset.  Contains four ordered fast-path
+        guards that short-circuit the expensive distance and quality
+        calculations when possible.
 
-    Returns
-    -------
-    xr.Dataset
-        Dataset with ``qualities`` DataArray of shape
-        ``(i, j, k, component)``.
-    """
-    # Fast path 1: entire chunk is below the maximum basin depth.
+        Parameters
+        ----------
+        chunk : xr.Dataset
+            Computed dataset block with spatial variables ``x``, ``y``,
+            ``depth`` and index dimensions ``i``, ``j``, ``k``.
+        **kwargs
+            Pipeline keyword arguments forwarded to *next_layer*.
 
-    is_above_model_bottom_depth = grid.depth < model.absolute_bottom
-    if not np.any(is_above_model_bottom_depth):
-        logger.debug("Chunk below maximum basin depth, skipping calculation.")
-        return next_layer(grid, **kwargs)
+        Returns
+        -------
+        xr.Dataset
+            Dataset with ``qualities`` DataArray of shape
+            ``(i, j, k, component)``.
+        """
+        is_above_model_bottom_depth = grid.depth < self.model.absolute_bottom
+        if not np.any(is_above_model_bottom_depth):
+            logger.debug("Chunk below maximum basin depth, skipping calculation.")
+            return self.next_layer(grid, **kwargs)
 
-    # Query basins to obtain the alpha (coverage) field.
-    basin_kwargs = kwargs.copy()
-    basin_kwargs["model_range"] = ModelRange.BASINS
-    basins = next_layer(grid, **basin_kwargs)
+        basin_kwargs = kwargs.copy()
+        basin_kwargs["model_range"] = ModelRange.BASINS
+        basins = self.next_layer(grid, **basin_kwargs)
 
-    # Fast path 2: entire chunk lies inside a fully modelled basin.
-    if np.allclose(basins.alpha, 1.0):
-        logger.debug("Chunk inside modelled basin, skipping offshore calculation.")
-        return basins
+        if np.allclose(basins.alpha, 1.0):
+            logger.debug("Chunk inside modelled basin, skipping offshore calculation.")
+            return basins
 
-    x = grid.x.isel({Coordinate.K: 0})
-    y = grid.y.isel({Coordinate.K: 0})
-    logger.debug("Calculating offshore distances")
-    offshore_distance = coastline.distance(x, y)
-    logger.debug("Offshore distances calculated")
-    is_offshore = offshore_distance > 0
+        x = grid.x.isel({Coordinate.K: 0})
+        y = grid.y.isel({Coordinate.K: 0})
+        logger.debug("Calculating offshore distances")
+        offshore_distance = self.coastline.distance(x, y)
+        logger.debug("Offshore distances calculated")
+        is_offshore = offshore_distance > 0
 
-    basin_depth = model.depth(offshore_distance)
-    # Fast path 3: entire chunk is onshore.
-    if not np.any(is_offshore):
-        logger.debug("Chunk entirely within onshore region, skipping calculation.")
-        return next_layer(grid, **kwargs)
+        basin_depth = self.model.depth(offshore_distance)
 
-    basin_depth, _ = xr.broadcast(basin_depth, grid.depth)
-    is_above_basin = grid.depth < basin_depth
+        if not np.any(is_offshore):
+            logger.debug("Chunk entirely within onshore region, skipping calculation.")
+            return self.next_layer(grid, **kwargs)
 
-    # Fast path 4: entire chunk is below the interpolated basin surface.
-    if not np.any(is_above_basin):
-        logger.debug("Chunk below basin surface, skipping calculation.")
-        return next_layer(grid, **kwargs)
+        basin_depth, _ = xr.broadcast(basin_depth, grid.depth)
+        is_above_basin = grid.depth < basin_depth
 
-    background = next_layer(grid, **kwargs)
-    logger.debug("Assigning basin qualities using offshore basin model")
-    offshore_qualities = model.qualities(grid.depth)
+        if not np.any(is_above_basin):
+            logger.debug("Chunk below basin surface, skipping calculation.")
+            return self.next_layer(grid, **kwargs)
 
-    offshore_blended_qualities = qualities.blend(basins, offshore_qualities)
+        background = self.next_layer(grid, **kwargs)
+        logger.debug("Assigning basin qualities using offshore basin model")
+        offshore_qualities = self.model.qualities(grid.depth)
 
-    return xr.where(
-        is_above_basin & is_offshore,
-        offshore_blended_qualities,
-        background,
-    )
+        offshore_blended_qualities = qualities.blend(basins, offshore_qualities)
 
+        return xr.where(
+            is_above_basin & is_offshore,
+            offshore_blended_qualities,
+            background,
+        )
 
-@query.register
-def query(
-    config: OffshoreBasinConfig,
-    grid: Grid,
-    next_layer: Callable[..., Qualities],
-    **kwargs: Any,
-) -> Qualities:
-    """Apply the offshore taper to *block* and delegate to the next layer.
+    def __call__(
+        self,
+        grid: Grid,
+        **kwargs: Any,
+    ) -> Qualities:
+        """Apply the offshore taper to *block* and delegate to the next layer.
 
-    Dispatches to :meth:`_offshore_taper` via ``xr.map_blocks`` so the
-    calculation is deferred until the dask graph is executed.  A
-    block-level fast-path check avoids even scheduling the per-chunk
-    work if the block's ``minimum_top_depth`` attribute indicates it lies
-    entirely below the maximum basin depth.
+        Dispatches to :meth:`_offshore_taper` via ``xr.map_blocks`` so the
+        calculation is deferred until the dask graph is executed.  A
+        block-level fast-path check avoids even scheduling the per-chunk
+        work if the block's ``minimum_top_depth`` attribute indicates it lies
+        entirely below the maximum basin depth.
 
-    Parameters
-    ----------
-    block : xr.Dataset
-        Dask-backed dataset with spatial variables ``x``, ``y``,
-        ``depth`` and index dimensions ``i``, ``j``, ``k``.
-        Must have a ``minimum_top_depth`` attribute (metres, positive
-        downward) set by the upstream grid-construction step.
-    **kwargs
-        Pipeline keyword arguments forwarded to *next_layer* and to
-        ``xr.map_blocks``.
+        Parameters
+        ----------
+        block : xr.Dataset
+            Dask-backed dataset with spatial variables ``x``, ``y``,
+            ``depth`` and index dimensions ``i``, ``j``, ``k``.
+            Must have a ``minimum_top_depth`` attribute (metres, positive
+            downward) set by the upstream grid-construction step.
+        **kwargs
+            Pipeline keyword arguments forwarded to *next_layer* and to
+            ``xr.map_blocks``.
 
-    Returns
-    -------
-    xr.Dataset
-        Dataset with ``qualities`` DataArray of shape
-        ``(i, j, k, component)`` and a ``component`` coordinate.
-    """
+        Returns
+        -------
+        xr.Dataset
+            Dataset with ``qualities`` DataArray of shape
+            ``(i, j, k, component)`` and a ``component`` coordinate.
+        """
 
-    model = OffshoreModel.build(config.basin_depth, config.model)
+        if grid.depth_min.compute() >= self.model.absolute_bottom:
+            return self.next_layer(grid, **kwargs)
 
-    if grid.depth_min.compute() >= model.absolute_bottom:
-        return next_layer(grid, **kwargs)
+        dset = grid.map_blocks(
+            self._offshore_taper,
+            kwargs=kwargs,
+            template=qualities.template_like(grid.x),
+        )
 
-    coastline = Coastline.build(config.coastline)
-
-    dset = grid.map_blocks(
-        functools.partial(
-            _offshore_taper,
-            config=config,
-            coastline=coastline,
-            model=model,
-            next_layer=next_layer,
-        ),
-        kwargs=kwargs,
-        template=qualities.template_like(grid.x),
-    )
-
-    return QualitiesSchema.from_dataset(dset)
+        return QualitiesSchema.from_dataset(dset)

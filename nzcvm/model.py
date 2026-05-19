@@ -14,7 +14,6 @@ nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
 nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
-import uuid
 
 from dataclasses import dataclass
 from enum import Enum
@@ -35,7 +34,6 @@ from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 from nzcvm.components import Component
 
-import weakref
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)

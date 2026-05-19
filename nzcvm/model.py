@@ -14,6 +14,8 @@ nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
 nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
+import uuid
+
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -393,24 +395,17 @@ class ModelTree:
 
     _store: ClassVar[dict[int, PyModelTree]] = dict()
 
-    @property
-    def _raw(self) -> PyModelTree:
-        return ModelTree._store[self._key]
-
     def __init__(
         self,
         internal: PyModelTree | list[MeshModel],
         model_map: dict[int, str] | None = None,
     ):
+        self.model_map = model_map
         if isinstance(internal, list):
             raw_list = [m._raw for m in internal]
             internal = nzcvm.model_tree(raw_list)
 
-        self._key = id(internal)
-
-        ModelTree._store[self._key] = internal
-
-        self.model_map = model_map or dict()
+        self._raw = internal
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
@@ -619,6 +614,7 @@ class ModelTree:
         params = QueryParams(lo, hi)
         logger.debug("Querying for chunk qualities for range: %s.", model_range)
         buf = self._raw.query_many(x.ravel(), y.ravel(), z.ravel(), params)
+        logger.debug("Query complete")
         return buf.reshape(orig_shape + (6,))
 
     def query_many(
@@ -702,61 +698,70 @@ class ModelTree:
         """Render the model tree as a rich tree for ``rich.print``."""
         yield self.view()
 
-    # def __del__(self):
-    #     ModelTree._store.pop(self._key, None)
-
 
 def _mesh_model_from_pyvista(
     mesh_model: pv.UnstructuredGrid, name: str | None = None
 ) -> Any:
-    """Build a PyMeshModel from a pyvista UnstructuredGrid.
+    """Build a PyMeshModel from a pyvista UnstructuredGrid with strict memory isolation."""
 
-    Priority is a model-level scalar stored in ``field_data["priority"]``.
-    If *name* is not supplied the function falls back to
-    ``field_data["name"]`` when present.
-    """
-    # Extract connectivity and wrap in asarray
-    connectivity = np.asarray(mesh_model.cells_dict[np.uint8(pv.CellType.TETRA)])
+    # 1. Connectivity Matrix
+    # Using np.copy ensures a brand new allocation, avoiding raw VTK cell dict tracking.
+    connectivity = np.array(
+        mesh_model.cells_dict[np.uint8(pv.CellType.TETRA)], dtype=np.uint64
+    )
+    connectivity = np.ascontiguousarray(connectivity)
 
-    # Convert cell_data attributes
-    types = np.asarray(mesh_model.cell_data["model_type"])
-    model_idx = np.asarray(mesh_model.cell_data["models"]).ravel().astype(np.uint64)
+    # 2. Cell Data (Types and Model Indices)
+    types = np.array(mesh_model.cell_data["model_type"]).copy(order="C")
 
-    # Convert field_data attributes
-    rho = np.asarray(mesh_model.field_data["rho"])
-    vp = np.asarray(mesh_model.field_data["vp"])
-    vs = np.asarray(mesh_model.field_data["vs"])
-    qp = np.asarray(mesh_model.field_data["qp"])
-    qs = np.asarray(mesh_model.field_data["qs"])
-    alpha = np.asarray(mesh_model.field_data["alpha"])
+    # CRITICAL FIX: Changed .ravel() to .flatten() because flatten() GUARANTEES a copy.
+    model_idx = (
+        np.array(mesh_model.cell_data["models"]).flatten().astype(np.uint64, order="C")
+    )
 
-    # Stack into qualities matrix
-    qualities = np.c_[rho, vp, vs, qp, qs, alpha]
+    # 3. Field Data (Material Qualities)
+    # Extract them cleanly. astype(np.float32) will create a copy if they aren't float32.
+    # To be absolutely safe, we enforce a contiguous copy right here.
+    rho = np.ascontiguousarray(mesh_model.field_data["rho"], dtype=np.float32)
+    vp = np.ascontiguousarray(mesh_model.field_data["vp"], dtype=np.float32)
+    vs = np.ascontiguousarray(mesh_model.field_data["vs"], dtype=np.float32)
+    qp = np.ascontiguousarray(mesh_model.field_data["qp"], dtype=np.float32)
+    qs = np.ascontiguousarray(mesh_model.field_data["qs"], dtype=np.float32)
+    alpha = np.ascontiguousarray(mesh_model.field_data["alpha"], dtype=np.float32)
 
-    # Handle priority scalar
+    # np.c_ allocations create a brand new stacked array,
+    # but we add .copy() to force an absolute standalone contiguous C-block.
+    qualities = np.c_[rho, vp, vs, qp, qs, alpha].copy(order="C")
+
+    # 4. Handle Priority Scalar
     if "priority" not in mesh_model.field_data:
         priority = np.uint8(255)
     else:
-        # field_data is often stored as a single-element array in PyVista
-        priority = np.uint8(np.asarray(mesh_model.field_data["priority"])[0])
+        # Convert to a standard Python scalar or decoupled numpy scalar
+        priority = np.uint8(np.array(mesh_model.field_data["priority"])[0])
 
-    # Resolve name: caller-supplied > field_data["name"] > None
+    # 5. Resolve Name (Strings copy automatically when manipulated)
     if name is None and "name" in mesh_model.field_data:
         raw_names = mesh_model.field_data["name"]
         if len(raw_names) > 0:
             name = str(raw_names[0])
 
-    # Handle transform if it exists
+    # 6. Handle Transform Matrix
     transform = mesh_model.field_data.get("transform")
     if transform is not None:
-        transform = np.asarray(transform)
+        transform = np.array(transform, dtype=np.float32).copy(order="C")
 
+    # 7. Points Matrix
+    # Extract points, force float32 conversion, and ensure a completely clean memory layout.
+    points = np.array(mesh_model.points, dtype=np.float32).copy(order="C")
+
+    # Return the clean Rust/C binding initialization using pristine, decoupled pointers
     return nzcvm.mesh_model(
-        np.asarray(mesh_model.points).astype(np.float32),
-        connectivity.astype(np.uint64),
+        points,
+        connectivity,
         types,
         model_idx,
-        qualities.astype(np.float32),
+        qualities,
         priority,
         transform,
         name,

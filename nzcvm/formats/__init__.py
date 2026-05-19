@@ -8,9 +8,8 @@ to the appropriate writer.
 from enum import StrEnum, auto
 from pathlib import Path
 
-import xarray as xr
 
-from . import emod3d, sfile, netcdf, quantise
+from . import emod3d, sfile, datatree
 
 
 class Format(StrEnum):
@@ -71,7 +70,7 @@ def from_path(path: Path) -> Format:
 
 
 def write_velocity_model(
-    velocity_model: xr.DataTree,
+    velocity_model: VelocityModel,
     path: Path,
     format: Format,
     quantise_arrays: bool = True,
@@ -96,10 +95,6 @@ def write_velocity_model(
         raise ValueError(
             "Lossy array quantisation is only supported with the NetCDF format."
         )
-    elif quantise_arrays:
-        velocity_model = quantise.apply_compression(
-            velocity_model, quantise.DEFAULT_PRECISION
-        )
 
     match format:
         case Format.EMOD3D:
@@ -107,9 +102,6 @@ def write_velocity_model(
         case Format.SFILE:
             sfile.to_sfile(velocity_model, path)
         case Format.NETCDF:
-            netcdf.to_netcdf(
-                velocity_model,
-                path,
-            )
+            datatree.to_netcdf(velocity_model, path, quantise_arrays)
         case Format.ZARR:
-            velocity_model.to_zarr(path, mode="w")
+            datatree.to_zarr(velocity_model, path)

@@ -20,11 +20,7 @@ Layer types
     Converts depth-below-surface to absolute elevation via a surface mesh.
 """
 
-from nzcvm.layers.query import QueryLayer
-from nzcvm.layers.clamp import ClampLayer
-from nzcvm.layers.ely import ElyTaperLayer
-from nzcvm.layers.offshore import OffshoreBasinLayer
-from nzcvm.layers.core import Layer
+from nzcvm.layers import ely, clamp, offshore, query
 
 
-__all__ = ["ClampLayer", "ElyTaperLayer", "QueryLayer", "OffshoreBasinLayer", "Layer"]
+__all__ = ["ely", "clamp", "offshore", "query"]

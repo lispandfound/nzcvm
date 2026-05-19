@@ -395,7 +395,9 @@ mod nzcvm {
             if ys.len() != n || zs.len() != n {
                 return Err(PyValueError::new_err(format!(
                     "x, y, z must have the same length; got x={}, y={}, z={}",
-                    n, ys.len(), zs.len(),
+                    n,
+                    ys.len(),
+                    zs.len(),
                 )));
             }
             let mut buf = Array2::<Real>::zeros((n, 6));

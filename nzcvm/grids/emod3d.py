@@ -1,11 +1,11 @@
-from nzcvm.grids.builder import GridBuilder
+from nzcvm.grids.builder import build_grids_from_config
 from collections.abc import Callable
 from nzcvm.surface import read_surface_from_path
 from nzcvm.coordinates import Coordinate
 from nzcvm import coordinates
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.grids import helpers
-from nzcvm.grids.grid import Grid
+from nzcvm.grids.grid import Grid, GridSchema
 
 import xarray as xr
 import numpy as np
@@ -22,7 +22,7 @@ def squashed_interpolator(z_surface: xr.DataArray, depth: xr.DataArray) -> xr.Da
 def squashed_tapered_interpolator(
     z_surface: xr.DataArray, depth: xr.DataArray
 ) -> xr.DataArray:
-    squashed_tapered_z = z_surface - 2 * depth
+    squashed_tapered_z = z_surface - np.float32(2) * depth
     return squashed_tapered_z.where(squashed_tapered_z > -z_surface, -depth)
 
 
@@ -38,56 +38,65 @@ def _topography_type_interpolator(
 
 def _depth_array(nk: int, resolution: float, chunks: int) -> xr.DataArray:
     k = np.arange(nk, dtype=np.float32)
-    offset = 1 / (2 * resolution)
+    offset = np.float32(1 / (2 * resolution))
     k_da = xr.DataArray(
-        offset + k * resolution,
+        offset + k * np.float32(resolution),
         dims=[Coordinate.K],
         coords=dict({Coordinate.K: k}),
     )
     return k_da.chunk({Coordinate.K: chunks})
 
 
-class EMOD3DGridBuilder(GridBuilder, config_cls=EMOD3DGrid):
-    def __init__(self, config: EMOD3DGrid):
-        self.topographic_surface = read_surface_from_path(config.surface)
-        self.config = config
+@build_grids_from_config.register
+def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
+    resolution = config.resolution
+    offset = 1 / (2 * resolution)
 
-    def build(self) -> dict[str, Grid]:
-        config = self.config
-        resolution = config.resolution
-        offset = 1 / (2 * resolution)
+    ox, oy = helpers.raw_coordinates(
+        config.ni,
+        config.nj,
+        config.resolution,
+        offset,
+        config.chunks,
+    )
 
-        ox, oy = helpers.raw_coordinates(
-            config.ni,
-            config.nj,
-            config.resolution,
-            offset,
-            config.chunks,
-        )
+    transform = helpers.affine_transformation(
+        config.origin_crs,
+        config.target_crs,
+        config.origin_lon,
+        config.origin_lat,
+        config.azimuth,
+    )
 
-        transform = helpers.affine_transformation(
-            config.origin_crs,
-            config.target_crs,
-            config.origin_lon,
-            config.origin_lat,
-            config.azimuth,
-        )
+    # Physical coordinates via affine transform.
+    x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
 
-        # Physical coordinates via affine transform.
-        x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
+    topographic_surface = read_surface_from_path(config.surface)
+    z_surface = helpers.compute_surface_elevation(topographic_surface, x_phys, y_phys)
 
-        z_surface = helpers.compute_surface_elevation(
-            self.topographic_surface, x_phys, y_phys
-        )
+    interpolator = _topography_type_interpolator(config.topo_type)
 
-        interpolator = _topography_type_interpolator(config.topo_type)
+    depth = _depth_array(config.nk, config.resolution, config.chunks[Coordinate.K])
 
-        depth = _depth_array(config.nk, config.resolution, config.chunks[Coordinate.K])
+    z_phys = interpolator(z_surface, depth)
 
-        z_phys = interpolator(z_surface, depth)
+    z_min = z_phys.isel({Coordinate.K: 0}).min()
+    z_max = z_phys.isel({Coordinate.K: -1}).max()
 
-        grid = helpers.make_grid(
-            x_phys, y_phys, z_phys, depth, name=GRID_NAME, resolution=resolution
-        )
+    depth_min = resolution / 2
+    depth_max = (config.nk - 1 / 2) * resolution
 
-        return {grid.name: grid}
+    grid = GridSchema.new(
+        x_phys,
+        y_phys,
+        z_phys,
+        depth,
+        z_min=z_min,
+        z_max=z_max,
+        depth_min=depth_min,
+        depth_max=depth_max,
+        name=GRID_NAME,
+        resolution=resolution,
+    )
+
+    return {grid.name: grid}

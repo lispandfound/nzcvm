@@ -9,7 +9,6 @@ from nzcvm.config.layers import LayerConfig
 from typing import TypeVar, Any
 from abc import ABC, abstractmethod
 
-import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 
 

@@ -11,7 +11,7 @@ class ElyLayerConfig(LayerConfig):
     ----------
     vs30 :
         Path to the Vs30 surface file.
-    z_t :
+    depth_t :
         Taper depth in metres (default ``450.0``).
 
     Examples
@@ -25,5 +25,5 @@ class ElyLayerConfig(LayerConfig):
     """
 
     vs30: Path
-    z_t: float = 450.0
+    depth_t: float = 450.0
     type: str = "ely"

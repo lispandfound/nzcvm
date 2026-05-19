@@ -1188,6 +1188,7 @@ dependencies = [
     { name = "tqdm" },
     { name = "typer" },
     { name = "xarray", extra = ["io"] },
+    { name = "xarray-dataclasses" },
     { name = "zarr" },
     { name = "zfpy" },
 ]
@@ -1223,6 +1224,7 @@ requires-dist = [
     { name = "tqdm", specifier = ">=4.67.3" },
     { name = "typer", specifier = ">=0.24.2" },
     { name = "xarray", extras = ["io"], specifier = ">=2026.2.0" },
+    { name = "xarray-dataclasses", specifier = ">=1.10.0" },
     { name = "zarr", specifier = ">=3.1.6" },
     { name = "zfpy", specifier = ">=1.0.1" },
 ]
@@ -2309,6 +2311,20 @@ io = [
     { name = "pydap" },
     { name = "scipy" },
     { name = "zarr" },
+]
+
+[[package]]
+name = "xarray-dataclasses"
+version = "1.10.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy" },
+    { name = "typing-extensions" },
+    { name = "xarray" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/eb/e7/bcd2e3a825634fa8d335dc68a38a76933b9b61d639f117404203d25861cd/xarray_dataclasses-1.10.0.tar.gz", hash = "sha256:c0d2f301f9457863946eb7f2973da4c554735a8751df48ce16653ea98c702c5f", size = 90800, upload-time = "2026-02-20T02:47:15.822Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1d/a1/b07545c7cbf8f3e9915ac74efad54d11b074d5982a84e55280e4e1f40219/xarray_dataclasses-1.10.0-py3-none-any.whl", hash = "sha256:7409b40898ac836ac1d8989ab24e1fd7636c3361d36b1614e6e504df19a87dd4", size = 15231, upload-time = "2026-02-20T02:47:14.632Z" },
 ]
 
 [[package]]

@@ -1,4 +1,6 @@
+from nzcvm.velocity_model import VelocityModel
 from typing import Any
+from nzcvm.formats import quantise
 from enum import Enum
 import xarray as xr
 from pathlib import Path
@@ -60,9 +62,18 @@ def _normalise_dataset_attributes(dset: xr.Dataset) -> xr.Dataset:
     return dset
 
 
-def to_netcdf(velocity_model: xr.DataTree, path: Path):
-    """Writes the DataTree to Zarr using ZFP compression."""
+def to_netcdf(
+    velocity_model: VelocityModel, path: Path, quantise_arrays: bool = True
+) -> None:
     hdf5plugin.register(("zfp", "blosc"))
-    velocity_model = velocity_model.map_over_datasets(_normalise_dataset_attributes)
-    velocity_model = velocity_model.map_over_datasets(_translate_compressor_to_hdf5)
-    velocity_model.to_netcdf(path, engine="h5netcdf", mode="w")
+    dtree = velocity_model.to_datatree()
+    dtree = dtree.map_over_datasets(_normalise_dataset_attributes)
+    if quantise_arrays:
+        dtree = quantise.apply_compression(dtree, settings=quantise.DEFAULT_PRECISION)
+        dtree = dtree.map_over_datasets(_translate_compressor_to_hdf5)
+    dtree.to_netcdf(path, engine="h5netcdf", mode="w")
+
+
+def to_zarr(velocity_model: VelocityModel, path: Path) -> None:
+    dtree = velocity_model.to_datatree()
+    dtree.to_zarr(path, mode="w")

@@ -1,4 +1,3 @@
-from nzcvm.grids import Grid
 from typing import Any
 from nzcvm.coordinates import Affine, Coordinate
 from nzcvm import coordinates
@@ -25,6 +24,7 @@ def affine_transformation(
     Affine
         3×3 affine matrix.
     """
+
     origin_tr = Transformer.from_crs(origin_crs, grid_crs, always_xy=True)
     ox, oy = origin_tr.transform(origin_x, origin_y)
     return coordinates.translate(ox, oy) @ coordinates.rotate(azimuth, ccw=False)
@@ -66,11 +66,13 @@ def raw_coordinates(
     offset: float,
     chunks: dict[Coordinate, int],
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    i = da.arange(ni, chunks=(chunks[Coordinate.I]), dtype=np.float32)
-    j = da.arange(nj, chunks=(chunks[Coordinate.J]), dtype=np.float32)
 
-    xi = offset + i * resolution
-    xj = offset + j * resolution
+    i = np.arange(ni)
+    j = np.arange(nj)
+    xi_raw = (offset + i * resolution).astype(np.float32)
+    yi_raw = (offset + j * resolution).astype(np.float32)
+    xi = da.from_array(xi_raw, chunks=(chunks[Coordinate.I]))
+    xj = da.from_array(yi_raw, chunks=(chunks[Coordinate.J]))
 
     x_raw, y_raw = da.meshgrid(
         xi,
@@ -88,10 +90,3 @@ def raw_coordinates(
         coords={Coordinate.I: i, Coordinate.J: j},
     )
     return x_da, y_da
-
-
-def make_grid(x, y, z, depth, resolution, name) -> Grid:
-    dset = xr.Dataset(
-        dict(x=x, y=y, z=z, depth=depth), attrs=dict(resolution=resolution, name=name)
-    )
-    return Grid.from_dataset(dset)

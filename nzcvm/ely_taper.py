@@ -11,12 +11,13 @@ A Vs30-derived near-surface seismic velocity model.
 *Abstracts, Annual Meeting of the Southern California Earthquake Center*, 174.
 """
 
+from nzcvm.qualities import Qualities, QualitiesSchema
+
 import functools
 
 import numpy as np
 import xarray as xr
 
-from nzcvm.components import Component
 
 # Brocher Vp/Vs relations, converted to accept and return m/s instead of km/s using sympy.
 BROCHER_VP_COEFFS = xr.DataArray(
@@ -37,17 +38,17 @@ DENSITY_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_DENSITY_COEFFS)
 
 
 def ely_vs_profile(
-    z: xr.DataArray,
+    depth: xr.DataArray,
     vs30: xr.DataArray,
     vp_at_z_t: xr.DataArray,
     vs_at_z_t: xr.DataArray,
-    z_t: float,
-) -> xr.DataArray:
+    depth_t: float,
+) -> Qualities:
     """Compute the Ely GTL Vs profile at depths ``z``.
 
     Parameters
     ----------
-    z :
+    depth :
         Depth values (metres, positive downwards) for which to compute Vs.
         Values must satisfy ``0 <= z <= z_t``.
     vs30 :
@@ -63,10 +64,10 @@ def ely_vs_profile(
     DataArray
         Ely GTL computed velocities and densities.
     """
-    z_norm = z / z_t
-    z_norm_sq = np.square(z_norm)
-    f = z_norm + (2 / 3) * (z_norm - z_norm_sq)
-    g = 0.5 - 5 * z_norm + 1.5 * z_norm_sq + 3 * np.sqrt(z_norm)
+    depth_norm = depth / depth_t
+    depth_norm_sq = np.square(depth_norm)
+    f = depth_norm + (2 / 3) * (depth_norm - depth_norm_sq)
+    g = 0.5 - 5 * depth_norm + 1.5 * depth_norm_sq + 3 * np.sqrt(depth_norm)
 
     vs = f * vs_at_z_t + g * vs30
     vp_from_vs30 = VP_FROM_VS_RELATION(vs30)
@@ -75,18 +76,5 @@ def ely_vs_profile(
     qp = xr.full_like(rho, 100.0)
     qs = xr.full_like(rho, 50.0)
     alpha = xr.full_like(rho, 1.0)
-    # Build the output array. np.stack dispatches to da.stack when the
-    # component arrays are Dask-backed (numpy __array_function__ protocol),
-    # so this works correctly for both numpy and Dask inputs.
-    # Compared to the previous 6x expand_dims + xr.concat approach, which
-    # produces 1.67x more Dask tasks and 11x slower graph construction per
-    # call, a single stack node has constant scheduler overhead regardless
-    # of the number of components.
-    qualities_arrays = [rho, vp, vs, qp, qs, alpha]
-    stacked = np.stack([a.data for a in qualities_arrays], axis=-1)
-    darr = xr.DataArray(
-        stacked,
-        dims=[*rho.dims, "component"],
-        coords={"component": list(Component)},
-    )
-    return darr
+
+    return QualitiesSchema.new(rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha)

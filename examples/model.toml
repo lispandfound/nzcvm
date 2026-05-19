@@ -7,8 +7,8 @@ references = []
 type = "sw4"
 surface = "dem.vtk"
 # 100km by 100km
-extent_x = 600000.0
-extent_y = 275000.0
+extent_x = 60000.0
+extent_y = 27500.0
 azimuth = 40.0
 target_crs = 2193
 # origin_lon = 172.5970
@@ -29,17 +29,17 @@ resolution = 100.0
 bottom = 3500.0
 deformation = 0.0
 
-[grid.refinements.next_layer]
-resolution = 100.0
-bottom = 10000.0
-deformation = 0.0
+# [grid.refinements.next_layer]
+# resolution = 100.0
+# bottom = 10000.0
+# deformation = 0.0
 
 
 
 [grid.chunks]
 i = 256
 j = 256
-k = 256
+k = 128
 
 [[layers]]
 type = "clamp"
@@ -99,7 +99,7 @@ simplification_tolerance = 100.0
 [[layers]]
 type = "ely"
 vs30 = "./vs30.vtk"
-z_t = 450.0
+depth_t = 450.0
 
 [[layers]]
 type = "query"

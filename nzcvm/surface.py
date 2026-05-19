@@ -5,8 +5,6 @@ interpolation, used by :class:`nzcvm.layers.DepthTransformLayer` to
 convert depth-below-surface coordinates into absolute elevations.
 """
 
-from typing import ClassVar
-
 from pathlib import Path
 
 import numpy as np
@@ -44,18 +42,11 @@ class Surface:
 
     bounds: np.ndarray
     n_points: int
-    _key: int
-    _store: ClassVar[dict[int, PySurfaceModel]] = dict()
 
     def __init__(self, mesh: PySurfaceModel, bounds: np.ndarray, n_points: int) -> None:
         self.bounds = bounds
         self.n_points = n_points
-        self._key = id(mesh)
-        Surface._store[self._key] = mesh
-
-    @property
-    def _inner(self) -> PySurfaceModel:
-        return Surface._store[self._key]
+        self._inner = mesh
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -101,11 +92,13 @@ def build_surface_interpolator(mesh_data: pv.StructuredGrid) -> Surface:
     surf = mesh_data.extract_surface(algorithm="dataset_surface").triangulate()
 
     logger.debug("Building vertices and faces")
-    z = surf.points[:, 2].astype(np.float32)
-    vertices = surf.points[:, :2].astype(np.float32)
+    # Cast and force an explicit deep copy to isolate memory from VTK
+    z = surf.points[:, 2].astype(np.float32).copy()
+    vertices = surf.points[:, :2].astype(np.float32).copy()
 
     raw_faces = surf.faces.reshape(-1, 4)  # Reshape to (N, 4)
-    faces = raw_faces[:, 1:].astype(np.uint64)  # Drop the padding column (the '3's)
+    # Drop the padding column and copy to ensure a contiguous C-aligned layout
+    faces = raw_faces[:, 1:].astype(np.uint64).copy()
 
     logger.debug("Constructing inner model")
     inner = surface_model(vertices, faces, z)

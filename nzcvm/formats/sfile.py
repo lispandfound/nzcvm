@@ -4,13 +4,18 @@ Writes a multi-grid velocity model in the NZCVM sfile HDF5 format used by
 downstream seismic simulation tools.
 """
 
-from typing import ClassVar
+from pathlib import Path
+
+from nzcvm.velocity_model import VelocityModel
+
 
 import dask.array as da
 import h5py
 import numpy as np
 import threading
 import queue
+from types import SimpleNamespace
+from contextlib import AbstractContextManager
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
@@ -38,13 +43,11 @@ COMPONENT_MAP = {
 SURFACE_GROUP = "Z_interfaces"
 
 
-class AsyncHDF5Writer:
+class AsyncHDF5Writer(AbstractContextManager):
     def __init__(self, filename, max_buffer=10):
         self.queue = queue.Queue(maxsize=max_buffer)
         self.filename = filename
         self.stop_event = threading.Event()
-        self.thread = threading.Thread(target=self._write_loop, daemon=True)
-        self.thread.start()
 
     def _write_loop(self):
         # Open the file ONCE in this thread to avoid overhead
@@ -58,58 +61,45 @@ class AsyncHDF5Writer:
                 except queue.Empty:
                     continue
 
-    def enqueue(self, path, key, value):
-        # This blocks compute threads when RAM pressure (queue size) is high
-        self.queue.put((path, key, value))
+    def target(self, datapath: str):
+        # This is just a dummy object that pretends to be a dask storage that
+        # really just defers queueing.
+        target = SimpleNamespace()
+        target.__setitem__ = lambda key, value: self.queue.put((datapath, key, value))
+        return target
 
-    def close(self):
+    def __enter__(self) -> None:
+        self.thread = threading.Thread(target=self._write_loop, daemon=True)
+        self.thread.start()
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.stop_event.set()
         self.thread.join()
 
 
-class HDF5StoreTarget:
-    _handle_registry: ClassVar[dict[str, AsyncHDF5Writer]] = {}
+def to_sfile(velocity_model: VelocityModel, filename: Path):
 
-    def __init__(self, filename: str, datapath: str):
-        self.filename = filename
-        self.datapath = datapath
-
-    @classmethod
-    def register_handle(cls, filename: str):
-        """Ensures a file handle is open and cached in the registry."""
-        if filename not in cls._handle_registry:
-            cls._handle_registry[filename] = AsyncHDF5Writer(filename)
-        return cls._handle_registry[filename]
-
-    @classmethod
-    def close_all(cls):
-        """Clean up handles after the compute is finished."""
-        for filename in list(cls._handle_registry.keys()):
-            handle = cls._handle_registry.pop(filename)
-            handle.close()
-
-    def __setitem__(self, key, value):
-        # This will block if the writer's queue is full
-        self._handle_registry[self.filename].enqueue(self.datapath, key, value)
-
-
-def to_sfile(dtree, filename):
-    grid_group = dtree["/grid"]
-
-    # PHASE 1: Skeleton creation (Same as before)
+    writer = AsyncHDF5Writer(filename)
     with h5py.File(filename, "w") as f:
+        models = sorted(
+            velocity_model.pairwise.values(),
+            key=lambda grid_quality: grid_quality[0].z_min,
+        )
+        top_grid, _ = models[0]
+        global_min = top_grid.z_min
+        bottom_grid, _ = models[-1]
+        global_bottom_val = bottom_grid.z_max
+
         f.attrs.create(
             ORIGIN_AZIM_ATTR,
-            data=[
-                grid_group.attrs["origin_lon"],
-                grid_group.attrs["origin_lat"],
-                grid_group.attrs["azimuth"],
-            ],
+            data=[top_grid.origin_lon, top_grid.origin_lat, top_grid.azimuth],
             dtype=np.float64,
         )
 
         f.attrs.create(ATTENUATION_ATTR, data=ATTENUATION, dtype=np.int32)
-        f.attrs.create(NGRIDS_ATTR, data=np.int32(len(dtree["grid"])), dtype=np.int32)
+        f.attrs.create(
+            NGRIDS_ATTR, data=np.int32(len(velocity_model.grids)), dtype=np.int32
+        )
 
         mat_group = f.create_group(MATERIAL_GROUP)
         _surface_group = f.create_group(SURFACE_GROUP)
@@ -117,24 +107,23 @@ def to_sfile(dtree, filename):
         sources = []
         targets = []
 
-        grids = sorted(
-            dtree["grid"].children.values(),
-            key=lambda grid: grid.attrs["minimum_top_depth"],
+        f.attrs.create(
+            MIN_MAX_DEPTH_ATTR, data=[global_min, global_bottom_val], dtype=np.float64
         )
 
-        for i, dataset in enumerate(grids):
+        for i, (grid, qualities) in enumerate(models):
             grid_name = f"grid_{i}"
             grid_h5 = mat_group.create_group(grid_name)
             grid_h5.attrs.update(
                 {
-                    HORIZONTAL_ATTR: float(dataset.attrs["resolution"]),
+                    HORIZONTAL_ATTR: float(grid.resolution),
                     NUMBER_OF_COMPONENTS_ATTR: np.int32(len(COMPONENT_MAP)),
                 }
             )
 
             # Setup Material Model Datasets
             for sfile_name, var_name in COMPONENT_MAP.items():
-                data = dataset["qualities"].sel(component=str(var_name)).data
+                data = qualities[var_name].data
                 ds_path = f"{MATERIAL_GROUP}/{grid_name}/{sfile_name}"
 
                 # Pre-allocate the dataset skeleton
@@ -143,39 +132,24 @@ def to_sfile(dtree, filename):
                 )
 
                 sources.append(data)
-                # Instead of the h5py dataset object, we append our custom target
-                targets.append(HDF5StoreTarget(filename, ds_path))
+                targets.append(writer.target(ds_path))
 
-            # Setup Surface Datasets
             if i == 0:
-                top = dataset[Coordinate.Z].isel({Coordinate.K: 0}).data
+                top = grid.z.isel({Coordinate.K: 0}).data
                 ds_path = f"{SURFACE_GROUP}/z_values_0"
                 f.create_dataset(
                     ds_path, shape=top.shape, chunks=top.chunksize, dtype=top.dtype
                 )
                 sources.append(top)
-                targets.append(HDF5StoreTarget(filename, ds_path))
+                targets.append(writer.target(ds_path))
 
-            bottom = dataset[Coordinate.Z].isel({Coordinate.K: -1}).data
+            bottom = grid.z.isel({Coordinate.K: -1}).data
             ds_path = f"{SURFACE_GROUP}/z_values_{i + 1}"
             f.create_dataset(
                 ds_path, shape=bottom.shape, chunks=bottom.chunksize, dtype=bottom.dtype
             )
             sources.append(bottom)
-            targets.append(HDF5StoreTarget(filename, ds_path))
+            targets.append(writer.target(ds_path))
 
-        global_min = grids[0].attrs["topo_min"]
-        global_bottom_val = grids[-1][Coordinate.Z].isel({Coordinate.K: -1}).data.max()
-
-        global_max = global_bottom_val.compute()
-        f.attrs.create(
-            MIN_MAX_DEPTH_ATTR, data=[global_min, global_max], dtype=np.float64
-        )
-
-    try:
-        HDF5StoreTarget.register_handle(filename)
-
+    with writer:
         da.store(sources, targets, lock=False)
-
-    finally:
-        HDF5StoreTarget.close_all()

@@ -4,6 +4,10 @@ Writes ``rho3dfile.d``, ``vp3dfile.p``, and ``vs3dfile.s`` binary files into
 a directory using memory-mapped I/O via :mod:`numpy.memmap`.
 """
 
+from nzcvm.qualities import Qualities
+
+from nzcvm.velocity_model import VelocityModel
+
 import os
 from pathlib import Path
 
@@ -22,24 +26,21 @@ DTYPE = np.float32
 KM_PER_S = 1 / 1000.0
 
 
-def _prepare_component(qualities: xr.DataArray, component: Component) -> da.Array:
+def _prepare_component(qualities: Qualities, component: Component) -> da.Array:
     contiguous_chunking = {0: "auto", 1: "auto", 2: -1}
     return (
-        qualities.sel(component=component)
+        qualities[component]
         .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
         .data.rechunk(contiguous_chunking)
         * KM_PER_S
     )
 
 
-def to_emod3d(dtree: xr.DataTree, directory: Path):
+def to_emod3d(velocity_model: VelocityModel, directory: Path):
     """Write a single-block velocity model to an EMOD3D binary directory.
 
     Parameters
     ----------
-    dtree :
-        DataTree produced by the query pipeline; must have exactly one child
-        under ``/block``.
     directory :
         Output directory; created if it does not exist.
 
@@ -49,16 +50,15 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
         If *dtree* contains more or fewer than one block.
     """
 
-    grids = [grid.to_dataset() for grid in dtree["grid"].children.values()]
-    resolutions = [grid.attrs["resolution"] for grid in grids]
+    resolutions = [grid.resolution for grid in velocity_model.grids.values()]
 
     if not np.allclose(resolutions, resolutions[0]):
         raise ValueError("EMOD3D format requires exactly one horizontal resolution")
 
-    grid = xr.concat(grids, Coordinate.K, join="outer")
+    qualities = xr.concat(velocity_model.qualities.values(), Coordinate.K, join="outer")
 
-    # Each array has the same size, may as well be the X coordinate
-    file_size = grid[Coordinate.X].nbytes
+    # Each array has the same size, may as well be the rho values
+    file_size = qualities.rho.nbytes
 
     directory.mkdir(parents=True, exist_ok=True)
     with (
@@ -71,9 +71,9 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
         os.posix_fallocate(vs_file.fileno(), 0, file_size)
 
     output_shape = (
-        len(grid[Coordinate.J]),
-        len(grid[Coordinate.I]),
-        len(grid[Coordinate.K]),
+        len(qualities.coords[Coordinate.J]),
+        len(qualities.coords[Coordinate.I]),
+        len(qualities.coords[Coordinate.K]),
     )
 
     rho_target = np.memmap(
@@ -86,20 +86,10 @@ def to_emod3d(dtree: xr.DataTree, directory: Path):
         directory / VSFILE, shape=output_shape, mode="r+", dtype=np.float32
     )
 
-    qualities = grid["qualities"]
     rho_source = _prepare_component(qualities, Component.RHO)
     vp_source = _prepare_component(qualities, Component.VP)
     vs_source = _prepare_component(qualities, Component.VS)
     sources = [rho_source, vp_source, vs_source]
     targets = [rho_target, vp_target, vs_target]
 
-    # TODO (Performance): `da.store(..., lock=True)` uses a single global lock,
-    # serialising writes to rho, vp, and vs files even though they are completely
-    # independent memory-mapped targets.  On NFS, this means only one Dask worker
-    # writes at a time, turning what should be three parallel I/O streams into a
-    # sequential bottleneck.  Replace with per-file threading.Lock() objects (one
-    # per memmap target) and pass them as a list: `da.store(sources, targets,
-    # lock=[rho_lock, vp_lock, vs_lock])`.  With chunk sizes aligned to the NFS
-    # stripe width, each worker will write to a distinct file region without
-    # contention, allowing all three files to be populated concurrently.
     da.store(sources, targets, lock=True)

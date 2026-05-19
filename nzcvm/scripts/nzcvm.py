@@ -20,7 +20,6 @@ import typer
 import logging.config
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 
 from nzcvm import formats
 
@@ -92,17 +91,6 @@ def num_cores() -> int:
         raise RuntimeError("Cannot determine CPU count.")
 
 
-NZCVM_DATA_ROOT = "NZCVM_DATA_ROOT"
-
-
-def determine_model_path() -> Path:
-    """Return the model data root from ``NZCVM_DATA_ROOT`` or the default cache path."""
-    default_root = Path.home() / ".local" / "cache" / "nzcvm_data"
-    env = os.getenv(NZCVM_DATA_ROOT)
-
-    return Path(env) if env else default_root
-
-
 app = typer.Typer(help="NZCVM velocity model toolkit.")
 app.add_typer(construct_mesh.app, name="basin")
 app.add_typer(convert_tomography.app, name="tomography")
@@ -130,12 +118,6 @@ def generate(
         int | None,
         typer.Option(help="Number of threads to spawn to query the model.", min=1),
     ] = None,
-    graph: Annotated[
-        bool, typer.Option(help="If set, export the dask graph for this run.")
-    ] = False,
-    graph_output: Annotated[
-        Path, typer.Option(help="Dask graph output location.")
-    ] = Path("dask_graph.svg"),
     output_format: Annotated[
         formats.Format,
         typer.Option(
@@ -179,29 +161,13 @@ def generate(
         )
 
         velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
-
-        # summary = Table(show_header=False, box=rich.box.SIMPLE)
-        # summary.add_row(
-        #     "Model Title", f"[bold]{velocity_model_spec.metadata.title or 'N/A'}[/bold]"
-        # )
-        # summary.add_row("Refinements", str(len(velocity_model_spec.grid.refinements)))
-        # console.print(summary)
         velocity_model = VelocityModel.from_config(velocity_model_spec)
 
         with console.status("Building layer pipeline"):
             model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
 
         velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
-        # with console.status("Initialising velocity model"):
-        #     velocity_model = skeleton_velocity_model(velocity_model_spec)
-        rich.print(model_pipeline)
 
-        # velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
-        # print(velocity_model)
-        # if graph:
-        #     with console.status("Storing dask graph"):
-        #         export_datatree_graph(velocity_model, graph_output)
-
-        # formats.write_velocity_model(
-        #     velocity_model, output, output_format, quantise_arrays=quantise
-        # )
+        formats.write_velocity_model(
+            velocity_model, output, output_format, quantise_arrays=quantise
+        )

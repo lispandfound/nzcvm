@@ -391,7 +391,7 @@ class ModelTree:
     ModelTree.query_many : Vectorised multi-point query returning an xarray Dataset.
     """
 
-    internal: PyModelTree
+    inner: PyModelTree
     model_map: dict[int, str] | None = None
 
     @classmethod

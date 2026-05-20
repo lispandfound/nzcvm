@@ -133,11 +133,12 @@ def generate(
     # exit_stack.enter_context(LogProgress())
 
     velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
-    logger.debug("Building model pipeline")
-    model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
-    logger.debug("Model pipeline built")
 
     with exit_stack:
+        logger.debug("Building model pipeline")
+        model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
+        logger.debug("Model pipeline built")
+
         velocity_model = VelocityModel.from_config(velocity_model_spec)
         velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
         formats.write_velocity_model(

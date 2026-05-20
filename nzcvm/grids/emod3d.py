@@ -95,12 +95,19 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     depth = _depth_array(config.nz, config.resolution, config.chunks[Coordinate.K])
 
     z_phys, depth = interpolator(z_surface, depth)
-    z_min, z_max, depth_min, depth_max = dask.compute(
-        z_phys.isel({Coordinate.K: 0}).min().data,
-        z_phys.isel({Coordinate.K: -1}).max().data,
-        depth.isel({Coordinate.K: 0}).min().data,
-        depth.isel({Coordinate.K: -1}).max().data,
-    )
+    z_min = z_phys.isel({Coordinate.K: 0}).min().compute()
+    z_max = z_phys.isel({Coordinate.K: -1}).max()
+    thickness = np.float32(config.nz * config.resolution)
+    match config.topo_type:
+        case TopographyType.SQUASHED:
+            depth_min = np.float32(offset)
+            depth_max = np.float32(config.nz * config.resolution - offset)
+        case TopographyType.SQUASHED_TAPERED if thickness > 2 * abs(z_min.item()):
+            depth_min = np.float32(2 * offset)
+            depth_max = np.float32(config.nz * config.resolution - offset)
+        case TopographyType.SQUASHED_TAPERED:
+            depth_min = np.float32(2 * offset)
+            depth_max = np.float32(config.nz * config.resolution - 2 * offset)
 
     trns = pyproj.Transformer.from_crs(
         orientation.origin_crs, WGS84_CRS, always_xy=True

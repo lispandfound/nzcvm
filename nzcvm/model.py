@@ -14,7 +14,6 @@ nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
 nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
-
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -29,7 +28,7 @@ from mashumaro.mixins.dict import DataClassDictMixin
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
-from nzcvm import nzcvm  # ty: ignore[unresolved-import]
+from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
 from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 from nzcvm.components import Component
@@ -370,6 +369,7 @@ class MeshModel:
         yield self.view()
 
 
+@dataclass
 class ModelTree:
     """A velocity model backed by a Rust BVH tree of tetrahedral meshes.
 
@@ -391,19 +391,8 @@ class ModelTree:
     ModelTree.query_many : Vectorised multi-point query returning an xarray Dataset.
     """
 
-    _store: ClassVar[dict[int, PyModelTree]] = dict()
-
-    def __init__(
-        self,
-        internal: PyModelTree | list[MeshModel],
-        model_map: dict[int, str] | None = None,
-    ):
-        self.model_map = model_map
-        if isinstance(internal, list):
-            raw_list = [m._raw for m in internal]
-            internal = nzcvm.model_tree(raw_list)
-
-        self._raw = internal
+    internal: PyModelTree
+    model_map: dict[int, str] | None = None
 
     @classmethod
     def load_models(cls, *models: Path | str) -> Self:
@@ -476,7 +465,7 @@ class ModelTree:
             A pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays
             in the model's coordinate system.
         """
-        return self._raw.aabb()
+        return self.inner.aabb()
 
     def query(
         self,
@@ -509,7 +498,7 @@ class ModelTree:
         ModelTree.get_explanation : Query with per-model contribution details.
         """
         lo, hi = model_range.value
-        quality_dict = self._raw.query(x, y, z, lo, hi)
+        quality_dict = self.inner.query(x, y, z, lo, hi)
         return Quality.from_dict(quality_dict) if quality_dict is not None else None
 
     def query_stats(self, x: Any, y: Any, z: Any) -> QueryStats:
@@ -528,7 +517,7 @@ class ModelTree:
         --------
         ModelTree.query : Query without diagnostics.
         """
-        return QueryStats.from_dict(self._raw.query_stats(x, y, z))
+        return QueryStats.from_dict(self.inner.query_stats(x, y, z))
 
     def get_explanation(self, x: Any, y: Any, z: Any) -> Explanation:
         """Return a full :class:`Explanation` for a single-point query.
@@ -546,7 +535,7 @@ class ModelTree:
         --------
         ModelTree.explain : Pretty-print the explanation to the terminal.
         """
-        return Explanation.from_dict(self._raw.explain(x, y, z))
+        return Explanation.from_dict(self.inner.explain(x, y, z))
 
     def explain(self, x: float, y: float, z: float) -> None:
         """Pretty-print the blending explanation for a query point.
@@ -611,7 +600,7 @@ class ModelTree:
         lo, hi = model_range.value
         params = QueryParams(lo, hi)
         logger.debug("Querying for chunk qualities for range: %s.", model_range)
-        buf = self._raw.query_many(x.ravel(), y.ravel(), z.ravel(), params)
+        buf = self.inner.query_many(x.ravel(), y.ravel(), z.ravel(), params)
         logger.debug("Query complete")
         return buf.reshape(orig_shape + (6,))
 
@@ -661,7 +650,7 @@ class ModelTree:
 
     def view(self) -> Tree:
         """Return a :class:`rich.tree.Tree` representation of the model tree."""
-        data = self._raw.view()
+        data = self.inner.view()
 
         total_size_mb = round(data["size"] * MB)
         tree = Tree(f"Model Tree (Total Size: {total_size_mb:,} MB)")
@@ -689,12 +678,6 @@ class ModelTree:
             branch.add(f"Transform: {transform_str}")
 
         return tree
-
-    def __rich_console__(
-        self, _console: Console, _options: ConsoleOptions
-    ) -> RenderResult:
-        """Render the model tree as a rich tree for ``rich.print``."""
-        yield self.view()
 
 
 def _mesh_model_from_pyvista(

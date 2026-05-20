@@ -5,6 +5,8 @@ interpolation, used by :class:`nzcvm.layers.DepthTransformLayer` to
 convert depth-below-surface coordinates into absolute elevations.
 """
 
+from dataclasses import dataclass
+
 from pathlib import Path
 
 import numpy as np
@@ -13,12 +15,14 @@ import logging
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 from .nzcvm import PySurfaceModel, surface_model
+from nzcvm import registry
 
 DEFAULT_TOLERANCE = 1e-4
 
 logger = logging.getLogger(__name__)
 
 
+@dataclass
 class Surface:
     """A lazily-sampled surface interpolator backed by a PyVista mesh.
 
@@ -40,13 +44,9 @@ class Surface:
     nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
 
+    inner: PySurfaceModel
     bounds: np.ndarray
     n_points: int
-
-    def __init__(self, mesh: PySurfaceModel, bounds: np.ndarray, n_points: int) -> None:
-        self.bounds = bounds
-        self.n_points = n_points
-        self._inner = mesh
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -69,9 +69,22 @@ class Surface:
         logger.debug(f"Calculating z values for x, y (size = {x.size}).")
         pts = np.stack((x.flatten(), y.flatten()), axis=-1)
 
-        z = self._inner.query_many(pts)
+        z = self.inner.query_many(pts)
         logger.debug("Query complete.")
         return z.reshape(x.shape).astype(x.dtype)
+
+    def __getstate__(self):
+        # When standard pickle hits this object, bypass pickling the Rust object
+        state = self.__dict__.copy()
+
+        state["inner"] = registry.pickle_pass(self.inner)
+        return state
+
+    def __setstate__(self, state):
+        # When unpickling, swap the key back for the live object reference
+        self.__dict__.update(state)
+        key = state["inner"]
+        self.inner = registry.REGISTRY[key]
 
     def __rich_console__(
         self, _console: Console, _options: ConsoleOptions

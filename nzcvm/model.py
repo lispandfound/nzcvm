@@ -566,8 +566,10 @@ class ModelTree:
         y: Any,
         z: Any,
         model_range: ModelRange = ModelRange.ALL,
+        out: np.ndarray | None = None,
+        where: Any = None,
     ) -> np.ndarray:
-        """Vectorised query returning a raw float32 array.
+        """Vectorised query returning a raw float32 array (ufunc style).
 
         Parameters
         ----------
@@ -576,13 +578,22 @@ class ModelTree:
         model_range :
             Restricts the query to models whose priority falls within this
             range.  Defaults to :attr:`ModelRange.ALL`.
+        out :
+            Optional pre-allocated float32 array of shape ``(*x.shape, 6)``.
+            Python is responsible for allocation and zeroing.  When provided
+            the results are written into it in-place and it is returned.
+        where :
+            Optional boolean array broadcastable to ``x.shape``.  When
+            provided, only points where the mask is ``True`` are queried;
+            other rows in ``out`` are left unchanged.
 
         Returns
         -------
         numpy.ndarray
             Float32 array of shape ``(*x.shape, 6)`` with columns ordered as
             ``[rho, vp, vs, qp, qs, alpha]``.  Rows for points outside all
-            matching models are zeros.
+            matching models are left as zeros (or unchanged when *out* is
+            provided and *where* masks them out).
 
         See Also
         --------
@@ -597,12 +608,25 @@ class ModelTree:
                 f"got x={x.shape}, y={y.shape}, z={z.shape}"
             )
         orig_shape = x.shape
+        n = x.size
         lo, hi = model_range.value
         params = QueryParams(lo, hi)
+
+        if out is None:
+            out = np.zeros(orig_shape + (6,), dtype=np.float32)
+
+        # Rust expects a C-contiguous (N, 6) buffer with exclusive ownership.
+        out_flat = np.ascontiguousarray(out.reshape(n, 6), dtype=np.float32)
+
+        where_flat: np.ndarray | None = None
+        if where is not None:
+            where_np = np.broadcast_to(np.asarray(where, dtype=bool), orig_shape)
+            where_flat = np.ascontiguousarray(where_np.ravel())
+
         logger.debug("Querying for chunk qualities for range: %s.", model_range)
-        buf = self.inner.query_many(x.ravel(), y.ravel(), z.ravel(), params)
+        self.inner.query_many(out_flat, x.ravel(), y.ravel(), z.ravel(), params, where_flat)
         logger.debug("Query complete")
-        return buf.reshape(orig_shape + (6,))
+        return out_flat.reshape(orig_shape + (6,))
 
     def query_many(
         self,

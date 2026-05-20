@@ -32,31 +32,44 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
     def interpolator(self) -> Surface:
         return ElyLayer._INTERPOLATOR
 
-    def _ely_transform(
+    def __call__(
         self,
         grid: Grid,
+        *,
+        model_range: ModelRange = ModelRange.ALL,
+        out: Any = None,
+        where: Any = None,
         **kwargs: Any,
     ) -> Qualities:
+        """Apply the Ely GTL taper to the concrete chunk *grid*.
+
+        The layer is always called on a computed chunk (``map_blocks`` is
+        hoisted to :func:`~nzcvm.layers.pipeline.execute_model_pipeline`), so
+        all operations use plain NumPy / xarray without creating Dask tasks.
+
+        In-place update via :func:`~nzcvm.qualities.blend` with ``out`` and
+        ``where`` avoids allocating a new array for the final masked merge.
+        """
+        logger.debug("Beginning Ely Taper with model_range=%s", model_range)
+
+        # Fast path: basins-only queries skip Ely entirely.
+        if model_range == ModelRange.BASINS:
+            return self.next_layer(grid, model_range=model_range, **kwargs)
+
         depth_t = self.config.depth_t
-        is_in_taper = grid.depth < depth_t
+        is_in_taper = (grid.depth < depth_t).values  # numpy bool array
 
         # If the whole chunk is below the taper, skip Ely entirely.
         if not np.any(is_in_taper):
             logger.debug("Chunk outside taper, skipping Ely taper calculation.")
-            next = self.next_layer(grid, **kwargs)
-            logger.debug("Passing grid up the chain.")
-            breakpoint()
-            return next
+            return self.next_layer(grid, model_range=model_range, **kwargs)
 
         basins = None
-        if kwargs["model_range"] != ModelRange.TOMOGRAPHY:
-            # Ask the next layer *only* for the basins.
-            basin_kwargs = kwargs.copy()
-            basin_kwargs["model_range"] = ModelRange.BASINS
-            basins = self.next_layer(grid, **basin_kwargs)
+        if model_range != ModelRange.TOMOGRAPHY:
+            basins = self.next_layer(grid, model_range=ModelRange.BASINS, **kwargs)
 
             # Inside basins we don't have to compute the tomography or Ely taper.
-            if np.allclose(basins.alpha, 1.0):
+            if np.allclose(basins.alpha.values, 1.0):
                 logger.debug("Chunk inside basin, skipping Ely taper calculation.")
                 return basins
 
@@ -74,7 +87,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             output_dtypes=[np.float32],
         )
 
-        # Select a z-layer of the block
+        # Select a z-layer of the block.
         # The array [0] as the selection is important because it preserves the k
         # axis for downstream layers.
         surface_layer = grid.isel({Coordinate.K: [0]})
@@ -83,14 +96,13 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         surface_layer[Coordinate.Z] -= surface_layer.depth - depth_t
         surface_layer[Coordinate.DEPTH] = depth_t
 
-        # Calculate bounding taper qualities using *ONLY* the tomography
-        tomo_kwargs = kwargs.copy()
-        tomo_kwargs["model_range"] = ModelRange.TOMOGRAPHY
-
+        # Calculate bounding taper qualities using *only* the tomography.
         # Calling squeeze here drops the phony K dimension we kept around to
         # calculate the qualities at the surface layer.
         logger.debug("Calculating taper qualities")
-        taper_qualities = self.next_layer(surface_layer, **tomo_kwargs).squeeze()
+        taper_qualities = self.next_layer(
+            surface_layer, model_range=ModelRange.TOMOGRAPHY, **kwargs
+        ).squeeze()
 
         ely_qualities = ely_vs_profile(
             safe_depth,
@@ -100,32 +112,18 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             depth_t=depth_t,
         )
 
-        # Blend the basins over the Ely taper.
-        if basins:
-            ely_blended_qualities = qualities.blend(basins, ely_qualities)
+        # Get background for all points in this chunk (becomes the out buffer).
+        background = self.next_layer(grid, model_range=model_range, **kwargs)
+
+        # In-place update: write the ely (or basin-over-ely) blend into
+        # background only where the taper is active.  This is equivalent to
+        # xr.where(is_in_taper, blend(basins, ely), background) but avoids
+        # allocating a new result array.
+        if basins is not None:
+            # blend(basins foreground, ely background) → write into background
+            qualities.blend(basins, ely_qualities, out=background, where=is_in_taper)
         else:
-            ely_blended_qualities = ely_qualities
+            # ely_qualities.alpha == 1.0 everywhere, so blend == ely_qualities.
+            qualities.blend(ely_qualities, background, out=background, where=is_in_taper)
 
-        background = self.next_layer(grid, **kwargs)
-        return xr.where(is_in_taper, ely_blended_qualities, background)
-
-    def __call__(
-        self,
-        grid: Grid,
-        **kwargs: Any,
-    ) -> Qualities:
-        """Apply the Ely taper via Dask map_blocks and delegate downstream."""
-        logger.debug(f"Beginning Ely Taper with kwargs={kwargs}")
-        # Early escape constraints checked up front
-        if (
-            kwargs.get("model_range") == ModelRange.BASINS
-            or grid.depth_min.compute() >= self.config.depth_t
-        ):
-            return self.next_layer(grid, **kwargs)
-
-        dset = grid.map_blocks(
-            self._ely_transform,
-            kwargs=kwargs,
-            template=qualities.template_like(grid.x),
-        )
-        return QualitiesSchema.from_dataset(dset)
+        return background

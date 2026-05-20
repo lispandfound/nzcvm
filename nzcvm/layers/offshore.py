@@ -252,42 +252,32 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         self.model = OffshoreModel.build(config.basin_depth, config.model)
         self.next_layer = next_layer
 
-    def _offshore_taper(
+    def __call__(
         self,
         grid: Grid,
+        *,
+        model_range: ModelRange = ModelRange.ALL,
+        out: Any = None,
+        where: Any = None,
         **kwargs: Any,
     ) -> xr.Dataset:
-        """Apply the offshore taper to a single computed dask chunk.
+        """Apply the offshore taper to the concrete chunk *grid*.
 
-        Called by :meth:`__call__` via ``xr.map_blocks``; *chunk* is always
-        a computed (non-lazy) Dataset.  Contains four ordered fast-path
-        guards that short-circuit the expensive distance and quality
-        calculations when possible.
+        The layer is always called on a computed chunk (``map_blocks`` is
+        hoisted to :func:`~nzcvm.layers.pipeline.execute_model_pipeline`), so
+        all operations use plain NumPy / xarray without creating Dask tasks.
 
-        Parameters
-        ----------
-        chunk : xr.Dataset
-            Computed dataset block with spatial variables ``x``, ``y``,
-            ``depth`` and index dimensions ``i``, ``j``, ``k``.
-        **kwargs
-            Pipeline keyword arguments forwarded to *next_layer*.
-
-        Returns
-        -------
-        xr.Dataset
-            Dataset with ``qualities`` DataArray of shape
-            ``(i, j, k, component)``.
+        In-place update via :func:`~nzcvm.qualities.blend` with ``out`` and
+        ``where`` avoids allocating a new result array for the final masked merge.
         """
-        is_above_model_bottom_depth = grid.depth < self.model.absolute_bottom
+        is_above_model_bottom_depth = (grid.depth < self.model.absolute_bottom).values
         if not np.any(is_above_model_bottom_depth):
             logger.debug("Chunk below maximum basin depth, skipping calculation.")
-            return self.next_layer(grid, **kwargs)
+            return self.next_layer(grid, model_range=model_range, **kwargs)
 
-        basin_kwargs = kwargs.copy()
-        basin_kwargs["model_range"] = ModelRange.BASINS
-        basins = self.next_layer(grid, **basin_kwargs)
+        basins = self.next_layer(grid, model_range=ModelRange.BASINS, **kwargs)
 
-        if np.allclose(basins.alpha, 1.0):
+        if np.allclose(basins.alpha.values, 1.0):
             logger.debug("Chunk inside modelled basin, skipping offshore calculation.")
             return basins
 
@@ -296,71 +286,30 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         logger.debug("Calculating offshore distances")
         offshore_distance = self.coastline.distance(x, y)
         logger.debug("Offshore distances calculated")
-        is_offshore = offshore_distance > 0
+        is_offshore = (offshore_distance > 0).values
 
         basin_depth = self.model.depth(offshore_distance)
 
         if not np.any(is_offshore):
             logger.debug("Chunk entirely within onshore region, skipping calculation.")
-            return self.next_layer(grid, **kwargs)
+            return self.next_layer(grid, model_range=model_range, **kwargs)
 
         basin_depth, _ = xr.broadcast(basin_depth, grid.depth)
-        is_above_basin = grid.depth < basin_depth
+        is_above_basin = (grid.depth < basin_depth).values
 
         if not np.any(is_above_basin):
             logger.debug("Chunk below basin surface, skipping calculation.")
-            return self.next_layer(grid, **kwargs)
+            return self.next_layer(grid, model_range=model_range, **kwargs)
 
-        background = self.next_layer(grid, **kwargs)
+        background = self.next_layer(grid, model_range=model_range, **kwargs)
         logger.debug("Assigning basin qualities using offshore basin model")
         offshore_qualities = self.model.qualities(grid.depth)
 
-        offshore_blended_qualities = qualities.blend(basins, offshore_qualities)
+        # In-place update: write blend(basins, offshore) into background only
+        # where the point is offshore and above the modelled basin surface.
+        # Equivalent to xr.where(mask, blend(basins, offshore), background) but
+        # avoids allocating a new result array.
+        mask = is_above_basin & is_offshore
+        qualities.blend(basins, offshore_qualities, out=background, where=mask)
 
-        return xr.where(
-            is_above_basin & is_offshore,
-            offshore_blended_qualities,
-            background,
-        )
-
-    def __call__(
-        self,
-        grid: Grid,
-        **kwargs: Any,
-    ) -> Qualities:
-        """Apply the offshore taper to *block* and delegate to the next layer.
-
-        Dispatches to :meth:`_offshore_taper` via ``xr.map_blocks`` so the
-        calculation is deferred until the dask graph is executed.  A
-        block-level fast-path check avoids even scheduling the per-chunk
-        work if the block's ``minimum_top_depth`` attribute indicates it lies
-        entirely below the maximum basin depth.
-
-        Parameters
-        ----------
-        block : xr.Dataset
-            Dask-backed dataset with spatial variables ``x``, ``y``,
-            ``depth`` and index dimensions ``i``, ``j``, ``k``.
-            Must have a ``minimum_top_depth`` attribute (metres, positive
-            downward) set by the upstream grid-construction step.
-        **kwargs
-            Pipeline keyword arguments forwarded to *next_layer* and to
-            ``xr.map_blocks``.
-
-        Returns
-        -------
-        xr.Dataset
-            Dataset with ``qualities`` DataArray of shape
-            ``(i, j, k, component)`` and a ``component`` coordinate.
-        """
-
-        if grid.depth_min.compute() >= self.model.absolute_bottom:
-            return self.next_layer(grid, **kwargs)
-
-        dset = grid.map_blocks(
-            self._offshore_taper,
-            kwargs=kwargs,
-            template=qualities.template_like(grid.x),
-        )
-
-        return QualitiesSchema.from_dataset(dset)
+        return background

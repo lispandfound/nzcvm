@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 from nzcvm.components import Component
 from xarray_dataclasses import AsDataset, Data, DataOptions
 from dataclasses import dataclass
@@ -42,25 +42,47 @@ def template_like(arr: xr.DataArray) -> xr.Dataset:
     return xr.Dataset({component: arr for component in list(Component)})
 
 
-def blend(lhs: Qualities, rhs: Qualities) -> Qualities:
-    """
-    Blends this quality layer with another layer using alpha compositing.
-    Assumes self is the foreground layer and rhs is the background layer.
+def blend(
+    lhs: Qualities,
+    rhs: Qualities,
+    out: Qualities | None = None,
+    where: Any = None,
+) -> Qualities:
+    """Alpha-composite *lhs* (foreground) over *rhs* (background).
+
+    Follows NumPy ufunc conventions for *out* and *where*:
+
+    * *out* – an existing :class:`Qualities` dataset to write results into
+      in-place.  When provided it is also returned.
+    * *where* – a boolean array broadcastable to the qualities shape.  When
+      supplied, results are written only to positions where the mask is
+      ``True``; other positions in *out* are left unchanged.  Requires *out*
+      to be provided.
     """
     blended_alpha = lhs.alpha + rhs.alpha * (1.0 - lhs.alpha)
 
     a0 = lhs.alpha / blended_alpha
     a1 = rhs.alpha * (1.0 - lhs.alpha) / blended_alpha
 
-    blended_ds = xr.Dataset(
-        data_vars={
-            "rho": a0 * lhs.rho + a1 * rhs.rho,
-            "vp": a0 * lhs.vp + a1 * rhs.vp,
-            "vs": a0 * lhs.vs + a1 * rhs.vs,
-            "qp": a0 * lhs.qp + a1 * rhs.qp,
-            "qs": a0 * lhs.qs + a1 * rhs.qs,
-            "alpha": blended_alpha,
-        },
-    )
+    blended: dict[str, Any] = {
+        "rho": a0 * lhs.rho + a1 * rhs.rho,
+        "vp": a0 * lhs.vp + a1 * rhs.vp,
+        "vs": a0 * lhs.vs + a1 * rhs.vs,
+        "qp": a0 * lhs.qp + a1 * rhs.qp,
+        "qs": a0 * lhs.qs + a1 * rhs.qs,
+        "alpha": blended_alpha,
+    }
 
-    return QualitiesSchema.from_dataset(blended_ds)
+    if out is None:
+        return QualitiesSchema.from_dataset(xr.Dataset(blended))
+
+    # Write computed values into *out* in-place, respecting the mask.
+    where_np = np.asarray(where) if where is not None else None
+    for var, val in blended.items():
+        dst = out[var].values
+        src = np.asarray(val)
+        if where_np is None:
+            np.copyto(dst, src)
+        else:
+            np.copyto(dst, src, where=where_np)
+    return out

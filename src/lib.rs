@@ -22,7 +22,10 @@ mod nzcvm {
     use crate::surface::SurfaceModel;
     use nalgebra::{Affine3, Matrix4, Point2, Point3, Point4};
     use ndarray::{array, azip, Array1, Array2, Axis};
-    use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+    use numpy::{
+        IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2,
+        PyUntypedArrayMethods,
+    };
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
@@ -355,39 +358,41 @@ mod nzcvm {
             pythonize(py, &view).map_err(|e| e.into())
         }
 
-        /// Query the model for many points at once, returning a new float32 array.
+        /// Query the model for many points at once, writing results into a
+        /// caller-supplied output buffer (ufunc style).
         ///
-        /// `x`, `y`, `z` are three separate `(N,)` float32 arrays of coordinates.
-        /// Accepting three 1-D views avoids the `np.column_stack` copy that the
-        /// previous `(N, 3)` signature required on the Python side, saving one
-        /// full-input-size allocation (~17 ms per 100 MB chunk in benchmarks).
+        /// Python is responsible for allocating and zeroing `out` before
+        /// calling; this avoids the allocation inside Rust and lets the caller
+        /// reuse memory across calls.
         ///
-        /// `params` bundles the priority bounds.  Use
-        /// `QueryParams(0, 255)` to query all models.
+        /// # Arguments
         ///
-        /// Returns an `(N, 6)` float32 array with columns ordered as
-        /// `[rho, vp, vs, qp, qs, alpha]`.  Rows for points outside all
-        /// matching models are left as zeros.
+        /// * `out`    – `(N, 6)` float32 array that receives the results
+        ///   in-place.  Columns are ordered `[rho, vp, vs, qp, qs, alpha]`.
+        ///   Rows for points outside all matching models are left unchanged.
+        /// * `x`, `y`, `z` – three `(N,)` float32 coordinate arrays.
+        /// * `params` – priority bounds; use `QueryParams(0, 255)` for all models.
+        /// * `where`  – optional `(N,)` boolean mask.  When provided only
+        ///   points where `where[i]` is `True` are queried; other rows in
+        ///   `out` are left untouched.
         ///
-        /// # TODO
-        ///
-        /// The GIL is released during the hot loop but queries still run on a
-        /// single thread.  Since every row is independent, this loop is an
-        /// ideal candidate for `rayon::par_iter` — consider adding a
-        /// `parallel` flag to `QueryParams` or a separate `query_many_par`
-        /// entry-point.
-        pub fn query_many<'py>(
+        /// The GIL is released during the hot loop so other Python threads
+        /// can run concurrently.
+        #[pyo3(signature = (out, x, y, z, params, r#where=None))]
+        pub fn query_many(
             &self,
-            py: Python<'py>,
+            py: Python<'_>,
+            mut out: PyReadwriteArray2<Real>,
             x: PyReadonlyArray1<Real>,
             y: PyReadonlyArray1<Real>,
             z: PyReadonlyArray1<Real>,
             params: QueryParams,
-        ) -> PyResult<Bound<'py, PyArray2<Real>>> {
+            r#where: Option<PyReadonlyArray1<bool>>,
+        ) -> PyResult<()> {
             let lo = params.priority_lo;
             let hi = params.priority_hi;
-            // Acquire the array views while the GIL is held; the views hold
-            // no Python token so they are Send and can cross detach.
+            // Acquire all array views while the GIL is held.
+            // The views hold no Python token so they are safe to use after detach.
             let xs = x.as_array();
             let ys = y.as_array();
             let zs = z.as_array();
@@ -400,21 +405,55 @@ mod nzcvm {
                     zs.len(),
                 )));
             }
-            let mut buf = Array2::<Real>::zeros((n, 6));
-            py.detach(|| {
-                azip!((mut out_lane in buf.rows_mut(), &xi in &xs, &yi in &ys, &zi in &zs) {
-                    let pt = Point3::new(xi, yi, zi);
-                    if let Some(q) = self.inner.query(pt, None, lo, hi) {
-                        out_lane[0] = q.rho;
-                        out_lane[1] = q.vp;
-                        out_lane[2] = q.vs;
-                        out_lane[3] = q.qp;
-                        out_lane[4] = q.qs;
-                        out_lane[5] = q.alpha;
+            if out.shape()[0] != n || out.shape()[1] != 6 {
+                return Err(PyValueError::new_err(format!(
+                    "out must have shape ({n}, 6); got {:?}",
+                    out.shape(),
+                )));
+            }
+            let mut buf = out.as_array_mut();
+            match r#where {
+                None => {
+                    py.detach(|| {
+                        azip!((mut lane in buf.rows_mut(), &xi in &xs, &yi in &ys, &zi in &zs) {
+                            let pt = Point3::new(xi, yi, zi);
+                            if let Some(q) = self.inner.query(pt, None, lo, hi) {
+                                lane[0] = q.rho;
+                                lane[1] = q.vp;
+                                lane[2] = q.vs;
+                                lane[3] = q.qp;
+                                lane[4] = q.qs;
+                                lane[5] = q.alpha;
+                            }
+                        });
+                    });
+                }
+                Some(mask) => {
+                    let ms = mask.as_array();
+                    if ms.len() != n {
+                        return Err(PyValueError::new_err(format!(
+                            "where mask must have length {n}; got {}",
+                            ms.len(),
+                        )));
                     }
-                });
-            });
-            Ok(buf.into_pyarray(py))
+                    py.detach(|| {
+                        azip!((mut lane in buf.rows_mut(), &xi in &xs, &yi in &ys, &zi in &zs, &mi in &ms) {
+                            if mi {
+                                let pt = Point3::new(xi, yi, zi);
+                                if let Some(q) = self.inner.query(pt, None, lo, hi) {
+                                    lane[0] = q.rho;
+                                    lane[1] = q.vp;
+                                    lane[2] = q.vs;
+                                    lane[3] = q.qp;
+                                    lane[4] = q.qs;
+                                    lane[5] = q.alpha;
+                                }
+                            }
+                        });
+                    });
+                }
+            }
+            Ok(())
         }
 
         /// Print a human-readable summary of the model tree to stdout.
@@ -517,6 +556,51 @@ mod nzcvm {
         }
     }
 
+    /// Vectorised Porter-Duff "over" blend of two ``(N, 6)`` quality arrays.
+    ///
+    /// Each row of *lhs* (foreground) is composited over the corresponding row
+    /// of *rhs* (background) using the same ``Quality::blend`` formula used
+    /// internally by the BVH query loop.  Column order is
+    /// ``[rho, vp, vs, qp, qs, alpha]``.
+    ///
+    /// Called from ``nzcvm.qualities.blend`` via ``xr.apply_ufunc`` so that
+    /// Python / xarray orchestrate the spatial dimensions while the hot loop
+    /// runs in Rust with the GIL released.
+    #[pyfunction]
+    pub fn blend_many<'py>(
+        py: Python<'py>,
+        lhs: PyReadonlyArray2<Real>,
+        rhs: PyReadonlyArray2<Real>,
+    ) -> PyResult<Bound<'py, PyArray2<Real>>> {
+        let la = lhs.as_array();
+        let ra = rhs.as_array();
+        let n = la.nrows();
+        if ra.nrows() != n {
+            return Err(PyValueError::new_err(format!(
+                "lhs and rhs must have the same number of rows; got lhs={n}, rhs={}",
+                ra.nrows(),
+            )));
+        }
+        if la.ncols() != 6 || ra.ncols() != 6 {
+            return Err(PyValueError::new_err(
+                "lhs and rhs must each have exactly 6 columns [rho, vp, vs, qp, qs, alpha]",
+            ));
+        }
+        let mut out = Array2::<Real>::zeros((n, 6));
+        py.detach(|| {
+            azip!((mut o in out.rows_mut(), l in la.rows(), r in ra.rows()) {
+                let bq = Quality::from(l).blend(&Quality::from(r));
+                o[0] = bq.rho;
+                o[1] = bq.vp;
+                o[2] = bq.vs;
+                o[3] = bq.qp;
+                o[4] = bq.qs;
+                o[5] = bq.alpha;
+            });
+        });
+        Ok(out.into_pyarray(py))
+    }
+
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyMeshModel>()?;
@@ -526,6 +610,7 @@ mod nzcvm {
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
         m.add_function(wrap_pyfunction!(surface_model, m)?)?; // New function
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;
+        m.add_function(wrap_pyfunction!(blend_many, m)?)?;
 
         Ok(())
     }

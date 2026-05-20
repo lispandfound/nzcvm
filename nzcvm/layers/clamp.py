@@ -7,9 +7,11 @@ from nzcvm.qualities import Qualities
 from nzcvm.grids import Grid
 
 from nzcvm.config.layers.clamp import ClampLayerConfig
+from nzcvm.model import ModelRange
 
 from typing import Any
 import logging
+import numpy as np
 from nzcvm.components import Component
 
 
@@ -24,9 +26,13 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
     def __call__(
         self,
         grid: Grid,
+        *,
+        model_range: ModelRange | None = None,
+        out: Qualities | None = None,
+        where: np.ndarray | None = None,
         **kwargs: Any,
     ) -> Qualities:
-        qualities = self.next_layer(grid, **kwargs)
+        qualities = self.next_layer(grid, model_range=model_range, out=out, where=where, **kwargs)
         for c, bound in self.config.clamps.items():
             qualities[c] = qualities[c].clip(min=bound.min, max=bound.max)
 

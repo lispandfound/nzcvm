@@ -2,12 +2,13 @@ import typing
 
 from nzcvm.layers.core import Layer, layer_from_config
 from nzcvm.grids import Grid
-from nzcvm.qualities import Qualities
+from nzcvm.qualities import Qualities, QualitiesSchema, template_like
 from types import SimpleNamespace
 from nzcvm.velocity_model import VelocityModel
 from nzcvm.config.layers import LayerConfig
 from typing import Any, Callable
 import dataclasses
+import xarray as xr
 
 
 class PipelineError(Exception):
@@ -38,5 +39,26 @@ def build_pipeline(configs: list[LayerConfig]) -> Layer:
 def execute_model_pipeline(
     velocity_model: VelocityModel, pipeline: Callable[[Grid], Qualities]
 ) -> VelocityModel:
-    qualities = {name: pipeline(grid) for name, grid in velocity_model.grids.items()}
+    """Apply *pipeline* to every grid in *velocity_model* via a single
+    ``map_blocks`` per grid.
+
+    Hoisting the chunked dispatch here means layers never need to call
+    ``map_blocks`` or ``apply_ufunc(..., dask="parallelized")`` internally;
+    each layer always receives a fully-computed concrete chunk and can use
+    plain NumPy operations without creating extra Dask tasks.
+    """
+
+    def _run_pipeline(chunk: xr.Dataset) -> xr.Dataset:
+        grid = typing.cast(Grid, chunk)
+        return pipeline(grid)
+
+    qualities = {
+        name: QualitiesSchema.from_dataset(
+            grid.map_blocks(
+                _run_pipeline,
+                template=template_like(grid.x),
+            )
+        )
+        for name, grid in velocity_model.grids.items()
+    }
     return dataclasses.replace(velocity_model, qualities=qualities)

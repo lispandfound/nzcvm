@@ -8,6 +8,7 @@ import typing
 from nzcvm.config.layers import LayerConfig
 from typing import TypeVar, Any, Generic
 from abc import ABC, abstractmethod
+import numpy as np
 
 
 C = TypeVar("C", bound=LayerConfig)
@@ -39,8 +40,38 @@ class Layer(ABC, Generic[C]):
             Layer.registry[config_cls] = value
 
     @abstractmethod
-    def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
-        """Apply this layer to *block* and return the result."""
+    def __call__(
+        self,
+        grid: Grid,
+        *,
+        model_range: Any = None,
+        out: Qualities | None = None,
+        where: np.ndarray | None = None,
+        **kwargs: Any,
+    ) -> Qualities:
+        """Apply this layer to *grid* and return the result.
+
+        All layers in the pipeline accept the following standard keyword
+        arguments so they can be forwarded unmodified through the chain:
+
+        Parameters
+        ----------
+        grid :
+            Concrete (non-dask) grid chunk supplied by the single
+            ``map_blocks`` call in
+            :func:`~nzcvm.layers.pipeline.execute_model_pipeline`.
+        model_range :
+            Priority range for velocity-model queries
+            (:class:`~nzcvm.model.ModelRange`).  Pass ``None`` (default)
+            to let each layer use its own default.
+        out :
+            Optional pre-allocated :class:`~nzcvm.qualities.Qualities`
+            dataset to write results into in-place.
+        where :
+            Optional boolean array broadcastable to the grid shape.  When
+            supplied, results are written only to positions where the mask
+            is ``True``; other positions in *out* are left unchanged.
+        """
         ...
 
 

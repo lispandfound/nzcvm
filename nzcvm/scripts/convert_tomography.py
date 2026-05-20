@@ -12,7 +12,7 @@ import pyvista as pv
 import typer
 from pyproj import CRS, Transformer
 
-from nzcvm.coordinates import Affine, reflect_x, rotate, scale, translate
+from nzcvm.coordinates import Affine, reflect_x, scale, translate
 from nzcvm.mesh import make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
@@ -47,14 +47,13 @@ def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
 
     fwd = (
-        translate(ox, oy, z=0.0)
-        @ scale(1000.0, 1000.0, 1000.0)
-        @ reflect_x(dims=3)
-        @ rotate(140.0, axis="z", ccw=False)
+        translate(ox, oy, z=0.0) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x(dims=3)
+        # @ rotate(140.0, axis="z", ccw=False)
     )
     inv = (
-        rotate(140.0, axis="z", ccw=False)
-        @ reflect_x(dims=3)
+        # rotate(140.0, axis="z", ccw=False)
+        # @
+        reflect_x(dims=3)
         @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
         @ translate(-ox, -oy, z=0.0)
     )
@@ -68,13 +67,14 @@ EP2020_AFFINE: Affine = _EP2020_FWD
 
 _db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
 DB2025_AFFINE: Affine = (
-    translate(_db2025_ox, _db2025_oy, z=0.0)
-    @ scale(1000.0, 1000.0, 1000.0)
-    @ rotate(35.0, axis="z", ccw=False)
+    translate(_db2025_ox, _db2025_oy, z=0.0) @ scale(1000.0, 1000.0, 1000.0)
+    # @ sp.spatial.transform.
+    # rotate(35.0, axis="z", ccw=False)
 )
 DB2025_INV_AFFINE: Affine = (
-    rotate(35.0, axis="z", ccw=False)
-    @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
+    # rotate(35.0, axis="z", ccw=False)
+    # @
+    scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
     @ translate(-_db2025_ox, -_db2025_oy, z=0.0)
 )
 DB2025_CRS_TRANSFORMER = Transformer.from_crs(CRS_UTM60S, CRS_NZTM, always_xy=True)

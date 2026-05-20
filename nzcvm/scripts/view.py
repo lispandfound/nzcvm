@@ -16,6 +16,14 @@ python visualise_grid.py model.nc --scalar vs --slice-axis z --slice-pos 0.5
 python visualise_grid.py model.nc --list-scalars
 """
 
+from nzcvm.components import Component
+
+from nzcvm.qualities import Qualities
+
+from nzcvm.grids import Grid
+
+from nzcvm.velocity_model import VelocityModel
+
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -47,16 +55,10 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def _iter_grid_groups(dt: xr.DataTree):
-    """Yield (name, dataset) pairs for every child of /grid."""
-    grid_node = dt[GRID_PATH]
-    for name, child in grid_node.children.items():
-        yield name, child.ds
-
-
 def _build_structured_grid(
     layer: int,
-    ds: xr.Dataset,
+    grid: Grid,
+    qualities: Qualities,
     scalar: str,
     stride: int,
 ) -> pv.StructuredGrid:
@@ -69,48 +71,29 @@ def _build_structured_grid(
     Strides sub-sample every axis to keep memory manageable.
     """
     sl = slice(None, None, stride)
+    grid = grid.isel(i=sl, j=sl, k=sl)
 
-    # --- coordinates -------------------------------------------------------
-    x = ds["x"].values[sl, sl, sl].astype(np.float32)
-    y = ds["y"].values[sl, sl, sl].astype(np.float32)
-    z = ds["z"].values[sl, sl, sl].astype(np.float32)
+    x = grid.x.values
+    y = grid.y.values
+    z = grid.z.values
 
     # PyVista StructuredGrid expects (k, j, i) Fortran-style ordering
     # i.e. the *last* index varies fastest when the flat array is built.
     # Our arrays are already (i, j, k); pyvista accepts them directly:
-    grid = pv.StructuredGrid(x, y, z)
+    mesh = pv.StructuredGrid(x, y, z)
 
     # --- scalar data -------------------------------------------------------
     if scalar == DEPTH_SCALAR:
-        values = ds["depth"].values[sl, sl, sl].astype(np.float32)
+        values = grid.depth.values
     elif scalar == LAYER_SCALAR:
-        values = np.full_like(x, layer, dtype=np.float32)
+        values = np.full_like(z, layer)
     else:
-        comp_idx = QUALITIES_COMPONENTS.index(scalar)
-        values = ds["qualities"].values[sl, sl, sl, comp_idx].astype(np.float32)
+        values = qualities[scalar].sel(i=sl, j=sl, k=sl).values
 
-    # Flatten in the same order PyVista uses (C-order matches x/y/z above)
-    grid.point_data[scalar] = values.ravel(order="F")
-    grid.set_active_scalars(scalar)
+    mesh.point_data[scalar] = values.ravel(order="F")
+    mesh.set_active_scalars(scalar)
 
-    return grid
-
-
-def _print_available_scalars(dt: xr.DataTree) -> None:
-    """Print which scalars are present and exit."""
-    typer.echo("\nAvailable scalars:")
-    for name, ds in _iter_grid_groups(dt):
-        typer.echo(f"\n  Grid: {name!r}")
-        if "depth" in ds:
-            typer.echo("    depth")
-        if "qualities" in ds and "component" in ds["qualities"].dims:
-            for comp in ds["qualities"].coords["component"].values:
-                typer.echo(f"    {comp}")
-
-
-# ---------------------------------------------------------------------------
-# Main command
-# ---------------------------------------------------------------------------
+    return mesh
 
 
 @app.command()
@@ -163,9 +146,7 @@ def basin(
         if mesh_data.n_cells > 0:
             mesh_data.cell_data[scalar] = np.full(mesh_data.n_cells, field_values[0])
         else:
-            mesh_data.point_data[scalar] = np.full(
-                mesh_data.n_points, field_values[0]
-            )
+            mesh_data.point_data[scalar] = np.full(mesh_data.n_points, field_values[0])
         scalar_name = scalar
     else:
         raise typer.BadParameter(f"Scalar '{scalar}' not found in mesh data.")
@@ -186,13 +167,12 @@ def model(
         ),
     ],
     scalar: Annotated[
-        str,
+        Component,
         typer.Option(
             "--scalar",
             "-s",
-            help=(f"Active scalar to colour by. One of: {', '.join(ALL_SCALARS)}. "),
         ),
-    ] = "vs",
+    ] = Component.VS,
     stride: Annotated[
         int,
         typer.Option(
@@ -241,13 +221,6 @@ def model(
             max=1.0,
         ),
     ] = 0.5,
-    list_scalars: Annotated[
-        bool,
-        typer.Option(
-            "--list-scalars",
-            help="Print available scalar names for each grid and exit.",
-        ),
-    ] = False,
     cmap: Annotated[
         str,
         typer.Option("--cmap", help="Matplotlib / PyVista colormap name."),
@@ -261,10 +234,6 @@ def model(
             max=1.0,
         ),
     ] = 1.0,
-    background: Annotated[
-        str,
-        typer.Option("--background", "-b", help="Plotter background colour."),
-    ] = "black",
     show_edges: Annotated[
         bool,
         typer.Option(
@@ -302,41 +271,14 @@ def model(
 
     # --- load data ---------------------------------------------------------
     typer.echo(f"Loading DataTree from {filepath} …")
-    try:
-        dt = xr.open_datatree(str(filepath))  # type: ignore[attr-defined]
-    except AttributeError:
-        # Older xarray: fall back to DataTree.open
-        try:
-            from datatree import open_datatree  # type: ignore
+    dt = xr.open_datatree(str(filepath), chunks="auto")  # type: ignore[attr-defined]
+    vmod = VelocityModel.from_datatree(dt)
 
-            dt = open_datatree(str(filepath))
-        except ImportError:
-            typer.echo(
-                "[error] xarray DataTree support not available. "
-                "Install xarray ≥2024.1 or the 'datatree' package.",
-                err=True,
-            )
-            raise typer.Exit(1)
-
-    # --- list scalars and exit if requested --------------------------------
-    if list_scalars:
-        _print_available_scalars(dt)
-        raise typer.Exit(0)
-
-    # --- build grids -------------------------------------------------------
-    grids: dict[str, pv.StructuredGrid] = {}
-    for i, (name, ds) in enumerate(_iter_grid_groups(dt)):
-        # Check this group actually has the requested scalar
-        if scalar == DEPTH_SCALAR and "depth" not in ds:
-            typer.echo(f"  [skip] '{name}' has no 'depth' variable.")
-            continue
-        if scalar in QUALITIES_COMPONENTS and "qualities" not in ds:
-            typer.echo(f"  [skip] '{name}' has no 'qualities' variable.")
-            continue
-
+    grids = {}
+    for i, (name, (grid, qualities)) in enumerate(vmod.pairwise.items()):
         typer.echo(f"  Building StructuredGrid for '{name}' (stride={stride}) …")
         try:
-            g = _build_structured_grid(i, ds, scalar, stride)
+            g = _build_structured_grid(i, grid, qualities, scalar, stride)
             grids[name] = g
             typer.echo(f"    → {g.n_points:,} points, bounds: {np.round(g.bounds, 0)}")
         except Exception as exc:  # noqa: BLE001
@@ -360,7 +302,6 @@ def model(
         title=f"Grid viewer — {scalar}",
         off_screen=off_screen,
     )
-    pl.set_background(background)
 
     # Shared mesh kwargs
     mesh_kwargs = dict(
@@ -372,7 +313,6 @@ def model(
         show_scalar_bar=False,  # add one shared bar below
     )
 
-    # --- static axis slice -------------------------------------------------
     if slice_axis is not None:
         axis_map = {"x": 0, "y": 1, "z": 2}
         ax = slice_axis.lower()
@@ -394,8 +334,6 @@ def model(
             normal[axis_map[ax]] = 1.0
             sliced = g.slice(normal=normal, origin=origin)
             pl.add_mesh(sliced, **mesh_kwargs, label=name)
-
-    # --- orthogonal interactive slicer -------------------------------------
     elif slice_mode.lower() == "orthogonal":
         typer.echo("Adding interactive orthogonal slice widgets …")
         for name, g in grids.items():
@@ -403,8 +341,6 @@ def model(
                 g,
                 **mesh_kwargs,
             )
-
-    # --- solid volumes -----------------------------------------------------
     else:
         typer.echo("Rendering solid volumes …")
         for name, g in grids.items():
@@ -415,7 +351,6 @@ def model(
         title=scalar,
         n_labels=5,
         fmt="%.3g",
-        color="white" if background in ("black", "k") else "black",
         position_x=0.85,
         position_y=0.05,
         vertical=True,

@@ -64,9 +64,11 @@ class AsyncHDF5Writer(AbstractContextManager):
     def target(self, datapath: str):
         # This is just a dummy object that pretends to be a dask storage that
         # really just defers queueing.
-        target = SimpleNamespace()
-        target.__setitem__ = lambda key, value: self.queue.put((datapath, key, value))
-        return target
+        class Dummy:
+            def __setitem__(_self, key, value):
+                self.queue.put((datapath, key, value))
+
+        return Dummy()
 
     def __enter__(self) -> None:
         self.thread = threading.Thread(target=self._write_loop, daemon=True)
@@ -78,6 +80,11 @@ class AsyncHDF5Writer(AbstractContextManager):
 
 
 def to_sfile(velocity_model: VelocityModel, filename: Path):
+
+    # The SW4 file format imposes that outermost axis (the i-axis in this
+    # codebase) of the is due north. This code base asserts that i, j, k = x, y,
+    # z = east, north, down. Thus, we change the orientation to reflect this.
+    velocity_model = velocity_model.orient(Coordinate.J, Coordinate.I, Coordinate.K)
 
     writer = AsyncHDF5Writer(filename)
     with h5py.File(filename, "w") as f:

@@ -27,7 +27,6 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
         **kwargs: Any,
     ) -> Qualities:
         qualities = self.next_layer(grid, **kwargs)
-
         for c, bound in self.config.clamps.items():
             qualities[c] = qualities[c].clip(min=bound.min, max=bound.max)
 

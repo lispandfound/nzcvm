@@ -123,113 +123,6 @@ def translate(x: float = 0.0, y: float = 0.0, z: float | None = None) -> Affine:
     return m
 
 
-def rotate(
-    angle_deg: float,
-    ccw: bool = True,
-    axis: Literal["x", "y", "z"] | None = None,
-) -> Affine:
-    """Return a rotation matrix.
-
-    In 2-D the rotation is always in the x-y plane.  In 3-D pass a
-    3-element *origin* and choose an *axis*.
-
-    Parameters
-    ----------
-    angle_deg :
-        Rotation angle in degrees.  When ``ccw=True`` (default) this is a
-        counter-clockwise angle measured from the +x axis.  When
-        ``ccw=False`` this is a **clockwise azimuth from north** (geographic
-        convention).  The ``ccw`` flag only affects z-axis rotation.
-    origin :
-        Centre of rotation.  ``(x, y)`` selects 2-D (3×3 output);
-        ``(x, y, z)`` selects 3-D (4×4 output).
-    ccw :
-        ``True`` → counter-clockwise from east (mathematical).
-        ``False`` → clockwise azimuth from north (geographic).
-        Ignored for x- and y-axis rotations.
-    axis :
-        Rotation axis for 3-D mode: ``'x'``, ``'y'``, or ``'z'`` (default None).
-        If set, enables 3-D mode.
-
-    Returns
-    -------
-    Affine
-        3×3 for 2-D; 4×4 for 3-D.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> R = rotate(90.0)           # 2-D, 90° CCW: (1,0) → (0,1)
-    >>> np.allclose((R @ [1.0, 0.0, 1.0])[:2], [0.0, 1.0], atol=1e-6)
-    True
-    >>> R3 = rotate(90.0, axis='z')
-    >>> np.allclose((R3 @ [1.0, 0.0, 0.0, 1.0])[:3], [0.0, 1.0, 0.0], atol=1e-6)
-    True
-    """
-    theta = np.radians(angle_deg)
-    st, ct = float(np.sin(theta)), float(np.cos(theta))
-    dims = 3 if axis else 2
-
-    if dims == 2:
-        if ccw:
-            r: Affine = np.array(
-                [[ct, -st, 0.0], [st, ct, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
-            )
-        else:
-            r = np.array(
-                [[st, ct, 0.0], [ct, -st, 0.0], [0.0, 0.0, 1.0]], dtype=np.float32
-            )
-        return r
-    assert dims == 3 and axis
-
-    ax = axis.lower()
-    if ax == "z":
-        if ccw:
-            r = np.array(
-                [
-                    [ct, -st, 0.0, 0.0],
-                    [st, ct, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                ],
-                dtype=np.float32,
-            )
-        else:
-            r = np.array(
-                [
-                    [st, ct, 0.0, 0.0],
-                    [ct, -st, 0.0, 0.0],
-                    [0.0, 0.0, 1.0, 0.0],
-                    [0.0, 0.0, 0.0, 1.0],
-                ],
-                dtype=np.float32,
-            )
-    elif ax == "x":
-        r = np.array(
-            [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, ct, -st, 0.0],
-                [0.0, st, ct, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-    elif ax == "y":
-        r = np.array(
-            [
-                [ct, 0.0, st, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [-st, 0.0, ct, 0.0],
-                [0.0, 0.0, 0.0, 1.0],
-            ],
-            dtype=np.float32,
-        )
-    else:
-        raise ValueError(f"axis must be 'x', 'y', or 'z'; got {axis!r}")
-
-    return r
-
-
 def scale(sx: float = 1.0, sy: float = 1.0, sz: float | None = None) -> Affine:
     """Return an anisotropic scale matrix.
 
@@ -389,5 +282,5 @@ def apply_affine_transform(
     transform: Affine, x: xr.DataArray, y: xr.DataArray
 ) -> tuple[xr.DataArray, xr.DataArray]:
     x_prime = transform[0, 0] * x + transform[0, 1] * y + transform[0, 2]
-    y_prime = transform[1, 0] * y + transform[1, 1] * y + transform[1, 2]
+    y_prime = transform[1, 0] * x + transform[1, 1] * y + transform[1, 2]
     return x_prime, y_prime

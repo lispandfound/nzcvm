@@ -1,10 +1,12 @@
+from nzcvm.coordinates import Coordinate
 from nzcvm.grids.grid import GridSchema
 from nzcvm.qualities import Qualities, QualitiesSchema
-from typing import Self
+from typing import Self, Callable
 from nzcvm.config.metadata import ModelMetadata
 from nzcvm.config.velocity_model import VelocityModelConfig
 from nzcvm.grids import Grid, build_grids_from_config
 from dataclasses import dataclass, field
+import dataclasses
 import xarray as xr
 
 
@@ -38,6 +40,17 @@ class VelocityModel:
         }
         metadata = ModelMetadata.from_dict(dtree.attrs)
         return cls(grids=grids, qualities=qualities, metadata=metadata)
+
+    def map(self, f: Callable[[xr.Dataset], xr.Dataset]) -> Self:
+        grids = {k: f(grid) for k, grid in self.grids.items()}
+        qualities = {k: f(qualities) for k, qualities in self.qualities.items()}
+        return dataclasses.replace(self, grids=grids, qualities=qualities)
+
+    def orient(self, *coordinates: Coordinate) -> Self:
+        return self.map(lambda dset: dset.transpose(*coordinates))
+
+    def flip(self, coordinate: Coordinate) -> Self:
+        return self.map(lambda dset: dset.sel({coordinate: slice(None, None, -1)}))
 
     def to_datatree(self) -> xr.DataTree:
         dtree = xr.DataTree.from_dict(

@@ -70,25 +70,21 @@ class SW4GridConfig(GridConfig):
 
     # Topographic surface path.
     surface: Path
-    # Extents in x and y.
+    # Extents in x and y. The x and y definition depends on the CRS!
     extent_x: float
     extent_y: float
 
     azimuth: float
 
     # Coordinate metadata
-    target_crs: str | int
-    origin_lon: float
-    origin_lat: float
+    origin_crs: str | int
+    origin_x: float
+    origin_y: float
 
     # Mesh refinements.
     refinements: dict[str, MeshRefinement]
 
     transpose: bool = False
-    origin_crs: str | int = WGS84_CRS
-    origin_x: float = NO_ORIGIN
-    origin_y: float = NO_ORIGIN
-    optimise_chunks: bool = False
 
     chunks: dict[Coordinate, int] = field(default_factory=lambda: DEFAULT_CHUNK_SIZES)
 

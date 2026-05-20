@@ -30,13 +30,16 @@ nzcvm.curvilinear_mesh : Low-level mesh boundary and fill-between functions.
 from typing import Any
 
 from nzcvm.grids.grid import Grid, GridSchema
-from nzcvm.coordinates import Coordinate
+from nzcvm.coordinates import Coordinate, WGS84_CRS
 from nzcvm import coordinates
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.config.grids.sw4 import SW4GridConfig
+from scipy.spatial.transform import Rotation
 
 import numpy as np
+import scipy as sp
 import xarray as xr
+import pyproj
 
 from nzcvm.surface import read_surface_from_path
 from nzcvm.grids import helpers
@@ -151,6 +154,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
     top_name, top_refinement = refinements[0]
 
     offset = 0.0
+
     ni = np.round(config.extent_x / top_refinement.resolution).astype(int) + 1
     nj = np.round(config.extent_y / top_refinement.resolution).astype(int) + 1
 
@@ -161,15 +165,14 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
         offset,
         config.chunks,
     )
-
-    transform = helpers.affine_transformation(
-        config.origin_crs,
-        config.target_crs,
-        config.origin_lon,
-        config.origin_lat,
-        config.azimuth,
+    transform = (
+        coordinates.translate(config.origin_x, config.origin_y)
+        # This is consistent with the rotation specified in the z-axis down
+        # convention.
+        @ Rotation.from_rotvec(np.array([0.0, 0.0, -config.azimuth]), degrees=True)
+        .as_matrix()
+        .astype(np.float32)
     )
-
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
 
     topographic_surface = read_surface_from_path(config.surface)
@@ -181,6 +184,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
 
     grids = []
     # First layer: curvilinear mesh to account for topography.
+    trns = pyproj.Transformer.from_crs(config.origin_crs, WGS84_CRS, always_xy=True)
+    origin_lon, origin_lat = trns.transform(config.origin_x, config.origin_y)
     grids.append(
         _curvilinear_grid(
             x_phys,
@@ -191,8 +196,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             config.chunks[Coordinate.K],
             top_refinement.resolution,
             name=top_name,
-            origin_lat=config.origin_lat,
-            origin_lon=config.origin_lon,
+            origin_lat=origin_lat,
+            origin_lon=origin_lon,
             azimuth=config.azimuth,
         )
     )
@@ -214,8 +219,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 config.chunks[Coordinate.K],
                 refinement.resolution,
                 name=name,
-                origin_lat=config.origin_lat,
-                origin_lon=config.origin_lon,
+                origin_lat=origin_lat,
+                origin_lon=origin_lon,
                 azimuth=config.azimuth,
             )
         )

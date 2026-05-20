@@ -25,8 +25,6 @@ def affine_transformation(
         3×3 affine matrix.
     """
 
-    origin_tr = Transformer.from_crs(origin_crs, grid_crs, always_xy=True)
-    ox, oy = origin_tr.transform(origin_x, origin_y)
     return coordinates.translate(ox, oy) @ coordinates.rotate(azimuth, ccw=False)
 
 

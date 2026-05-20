@@ -1,7 +1,6 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-from dask.diagnostics.progress import ProgressBar
-
+from dask.diagnostics import profile_visualize
 from dask.diagnostics.profile import ResourceProfiler
 
 import contextlib
@@ -11,7 +10,7 @@ from nzcvm.layers.pipeline import execute_model_pipeline
 
 from nzcvm.velocity_model import VelocityModel
 from nzcvm.config import VelocityModelConfigFormat, VelocityModelConfig
-
+from tqdm.dask import TqdmCallback
 
 from pathlib import Path
 from typing import Annotated
@@ -111,12 +110,15 @@ def generate(
         scheduler="threads", num_workers=resolved_n_threads
     )
     exit_stack.enter_context(thread_context)
+    profilers = []
 
     if profile:
-        exit_stack.enter_context(ResourceProfiler(dt=0.1))
+        profiler = ResourceProfiler(dt=0.1)
+        profilers.append(profiler)
+        exit_stack.enter_context(profiler)
 
     if progress:
-        exit_stack.enter_context(ProgressBar())
+        exit_stack.enter_context(TqdmCallback())
 
     exit_stack.enter_context(LogProgress())
 
@@ -131,3 +133,6 @@ def generate(
         formats.write_velocity_model(
             velocity_model, output, output_format, quantise_arrays=quantise
         )
+
+    if profilers:
+        profile_visualize.visualize(profilers)

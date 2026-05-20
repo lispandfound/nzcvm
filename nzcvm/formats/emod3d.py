@@ -28,12 +28,7 @@ KM_PER_S = 1 / 1000.0
 
 def _prepare_component(qualities: Qualities, component: Component) -> da.Array:
     contiguous_chunking = {0: "auto", 1: "auto", 2: -1}
-    return (
-        qualities[component]
-        .transpose(Coordinate.J, Coordinate.I, Coordinate.K)
-        .data.rechunk(contiguous_chunking)
-        * KM_PER_S
-    )
+    return qualities[component].data.rechunk(contiguous_chunking) * KM_PER_S
 
 
 def to_emod3d(velocity_model: VelocityModel, directory: Path):
@@ -49,6 +44,14 @@ def to_emod3d(velocity_model: VelocityModel, directory: Path):
     ValueError
         If *dtree* contains more or fewer than one block.
     """
+
+    # The EMOD3D format expects the grid to have the form z, y, x (with y points
+    # *south*). We make the convention that i, j, k correspond to east, north,
+    # down. To correct for this difference we transpose the outputs and reverse
+    # the y-direction.
+    velocity_model = velocity_model.orient(
+        Coordinate.K, Coordinate.J, Coordinate.I
+    ).flip(Coordinate.J)
 
     resolutions = [grid.resolution for grid in velocity_model.grids.values()]
 

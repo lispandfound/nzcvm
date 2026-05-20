@@ -1,11 +1,13 @@
+import pyproj
 from nzcvm.grids.builder import build_grids_from_config
 from collections.abc import Callable
 from nzcvm.surface import read_surface_from_path
-from nzcvm.coordinates import Coordinate
+from nzcvm.coordinates import Coordinate, WGS84_CRS
 from nzcvm import coordinates
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.grids import helpers
 from nzcvm.grids.grid import Grid, GridSchema
+from scipy.spatial.transform import Rotation
 
 import xarray as xr
 import numpy as np
@@ -60,13 +62,12 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         config.chunks,
     )
 
-    transform = helpers.affine_transformation(
-        config.origin_crs,
-        config.target_crs,
-        config.origin_lon,
-        config.origin_lat,
-        config.azimuth,
-    )
+    # In the EMOD3D coordinate system y-axis points south rotating clockwise. We follow the
+    # convention that azimuth points from due north rotating clockwise.
+    # Fortunately, these are equivalent because there is no orientation change.
+    transform = coordinates.translate(
+        config.origin_x, config.origin_y
+    ) @ Rotation.from_rotvec(np.array([0, 0, -config.azimuth]))
 
     # Physical coordinates via affine transform.
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
@@ -85,6 +86,8 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
 
     depth_min = resolution / 2
     depth_max = (config.nk - 1 / 2) * resolution
+    trns = pyproj.Transformer.from_crs(config.origin_crs, WGS84_CRS, always_xy=True)
+    origin_lon, origin_lat = trns.transform(config.origin_x, config.origin_y)
 
     grid = GridSchema.new(
         x_phys,
@@ -97,6 +100,8 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         depth_max=depth_max,
         name=GRID_NAME,
         resolution=resolution,
+        origin_lon=origin_lon,
+        origin_lat=origin_lat,
     )
 
     return {grid.name: grid}

@@ -1,5 +1,7 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from nzcvm import registry
+
 from distributed import Client
 
 from dask.distributed import LocalCluster
@@ -92,13 +94,6 @@ def generate(
             help="If set, quantise the output in NetCDF/Zarr formats using ZFP"
         ),
     ] = False,
-    profile: Annotated[
-        bool,
-        typer.Option(
-            help="If set, profile the pipeline execution with the given rate (in seconds)"
-        ),
-    ] = False,
-    progress: Annotated[bool, typer.Option(help="If set, show task progress")] = False,
     log_level: str = "WARNING",
     log_file: Path | None = None,
 ) -> None:
@@ -110,27 +105,18 @@ def generate(
 
     logger.info(f"Running with {resolved_n_threads} threads.")
     exit_stack = contextlib.ExitStack()
-    # thread_context = dask.config.set(
-    #     scheduler="threads", num_workers=resolved_n_threads
-    # )
-    # exit_stack.enter_context(thread_context)
+
     cluster = LocalCluster(
         processes=False, n_workers=1, threads_per_worker=resolved_n_threads
     )
+
     client = Client(cluster)
+
     exit_stack.push(cluster)
     exit_stack.push(client)
+    exit_stack.push(registry.pipeline_context())
+
     profilers = []
-
-    # if profile:
-    #     profiler = ResourceProfiler(dt=0.1)
-    #     profilers.append(profiler)
-    #     exit_stack.enter_context(profiler)
-
-    # if progress:
-    #     exit_stack.enter_context(TqdmCallback())
-
-    # exit_stack.enter_context(LogProgress())
 
     velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
 

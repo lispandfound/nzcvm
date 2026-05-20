@@ -123,7 +123,10 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             # blend(basins foreground, ely background) → write into background
             qualities.blend(basins, ely_qualities, out=background, where=is_in_taper)
         else:
-            # ely_qualities.alpha == 1.0 everywhere, so blend == ely_qualities.
+            # ely_qualities is the foreground (lhs) with alpha == 1.0 everywhere,
+            # so blend(ely, any_rhs) == ely_qualities (a0 == 1, a1 == 0).
+            # We pass background as rhs to satisfy the type signature; its values
+            # are multiplied by a1 == 0 and are never actually used in the result.
             qualities.blend(ely_qualities, background, out=background, where=is_in_taper)
 
         return background

@@ -1,3 +1,4 @@
+import dask
 import pyproj
 from nzcvm.grids.builder import build_grids_from_config
 from collections.abc import Callable
@@ -17,20 +18,31 @@ LAYER_DIM = "layer"
 GRID_NAME = "grid_0"
 
 
-def squashed_interpolator(z_surface: xr.DataArray, depth: xr.DataArray) -> xr.DataArray:
-    return z_surface + depth
+def squashed_interpolator(
+    z_surface: xr.DataArray, depth: xr.DataArray
+) -> tuple[xr.DataArray, xr.DataArray]:
+    z_surf_3d, depth_3d = xr.broadcast(z_surface, depth)
+    return z_surf_3d + depth, depth_3d
 
 
 def squashed_tapered_interpolator(
     z_surface: xr.DataArray, depth: xr.DataArray
-) -> xr.DataArray:
-    squashed_tapered_z = z_surface - np.float32(2) * depth
-    return squashed_tapered_z.where(squashed_tapered_z > -z_surface, -depth)
+) -> tuple[xr.DataArray, xr.DataArray]:
+    z_surf_3d, depth_3d = xr.broadcast(z_surface, depth)
+
+    shift = np.float32(2) * depth_3d
+    squashed_tapered_z = z_surf_3d - shift
+    distort_mask = squashed_tapered_z > -z_surf_3d
+
+    depth_new = xr.where(distort_mask, shift, depth_3d)
+    z = xr.where(distort_mask, squashed_tapered_z, -depth_new)
+
+    return z, depth_new
 
 
 def _topography_type_interpolator(
     topo_type: TopographyType,
-) -> Callable[..., xr.DataArray]:
+) -> Callable[..., tuple[xr.DataArray, xr.DataArray]]:
     match topo_type:
         case TopographyType.SQUASHED:
             return squashed_interpolator
@@ -39,10 +51,10 @@ def _topography_type_interpolator(
 
 
 def _depth_array(nk: int, resolution: float, chunks: int) -> xr.DataArray:
-    k = np.arange(nk, dtype=np.float32)
+    k = np.arange(nk)
     offset = np.float32(1 / (2 * resolution))
     k_da = xr.DataArray(
-        offset + k * np.float32(resolution),
+        offset + np.float32(k) * np.float32(resolution),
         dims=[Coordinate.K],
         coords=dict({Coordinate.K: k}),
     )
@@ -55,8 +67,8 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     offset = 1 / (2 * resolution)
 
     ox, oy = helpers.raw_coordinates(
-        config.ni,
-        config.nj,
+        config.nx,
+        config.ny,
         config.resolution,
         offset,
         config.chunks,
@@ -65,9 +77,12 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     # In the EMOD3D coordinate system y-axis points south rotating clockwise. We follow the
     # convention that azimuth points from due north rotating clockwise.
     # Fortunately, these are equivalent because there is no orientation change.
+    orientation = config.orientation
     transform = coordinates.translate(
-        config.origin_x, config.origin_y
-    ) @ Rotation.from_rotvec(np.array([0, 0, -config.azimuth]))
+        orientation.origin_x, orientation.origin_y
+    ) @ Rotation.from_rotvec(np.array([0, 0, -orientation.azimuth])).as_matrix().astype(
+        np.float32
+    )
 
     # Physical coordinates via affine transform.
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
@@ -77,22 +92,29 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
 
     interpolator = _topography_type_interpolator(config.topo_type)
 
-    depth = _depth_array(config.nk, config.resolution, config.chunks[Coordinate.K])
+    depth = _depth_array(config.nz, config.resolution, config.chunks[Coordinate.K])
 
-    z_phys = interpolator(z_surface, depth)
+    z_phys, depth = interpolator(z_surface, depth)
+    z_min, z_max, depth_min, depth_max = dask.compute(
+        z_phys.isel({Coordinate.K: 0}).min().data,
+        z_phys.isel({Coordinate.K: -1}).max().data,
+        depth.isel({Coordinate.K: 0}).min().data,
+        depth.isel({Coordinate.K: -1}).max().data,
+    )
 
-    z_min = z_phys.isel({Coordinate.K: 0}).min()
-    z_max = z_phys.isel({Coordinate.K: -1}).max()
+    trns = pyproj.Transformer.from_crs(
+        orientation.origin_crs, WGS84_CRS, always_xy=True
+    )
+    origin_lon, origin_lat = trns.transform(orientation.origin_x, orientation.origin_y)
 
-    depth_min = resolution / 2
-    depth_max = (config.nk - 1 / 2) * resolution
-    trns = pyproj.Transformer.from_crs(config.origin_crs, WGS84_CRS, always_xy=True)
-    origin_lon, origin_lat = trns.transform(config.origin_x, config.origin_y)
+    x, y, z, depth = xr.broadcast(x_phys, y_phys, z_phys, depth)
+    # Depth and z are both chunked correctly so this just ensures that x, y are chunked like z, depth
+    depth, x, y, z = helpers.ensure_chunks(depth, x, y, z)
 
     grid = GridSchema.new(
-        x_phys,
-        y_phys,
-        z_phys,
+        x,
+        y,
+        z,
         depth,
         z_min=z_min,
         z_max=z_max,
@@ -102,6 +124,7 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         resolution=resolution,
         origin_lon=origin_lon,
         origin_lat=origin_lat,
+        azimuth=orientation.azimuth,
     )
 
     return {grid.name: grid}

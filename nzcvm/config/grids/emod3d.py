@@ -1,7 +1,8 @@
+from nzcvm.config.grids.model import Model
 from enum import StrEnum, auto
 from typing import Literal
 from pathlib import Path
-from nzcvm.coordinates import Coordinate, WGS84_CRS, NO_ORIGIN
+from nzcvm.coordinates import Coordinate
 from nzcvm.config.grids import GridConfig
 from dataclasses import dataclass, field
 
@@ -19,17 +20,14 @@ class EMOD3DGrid(GridConfig):
     # Topographic surface path.
     surface: Path
 
-    ni: int
-    nj: int
-    nk: int
+    nx: int
+    ny: int
+    nz: int
 
     resolution: float
 
     # Coordinate metadata
-    origin_crs: str | int
-    origin_x: float
-    origin_y: float
-    azimuth: float
+    orientation: Model
 
     topo_type: TopographyType
 

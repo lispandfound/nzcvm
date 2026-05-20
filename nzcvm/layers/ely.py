@@ -3,7 +3,7 @@
 from nzcvm.layers.core import Layer
 
 
-from typing import Any
+from typing import Any, ClassVar
 import logging
 import numpy as np
 import xarray as xr
@@ -15,16 +15,22 @@ from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
 from nzcvm.model import ModelRange
-from nzcvm.surface import read_surface_from_path
+from nzcvm.surface import read_surface_from_path, Surface
 
 
 logger = logging.getLogger(__name__)
 
 
 class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
+    _INTERPOLATOR: ClassVar[Surface]
+
     def __init__(self, config: ElyLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
-        self.interpolator = read_surface_from_path(config.vs30)
+        ElyLayer._INTERPOLATOR = read_surface_from_path(config.vs30)
+
+    @property
+    def interpolator(self) -> Surface:
+        return ElyLayer._INTERPOLATOR
 
     def _ely_transform(
         self,
@@ -37,17 +43,22 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         # If the whole chunk is below the taper, skip Ely entirely.
         if not np.any(is_in_taper):
             logger.debug("Chunk outside taper, skipping Ely taper calculation.")
-            return self.next_layer(grid, **kwargs)
+            next = self.next_layer(grid, **kwargs)
+            logger.debug("Passing grid up the chain.")
+            breakpoint()
+            return next
 
-        # Ask the next layer *only* for the basins.
-        basin_kwargs = kwargs.copy()
-        basin_kwargs["model_range"] = ModelRange.BASINS
-        basins = self.next_layer(grid, **basin_kwargs)
+        basins = None
+        if kwargs["model_range"] != ModelRange.TOMOGRAPHY:
+            # Ask the next layer *only* for the basins.
+            basin_kwargs = kwargs.copy()
+            basin_kwargs["model_range"] = ModelRange.BASINS
+            basins = self.next_layer(grid, **basin_kwargs)
 
-        # Inside basins we don't have to compute the tomography or Ely taper.
-        if np.allclose(basins.alpha, 1.0):
-            logger.debug("Chunk inside basin, skipping Ely taper calculation.")
-            return basins
+            # Inside basins we don't have to compute the tomography or Ely taper.
+            if np.allclose(basins.alpha, 1.0):
+                logger.debug("Chunk inside basin, skipping Ely taper calculation.")
+                return basins
 
         safe_depth = grid.depth.clip(max=depth_t)
 
@@ -60,7 +71,6 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             y_top,
             input_core_dims=[[], []],
             output_core_dims=[[]],
-            dask="parallelized",
             output_dtypes=[np.float32],
         )
 
@@ -91,7 +101,10 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         )
 
         # Blend the basins over the Ely taper.
-        ely_blended_qualities = qualities.blend(basins, ely_qualities)
+        if basins:
+            ely_blended_qualities = qualities.blend(basins, ely_qualities)
+        else:
+            ely_blended_qualities = ely_qualities
 
         background = self.next_layer(grid, **kwargs)
         return xr.where(is_in_taper, ely_blended_qualities, background)
@@ -102,11 +115,11 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         **kwargs: Any,
     ) -> Qualities:
         """Apply the Ely taper via Dask map_blocks and delegate downstream."""
-
+        logger.debug(f"Beginning Ely Taper with kwargs={kwargs}")
         # Early escape constraints checked up front
         if (
-            grid.depth_min.compute() >= self.config.depth_t
-            or kwargs.get("model_range") == ModelRange.BASINS
+            kwargs.get("model_range") == ModelRange.BASINS
+            or grid.depth_min.compute() >= self.config.depth_t
         ):
             return self.next_layer(grid, **kwargs)
 

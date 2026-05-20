@@ -56,15 +56,6 @@ def _logical_k_indices(nk: int, dtype: np.dtype, k_offset: int = 0) -> xr.DataAr
     )
 
 
-def _ensure_chunks(*dsets: xr.DataArray) -> list[xr.DataArray]:
-
-    chunks = dict(dsets[0].chunksizes)
-    return [
-        dset.chunk(chunks) if dict(dset.chunksizes) != chunks else dset
-        for dset in dsets
-    ]
-
-
 def _curvilinear_grid(
     x_phys: xr.DataArray,
     y_phys: xr.DataArray,
@@ -109,7 +100,7 @@ def _curvilinear_grid(
 
     x, y, z = xr.broadcast(x_phys, y_phys, z)
 
-    x, y, z = _ensure_chunks(x, y, z)
+    x, y, z = helpers.ensure_chunks(x, y, z)
 
     return GridSchema.new(
         x,
@@ -165,11 +156,12 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
         offset,
         config.chunks,
     )
+    orientation = config.orientation
     transform = (
-        coordinates.translate(config.origin_x, config.origin_y)
+        coordinates.translate(orientation.origin_x, orientation.origin_y)
         # This is consistent with the rotation specified in the z-axis down
         # convention.
-        @ Rotation.from_rotvec(np.array([0.0, 0.0, -config.azimuth]), degrees=True)
+        @ Rotation.from_rotvec(np.array([0.0, 0.0, -orientation.azimuth]), degrees=True)
         .as_matrix()
         .astype(np.float32)
     )
@@ -184,8 +176,10 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
 
     grids = []
     # First layer: curvilinear mesh to account for topography.
-    trns = pyproj.Transformer.from_crs(config.origin_crs, WGS84_CRS, always_xy=True)
-    origin_lon, origin_lat = trns.transform(config.origin_x, config.origin_y)
+    trns = pyproj.Transformer.from_crs(
+        orientation.origin_crs, WGS84_CRS, always_xy=True
+    )
+    origin_lon, origin_lat = trns.transform(orientation.origin_x, orientation.origin_y)
     grids.append(
         _curvilinear_grid(
             x_phys,
@@ -198,7 +192,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             name=top_name,
             origin_lat=origin_lat,
             origin_lon=origin_lon,
-            azimuth=config.azimuth,
+            azimuth=orientation.azimuth,
         )
     )
 
@@ -221,7 +215,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 name=name,
                 origin_lat=origin_lat,
                 origin_lon=origin_lon,
-                azimuth=config.azimuth,
+                azimuth=orientation.azimuth,
             )
         )
         top = refinement.bottom

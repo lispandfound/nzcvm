@@ -1,3 +1,4 @@
+from nzcvm.config.grids.model import Model
 from typing import Literal
 from pathlib import Path
 from .core import GridConfig
@@ -70,16 +71,11 @@ class SW4GridConfig(GridConfig):
 
     # Topographic surface path.
     surface: Path
-    # Extents in x and y. The x and y definition depends on the CRS!
+    # Extents in x and y.
     extent_x: float
     extent_y: float
 
-    azimuth: float
-
-    # Coordinate metadata
-    origin_crs: str | int
-    origin_x: float
-    origin_y: float
+    orientation: Model
 
     # Mesh refinements.
     refinements: dict[str, MeshRefinement]

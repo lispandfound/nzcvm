@@ -1,5 +1,9 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from distributed import Client
+
+from dask.distributed import LocalCluster
+
 from dask.diagnostics import profile_visualize
 from dask.diagnostics.profile import ResourceProfiler
 
@@ -106,21 +110,27 @@ def generate(
 
     logger.info(f"Running with {resolved_n_threads} threads.")
     exit_stack = contextlib.ExitStack()
-    thread_context = dask.config.set(
-        scheduler="threads", num_workers=resolved_n_threads
+    # thread_context = dask.config.set(
+    #     scheduler="threads", num_workers=resolved_n_threads
+    # )
+    # exit_stack.enter_context(thread_context)
+    cluster = LocalCluster(
+        processes=False, n_workers=1, threads_per_worker=resolved_n_threads
     )
-    exit_stack.enter_context(thread_context)
+    client = Client(cluster)
+    exit_stack.push(cluster)
+    exit_stack.push(client)
     profilers = []
 
-    if profile:
-        profiler = ResourceProfiler(dt=0.1)
-        profilers.append(profiler)
-        exit_stack.enter_context(profiler)
+    # if profile:
+    #     profiler = ResourceProfiler(dt=0.1)
+    #     profilers.append(profiler)
+    #     exit_stack.enter_context(profiler)
 
-    if progress:
-        exit_stack.enter_context(TqdmCallback())
+    # if progress:
+    #     exit_stack.enter_context(TqdmCallback())
 
-    exit_stack.enter_context(LogProgress())
+    # exit_stack.enter_context(LogProgress())
 
     velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
     logger.debug("Building model pipeline")

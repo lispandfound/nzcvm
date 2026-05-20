@@ -25,7 +25,7 @@ def affine_transformation(
         3×3 affine matrix.
     """
 
-    return coordinates.translate(ox, oy) @ coordinates.rotate(azimuth, ccw=False)
+    return
 
 
 def compute_surface_elevation(
@@ -55,6 +55,14 @@ def compute_surface_elevation(
         dask="parallelized",
         output_dtypes=[x.dtype],
     )
+
+
+def ensure_chunks(*dsets: xr.DataArray) -> list[xr.DataArray]:
+    chunks = dict(dsets[0].chunksizes)
+    return [
+        dset.chunk(chunks) if dict(dset.chunksizes) != chunks else dset
+        for dset in dsets
+    ]
 
 
 def raw_coordinates(

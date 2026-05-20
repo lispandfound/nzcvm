@@ -50,7 +50,7 @@ def to_emod3d(velocity_model: VelocityModel, directory: Path):
     # down. To correct for this difference we transpose the outputs and reverse
     # the y-direction.
     velocity_model = velocity_model.orient(
-        Coordinate.K, Coordinate.J, Coordinate.I
+        Coordinate.J, Coordinate.K, Coordinate.I
     ).flip(Coordinate.J)
 
     resolutions = [grid.resolution for grid in velocity_model.grids.values()]
@@ -75,8 +75,8 @@ def to_emod3d(velocity_model: VelocityModel, directory: Path):
 
     output_shape = (
         len(qualities.coords[Coordinate.J]),
-        len(qualities.coords[Coordinate.I]),
         len(qualities.coords[Coordinate.K]),
+        len(qualities.coords[Coordinate.I]),
     )
 
     rho_target = np.memmap(

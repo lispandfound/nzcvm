@@ -10,6 +10,7 @@ surface = "dem.vtk"
 extent_x = 210000.0
 extent_y = 330000.0
 
+[grid.orientation]
 azimuth = 39.0
 origin_crs = 2193
 origin_x = 1857520.0

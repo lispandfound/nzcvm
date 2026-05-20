@@ -6,7 +6,7 @@ from nzcvm.qualities import Qualities, QualitiesSchema
 from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.layers.core import Layer
 
-from typing import Any
+from typing import Any, ClassVar
 import logging
 
 import numpy as np
@@ -21,13 +21,19 @@ logger = logging.getLogger(__name__)
 
 class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
     _MODEL_KWARGS = {"model_range"}
+    _MODEL_REF: ClassVar[ModelTree]
 
     def __init__(self, config: QueryLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
         models = config.model_path.rglob(config.model_glob)
-        self.model = ModelTree.load_models(*models)
+        QueryLayer._MODEL_REF = ModelTree.load_models(*models)
+
+    @property
+    def model(self) -> ModelTree:
+        return QueryLayer._MODEL_REF
 
     def __call__(self, grid: Grid, **kwargs: Any) -> Qualities:
+        logger.debug(f"Beginning query layer query with kwargs={kwargs}")
         component_names = list(Component)
 
         qualities = xr.apply_ufunc(

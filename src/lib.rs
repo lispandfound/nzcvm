@@ -21,9 +21,9 @@ mod nzcvm {
     use crate::real::Real;
     use crate::surface::SurfaceModel;
     use nalgebra::{Affine3, Matrix4, Point2, Point3, Point4};
-    use ndarray::{array, azip, Array1, Axis};
+    use ndarray::{array, azip, Array1, Array2, Axis};
     use numpy::{
-        IntoPyArray, PyArray1, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2,
+        IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2,
         PyUntypedArrayMethods,
     };
     use pyo3::exceptions::PyValueError;
@@ -556,6 +556,51 @@ mod nzcvm {
         }
     }
 
+    /// Vectorised Porter-Duff "over" blend of two ``(N, 6)`` quality arrays.
+    ///
+    /// Each row of *lhs* (foreground) is composited over the corresponding row
+    /// of *rhs* (background) using the same ``Quality::blend`` formula used
+    /// internally by the BVH query loop.  Column order is
+    /// ``[rho, vp, vs, qp, qs, alpha]``.
+    ///
+    /// Called from ``nzcvm.qualities.blend`` via ``xr.apply_ufunc`` so that
+    /// Python / xarray orchestrate the spatial dimensions while the hot loop
+    /// runs in Rust with the GIL released.
+    #[pyfunction]
+    pub fn blend_many<'py>(
+        py: Python<'py>,
+        lhs: PyReadonlyArray2<Real>,
+        rhs: PyReadonlyArray2<Real>,
+    ) -> PyResult<Bound<'py, PyArray2<Real>>> {
+        let la = lhs.as_array();
+        let ra = rhs.as_array();
+        let n = la.nrows();
+        if ra.nrows() != n {
+            return Err(PyValueError::new_err(format!(
+                "lhs and rhs must have the same number of rows; got lhs={n}, rhs={}",
+                ra.nrows(),
+            )));
+        }
+        if la.ncols() != 6 || ra.ncols() != 6 {
+            return Err(PyValueError::new_err(
+                "lhs and rhs must each have exactly 6 columns [rho, vp, vs, qp, qs, alpha]",
+            ));
+        }
+        let mut out = Array2::<Real>::zeros((n, 6));
+        py.detach(|| {
+            azip!((mut o in out.rows_mut(), l in la.rows(), r in ra.rows()) {
+                let bq = Quality::from(l).blend(&Quality::from(r));
+                o[0] = bq.rho;
+                o[1] = bq.vp;
+                o[2] = bq.vs;
+                o[3] = bq.qp;
+                o[4] = bq.qs;
+                o[5] = bq.alpha;
+            });
+        });
+        Ok(out.into_pyarray(py))
+    }
+
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyMeshModel>()?;
@@ -565,6 +610,7 @@ mod nzcvm {
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
         m.add_function(wrap_pyfunction!(surface_model, m)?)?; // New function
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;
+        m.add_function(wrap_pyfunction!(blend_many, m)?)?;
 
         Ok(())
     }

@@ -8,6 +8,7 @@ import typing
 from nzcvm.config.layers import LayerConfig
 from typing import TypeVar, Any, Generic
 from abc import ABC, abstractmethod
+import numpy as np
 
 
 C = TypeVar("C", bound=LayerConfig)
@@ -44,8 +45,8 @@ class Layer(ABC, Generic[C]):
         grid: Grid,
         *,
         model_range: Any = None,
-        out: Any = None,
-        where: Any = None,
+        out: Qualities | None = None,
+        where: np.ndarray | None = None,
         **kwargs: Any,
     ) -> Qualities:
         """Apply this layer to *grid* and return the result.

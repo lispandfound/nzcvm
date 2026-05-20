@@ -37,7 +37,7 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
         *,
         model_range: ModelRange = ModelRange.ALL,
         out: np.ndarray | None = None,
-        where: Any = None,
+        where: np.ndarray | None = None,
         **kwargs: Any,
     ) -> Qualities:
         """Query the velocity model at every point in the concrete chunk *grid*.

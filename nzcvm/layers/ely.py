@@ -37,8 +37,8 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         grid: Grid,
         *,
         model_range: ModelRange = ModelRange.ALL,
-        out: Any = None,
-        where: Any = None,
+        out: Qualities | None = None,
+        where: np.ndarray | None = None,
         **kwargs: Any,
     ) -> Qualities:
         """Apply the Ely GTL taper to the concrete chunk *grid*.

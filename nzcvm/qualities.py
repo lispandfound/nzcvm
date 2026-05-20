@@ -6,6 +6,8 @@ import numpy as np
 
 import xarray as xr
 
+from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+
 
 class Qualities(xr.Dataset):
     """
@@ -42,15 +44,31 @@ def template_like(arr: xr.DataArray) -> xr.Dataset:
     return xr.Dataset({component: arr for component in list(Component)})
 
 
+def _blend_raw(lhs_arr: np.ndarray, rhs_arr: np.ndarray) -> np.ndarray:
+    """Invoke Rust blend_many on ``(*spatial, 6)`` arrays.
+
+    ``apply_ufunc`` moves the ``component`` core dimension to the last axis,
+    so *lhs_arr* and *rhs_arr* arrive as ``(*spatial_dims, 6)`` C-arrays.
+    We flatten the spatial prefix, call the Rust hot loop (GIL released
+    inside), and reshape the result back.
+    """
+    shape = lhs_arr.shape  # (*spatial, 6)
+    n = lhs_arr[..., 0].size  # product of all spatial dims
+    flat_lhs = np.ascontiguousarray(lhs_arr.reshape(n, 6), dtype=np.float32)
+    flat_rhs = np.ascontiguousarray(rhs_arr.reshape(n, 6), dtype=np.float32)
+    return _nzcvm.blend_many(flat_lhs, flat_rhs).reshape(shape)
+
+
 def blend(
     lhs: Qualities,
     rhs: Qualities,
     out: Qualities | None = None,
-    where: Any = None,
+    where: np.ndarray | None = None,
 ) -> Qualities:
     """Alpha-composite *lhs* (foreground) over *rhs* (background).
 
-    Follows NumPy ufunc conventions for *out* and *where*:
+    The blend arithmetic is performed in Rust (``blend_many``) via
+    ``xr.apply_ufunc``.  Follows NumPy ufunc conventions for *out* and *where*:
 
     * *out* – an existing :class:`Qualities` dataset to write results into
       in-place.  When provided it is also returned.
@@ -59,30 +77,38 @@ def blend(
       ``True``; other positions in *out* are left unchanged.  Requires *out*
       to be provided.
     """
-    blended_alpha = lhs.alpha + rhs.alpha * (1.0 - lhs.alpha)
+    component_names = list(Component)
 
-    a0 = lhs.alpha / blended_alpha
-    a1 = rhs.alpha * (1.0 - lhs.alpha) / blended_alpha
+    # Stack each variable into a single DataArray with a "component" dim.
+    # xr.concat puts "component" first; apply_ufunc moves it to last.
+    lhs_da = xr.concat(
+        [lhs[c] for c in component_names],
+        dim=xr.DataArray(component_names, dims="component", name="component"),
+    )
+    rhs_da = xr.concat(
+        [rhs[c] for c in component_names],
+        dim=xr.DataArray(component_names, dims="component", name="component"),
+    )
 
-    blended: dict[str, Any] = {
-        "rho": a0 * lhs.rho + a1 * rhs.rho,
-        "vp": a0 * lhs.vp + a1 * rhs.vp,
-        "vs": a0 * lhs.vs + a1 * rhs.vs,
-        "qp": a0 * lhs.qp + a1 * rhs.qp,
-        "qs": a0 * lhs.qs + a1 * rhs.qs,
-        "alpha": blended_alpha,
-    }
+    result_da = xr.apply_ufunc(
+        _blend_raw,
+        lhs_da,
+        rhs_da,
+        input_core_dims=[["component"], ["component"]],
+        output_core_dims=[["component"]],
+        output_dtypes=[np.float32],
+        dask_gufunc_kwargs={"output_sizes": {"component": len(component_names)}},
+    )
+    result_da = result_da.assign_coords(component=component_names)
+    result = QualitiesSchema.from_dataset(result_da.to_dataset("component"))
 
     if out is None:
-        return QualitiesSchema.from_dataset(xr.Dataset(blended))
+        return result
 
     # Write computed values into *out* in-place, respecting the mask.
-    where_np = np.asarray(where) if where is not None else None
-    for var, val in blended.items():
-        dst = out[var].values
-        src = np.asarray(val)
-        if where_np is None:
-            np.copyto(dst, src)
+    for c in component_names:
+        if where is None:
+            np.copyto(out[c].values, result[c].values)
         else:
-            np.copyto(dst, src, where=where_np)
+            np.copyto(out[c].values, result[c].values, where=where)
     return out

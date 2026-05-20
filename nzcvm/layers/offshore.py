@@ -257,8 +257,8 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         grid: Grid,
         *,
         model_range: ModelRange = ModelRange.ALL,
-        out: Any = None,
-        where: Any = None,
+        out: Qualities | None = None,
+        where: np.ndarray | None = None,
         **kwargs: Any,
     ) -> xr.Dataset:
         """Apply the offshore taper to the concrete chunk *grid*.

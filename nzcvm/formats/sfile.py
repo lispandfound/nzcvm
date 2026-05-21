@@ -4,6 +4,8 @@ Writes a multi-grid velocity model in the NZCVM sfile HDF5 format used by
 downstream seismic simulation tools.
 """
 
+import dask
+
 from pathlib import Path
 
 from nzcvm.velocity_model import VelocityModel
@@ -14,7 +16,6 @@ import h5py
 import numpy as np
 import threading
 import queue
-from types import SimpleNamespace
 from contextlib import AbstractContextManager
 
 from nzcvm.components import Component
@@ -74,7 +75,7 @@ class AsyncHDF5Writer(AbstractContextManager):
         self.thread = threading.Thread(target=self._write_loop, daemon=True)
         self.thread.start()
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(self, _exc_type, _exc_value, _traceback) -> None:
         self.stop_event.set()
         self.thread.join()
 
@@ -88,18 +89,17 @@ def to_sfile(velocity_model: VelocityModel, filename: Path):
 
     writer = AsyncHDF5Writer(filename)
     with h5py.File(filename, "w") as f:
-        models = sorted(
+        models = list(
             velocity_model.pairwise.values(),
-            key=lambda grid_quality: grid_quality[0].z_min,
         )
         top_grid, _ = models[0]
-        global_min = top_grid.z_min
         bottom_grid, _ = models[-1]
-        global_bottom_val = bottom_grid.z_max
+
+        global_min, global_max = dask.compute(top_grid.z.min(), bottom_grid.z.max())
 
         f.attrs.create(
             ORIGIN_AZIM_ATTR,
-            data=[top_grid.origin_lon, top_grid.origin_lat, top_grid.azimuth],
+            data=[top_grid.bottom_left_lon, top_grid.bottom_left_lat, top_grid.azimuth],
             dtype=np.float64,
         )
 
@@ -115,7 +115,7 @@ def to_sfile(velocity_model: VelocityModel, filename: Path):
         targets = []
 
         f.attrs.create(
-            MIN_MAX_DEPTH_ATTR, data=[global_min, global_bottom_val], dtype=np.float64
+            MIN_MAX_DEPTH_ATTR, data=[global_min, global_max], dtype=np.float64
         )
 
         for i, (grid, qualities) in enumerate(models):

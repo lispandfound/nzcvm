@@ -1,0 +1,82 @@
+from pathlib import Path
+import logging
+import logging.config
+from dask.callbacks import Callback
+
+
+class LogProgress(Callback):
+    """A Dask callback that logs progress at specified intervals instead of animating a bar."""
+
+    def __init__(self, log_interval: int = 5, level: int = logging.INFO):
+        super().__init__()
+        self.log_interval = log_interval  # Log every X percent (e.g., 10%)
+        self.level = level
+        self.last_logged = None
+        self.logger = logging.getLogger("dask_progress")
+
+    def _start(self, dsk):
+        self.logger.log(self.level, f"Beginning dask calculation with {len(dsk)} tasks")
+
+    def _pretask(self, key, dsk, state):
+        # Calculate current percentage
+        ndone = len(state["finished"])
+        ntasks = len(state["dependencies"])
+
+        if ntasks > 0:
+            percent = int(round((ndone / ntasks) * 100))
+            if percent % self.log_interval == 0 and percent != self.last_logged:
+                self.logger.log(
+                    self.level,
+                    f"Progress: {percent}% completed ({ndone}/{ntasks} tasks)",
+                )
+                self.last_logged = percent
+
+    def _finish(self, dsk, state, errored):
+        if errored:
+            self.logger.error("Dask computation failed.")
+        else:
+            self.logger.log(self.level, "Dask calculation completed.")
+
+
+def configure_logging(level: str, log_path: Path | None) -> None:
+    logging_config = {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "standard": {
+                "format": "%(asctime)s [%(levelname)s] %(threadName)s | %(name)s: %(message)s"
+            },
+        },
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "formatter": "standard",
+                "level": level,
+                "stream": "ext://sys.stdout",
+            },
+        },
+        "loggers": {
+            "": {  # root logger
+                "handlers": ["console"],
+                "level": level,
+                "propagate": True,
+            },
+            "dask": {"level": level, "propagate": True},
+            "hdf5plugin": {"level": level, "propagate": True},
+        },
+    }
+
+    if log_path:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        logging_config["handlers"]["file"] = {
+            "class": "logging.handlers.RotatingFileHandler",
+            "formatter": "standard",
+            "level": level,
+            "filename": str(log_path),
+            "maxBytes": 10485760,
+            "backupCount": 5,
+            "encoding": "utf8",
+        }
+        logging_config["loggers"][""]["handlers"] = ["file"]
+
+    logging.config.dictConfig(logging_config)

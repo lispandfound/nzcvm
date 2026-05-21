@@ -6,31 +6,26 @@ Usage examples
 # Show depth scalar, both grids, interactive orthogonal slicer
 python visualise_grid.py model.nc --scalar depth
 
-# Show vp component from qualities, stride 4 (loads 1/64 of points)
-python visualise_grid.py model.nc --scalar vp --stride 4
-
-# Clip to a bounding box and show a single pre-computed slice
-python visualise_grid.py model.nc --scalar vs --slice-axis z --slice-pos 0.5
-
-# List available scalars in the file and exit
-python visualise_grid.py model.nc --list-scalars
+# Show vp component with a shapefile underlay and logical axes
+python visualise_grid.py model.nc --scalar vp --coastline nz-coastlines-topo-150k.shp
 """
 
-from nzcvm.components import Component
+import shapely
 
-from nzcvm.qualities import Qualities
-
-from nzcvm.grids import Grid
-
-from nzcvm.velocity_model import VelocityModel
-
-from pathlib import Path
-from typing import Annotated, Optional
+import gzip
 
 import numpy as np
+import pyvista as pv
 import typer
 import xarray as xr
-import pyvista as pv
+from pathlib import Path
+from typing import Annotated
+
+# Adjust these imports according to your local package structure
+from nzcvm.components import Component
+from nzcvm.grids import Grid
+from nzcvm.qualities import Qualities
+from nzcvm.velocity_model import VelocityModel
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -41,18 +36,154 @@ DEPTH_SCALAR = "depth"
 LAYER_SCALAR = "layer"
 ALL_SCALARS = (DEPTH_SCALAR, LAYER_SCALAR) + QUALITIES_COMPONENTS
 
-GRID_PATH = "/grid"  # root path for grid groups inside the DataTree
-
 app = typer.Typer(
     name="visualise-grid",
     help="Interactive 3-D PyVista viewer for xarray DataTree model grids.",
     add_completion=False,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def add_logical_axes(pl: pv.Plotter, grid: xr.Dataset, bounds: tuple[float, ...]):
+    """
+    Draws i, j, k logical direction vectors starting from the logical origin (0, 0, 0).
+    Arrows are scaled relative to the global bounding box so they are clearly visible.
+    """
+    w, e, s, n, z_min, z_max = bounds
+    diag = np.sqrt((e - w) ** 2 + (n - s) ** 2 + (z_max - z_min) ** 2)
+    scale = diag * 0.15  # Scale arrows to 15% of the plot size
+
+    try:
+        # 1. Extract physical origin coordinate at logical (i=0, j=0, k=0)
+        # Using .compute().item() forces Dask chunks to evaluate just this single scalar
+        z = grid.z.isel(i=0, j=0, k=0).compute().item()
+        p0 = np.array(
+            [
+                grid.x.isel(i=0, j=0, k=0).compute().item(),
+                grid.y.isel(i=0, j=0, k=0).compute().item(),
+                z,
+            ]
+        )
+
+        # 2. Extract step +1 along each axis to mathematically derive orientation
+        p_i = np.array(
+            [
+                grid.x.isel(i=1, j=0, k=0).compute().item(),
+                grid.y.isel(i=1, j=0, k=0).compute().item(),
+                z,
+            ]
+        )
+        p_j = np.array(
+            [
+                grid.x.isel(i=0, j=1, k=0).compute().item(),
+                grid.y.isel(i=0, j=1, k=0).compute().item(),
+                z,
+            ]
+        )
+        p_k = np.array(
+            [
+                grid.x.isel(i=0, j=0, k=1).compute().item(),
+                grid.y.isel(i=0, j=0, k=1).compute().item(),
+                grid.z.isel(i=0, j=0, k=1).compute().item(),
+            ]
+        )
+    except Exception as exc:
+        typer.secho(f"⚠️ Could not calculate logical axes: {exc}", fg="yellow")
+        return
+
+    axes_config = [(p_i, "i", "red"), (p_j, "j", "green"), (p_k, "k", "blue")]
+
+    for p_axis, label, color in axes_config:
+        vec = p_axis - p0
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            direction = vec / norm
+
+            # Thick, highly visible arrows
+            arrow = pv.Arrow(
+                start=p0,
+                direction=direction,
+                scale=scale,
+                shaft_radius=0.02,
+                tip_radius=0.06,
+                tip_length=0.2,
+            )
+            pl.add_mesh(arrow, color=color, lighting=True)
+
+            # Hovering labels slightly past the arrow tip
+            label_pos = p0 + direction * (scale * 1.1)
+            pl.add_point_labels(
+                [label_pos],
+                [label],
+                text_color=color,
+                point_size=0,
+                shape_opacity=0.0,
+                font_size=24,
+                always_visible=True,
+                margin=0,
+            )
+
+
+def add_coastline_underlay(
+    pl: pv.Plotter, bounds: tuple[float, ...], coastline_path: Path
+):
+    """
+    Reads a vector geometry file (e.g., shapefile) in NZTM and plots it
+    as a fast, clean line underlay beneath the 3D model.
+    """
+
+    # Z-level for the map: 500m below the lowest point in the grid bounds
+    _, _, _, _, z_min, _ = bounds
+    z_level = z_min - 500
+    with gzip.open(coastline_path) as handle:
+        coastline = shapely.from_wkb(handle.read())
+    points = []
+    lines = []
+    offset = 0
+
+    for geom in coastline.geoms:
+        if geom is None or geom.is_empty:
+            continue
+
+        sub_geoms = (
+            list(geom.geoms)
+            if geom.geom_type in ["MultiPolygon", "MultiLineString"]
+            else [geom]
+        )
+
+        for sg in sub_geoms:
+            if sg.geom_type == "Polygon":
+                rings = [sg.exterior] + list(sg.interiors)
+            elif sg.geom_type in ["LineString", "LinearRing"]:
+                rings = [sg]
+            else:
+                continue
+
+            for ring in rings:
+                coords = np.array(ring.coords)
+                n_pts = len(coords)
+
+                pts_3d = np.column_stack(
+                    (coords[:, 0], coords[:, 1], np.full(n_pts, z_level))
+                )
+                points.append(pts_3d)
+
+                line_seq = np.hstack([[n_pts], np.arange(offset, offset + n_pts)])
+                lines.append(line_seq)
+
+                offset += n_pts
+
+    if not points:
+        typer.secho("⚠️ No valid geometries found in the coastline file.", fg="yellow")
+        return
+
+    poly = pv.PolyData(np.vstack(points))
+    poly.lines = np.hstack(lines)
+
+    pl.add_mesh(poly, color="red", line_width=2.5, opacity=0.8, name="coastline")
 
 
 def _build_structured_grid(
@@ -62,33 +193,18 @@ def _build_structured_grid(
     scalar: str,
     stride: int,
 ) -> pv.StructuredGrid:
-    """
-    Build a PyVista StructuredGrid from an xarray Dataset.
-
-    The dataset must have variables x, y, z (i, j, k) plus either
-    'depth' (i, j, k) or 'qualities' (i, j, k, component).
-
-    Strides sub-sample every axis to keep memory manageable.
-    """
+    """Build a PyVista StructuredGrid from an xarray Dataset."""
     sl = slice(None, None, stride)
-    grid = grid.isel(i=sl, j=sl, k=sl)
 
-    x = grid.x.values
-    y = grid.y.values
-    z = grid.z.values
+    sub_grid = grid.isel(i=sl, j=sl, k=sl)
+    mesh = pv.StructuredGrid(sub_grid.x.values, sub_grid.y.values, sub_grid.z.values)
 
-    # PyVista StructuredGrid expects (k, j, i) Fortran-style ordering
-    # i.e. the *last* index varies fastest when the flat array is built.
-    # Our arrays are already (i, j, k); pyvista accepts them directly:
-    mesh = pv.StructuredGrid(x, y, z)
-
-    # --- scalar data -------------------------------------------------------
     if scalar == DEPTH_SCALAR:
-        values = grid.depth.values
+        values = sub_grid.depth.values
     elif scalar == LAYER_SCALAR:
-        values = np.full_like(z, layer)
+        values = np.full_like(sub_grid.z.values, layer)
     else:
-        values = qualities[scalar].sel(i=sl, j=sl, k=sl).values
+        values = qualities[scalar].isel(i=sl, j=sl, k=sl).values
 
     mesh.point_data[scalar] = values.ravel(order="F")
     mesh.set_active_scalars(scalar)
@@ -96,30 +212,22 @@ def _build_structured_grid(
     return mesh
 
 
+# ---------------------------------------------------------------------------
+# Commands
+# ---------------------------------------------------------------------------
+
+
 @app.command()
 def basin(
-    mesh: Annotated[
-        Path,
-        typer.Argument(
-            help="Mesh file to read (tomography volume or basin).",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
-    ],
-    scalar: Annotated[
-        str, typer.Argument(help="Material property to display (rho, vp, vs, …).")
-    ],
+    mesh: Annotated[Path, typer.Argument(help="Mesh file to read.", exists=True)],
+    scalar: Annotated[str, typer.Argument(help="Material property to display.")],
     topography: Annotated[
         Path | None,
-        typer.Option(
-            help="Optional topography mesh to overlay.",
-            exists=True,
-            file_okay=True,
-            dir_okay=False,
-            readable=True,
-        ),
+        typer.Option(help="Optional topography mesh to overlay.", exists=True),
+    ] = None,
+    coastline: Annotated[
+        Path | None,
+        typer.Option(help="Path to coastline vector file (NZTM).", exists=True),
     ] = None,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
@@ -132,26 +240,21 @@ def basin(
             topo, style="wireframe", color="black", opacity=0.3, label="Surface"
         )
 
-    if scalar in mesh_data.point_data:
-        scalar_name = scalar
-    elif scalar in mesh_data.cell_data:
-        scalar_name = scalar
-    elif scalar in mesh_data.field_data:
-        field_values = np.asarray(mesh_data.field_data[scalar]).reshape(-1)
-        if field_values.size != 1:
-            raise typer.BadParameter(
-                f"Field-data scalar '{scalar}' must contain exactly one value, "
-                f"got {field_values.size}."
-            )
+    if scalar in mesh_data.field_data:
+        val = mesh_data.field_data[scalar][0]
         if mesh_data.n_cells > 0:
-            mesh_data.cell_data[scalar] = np.full(mesh_data.n_cells, field_values[0])
+            mesh_data.cell_data[scalar] = val
         else:
-            mesh_data.point_data[scalar] = np.full(mesh_data.n_points, field_values[0])
-        scalar_name = scalar
-    else:
+            mesh_data.point_data[scalar] = val
+    elif scalar not in mesh_data.point_data and scalar not in mesh_data.cell_data:
         raise typer.BadParameter(f"Scalar '{scalar}' not found in mesh data.")
 
-    pl.add_mesh(mesh_data, scalars=scalar_name)
+    mesh_data.set_active_scalars(scalar)
+    pl.add_mesh(mesh_data)
+
+    if coastline:
+        add_coastline_underlay(pl, mesh_data.bounds, coastline)
+
     pl.camera.up = (0.0, 0.0, -1.0)
     pl.show()
 
@@ -159,240 +262,159 @@ def basin(
 @app.command()
 def model(
     filepath: Annotated[
-        Path,
-        typer.Argument(
-            help="Path to the NetCDF / Zarr file containing the xarray DataTree.",
-            exists=True,
-            readable=True,
-        ),
+        Path, typer.Argument(help="Path to the NetCDF/Zarr file.", exists=True)
     ],
-    scalar: Annotated[
-        Component,
+    scalar: Annotated[Component, typer.Option("--scalar", "-s")] = Component.VS,
+    coastline: Annotated[
+        Path | None,
         typer.Option(
-            "--scalar",
-            "-s",
+            "--coastline",
+            "-c",
+            help="Path to coastline vector file (NZTM).",
+            exists=True,
         ),
-    ] = Component.VS,
+    ] = None,
     stride: Annotated[
         int,
         typer.Option(
-            "--stride",
-            "-S",
-            help=(
-                "Sub-sampling stride along every axis (i, j, k). "
-                "stride=1 loads every point; stride=4 loads 1 in 4 → 64× fewer points. "
-            ),
-            min=1,
+            "--stride", "-S", help="Sub-sampling stride (e.g. 4 = 1/64 points)."
         ),
     ] = 4,
+    show_axes: Annotated[
+        bool,
+        typer.Option("--show-axes/--no-axes", help="Show the i, j, k logical axes"),
+    ] = True,
     slice_mode: Annotated[
-        str,
-        typer.Option(
-            "--slice-mode",
-            help=(
-                "Slicing mode: "
-                "'orthogonal' – interactive orthogonal slice widget; "
-                "'none' – render solid volumes only."
-            ),
-            case_sensitive=False,
-        ),
+        str, typer.Option(help="'orthogonal' or 'none'.")
     ] = "orthogonal",
     slice_axis: Annotated[
-        Optional[str],
-        typer.Option(
-            "--slice-axis",
-            help=(
-                "Pre-compute a static slice along this axis ('x', 'y', or 'z') "
-                "at the fractional position given by --slice-pos. "
-                "Overrides --slice-mode."
-            ),
-            case_sensitive=False,
-        ),
+        str | None, typer.Option(help="Axis to static slice ('x', 'y', 'z').")
     ] = None,
     slice_pos: Annotated[
-        float,
-        typer.Option(
-            "--slice-pos",
-            help=(
-                "Fractional position [0, 1] along --slice-axis for the static slice. "
-                "0 = minimum extent, 1 = maximum extent."
-            ),
-            min=0.0,
-            max=1.0,
-        ),
+        float, typer.Option(help="Fractional position [0, 1] along --slice-axis.")
     ] = 0.5,
     cmap: Annotated[
-        str,
-        typer.Option("--cmap", help="Matplotlib / PyVista colormap name."),
+        str, typer.Option(help="Matplotlib / PyVista colormap name.")
     ] = "viridis",
-    opacity: Annotated[
-        float,
-        typer.Option(
-            "--opacity",
-            help="Mesh opacity [0, 1]. Useful when rendering multiple grids.",
-            min=0.0,
-            max=1.0,
-        ),
-    ] = 1.0,
-    show_edges: Annotated[
-        bool,
-        typer.Option(
-            "--show-edges/--no-edges", help="Show cell edges on solid meshes."
-        ),
-    ] = False,
-    off_screen: Annotated[
-        bool,
-        typer.Option(
-            "--off-screen",
-            help="Render off-screen (saves a PNG instead of opening a window). "
-            "Useful on headless servers.",
-        ),
-    ] = False,
+    opacity: Annotated[float, typer.Option(help="Mesh opacity [0, 1].")] = 1.0,
+    show_edges: Annotated[bool, typer.Option("--show-edges/--no-edges")] = False,
+    off_screen: Annotated[bool, typer.Option(help="Render off-screen.")] = False,
     screenshot: Annotated[
-        Optional[Path],
-        typer.Option("--screenshot", help="Save a PNG screenshot to this path."),
+        Path | None, typer.Option(help="Save a PNG screenshot.")
     ] = None,
     min_val: float | None = None,
     max_val: float | None = None,
 ) -> None:
-    """
-    Load an xarray DataTree and visualise every /grid/* group as a 3-D
-    PyVista StructuredGrid, coloured by SCALAR.
-    """
+    """Load an xarray DataTree and visualise model grids."""
 
-    # --- validate scalar ---------------------------------------------------
-    scalar = scalar.lower()
-    if scalar not in ALL_SCALARS:
-        typer.echo(
-            f"[error] Unknown scalar '{scalar}'. Choose from: {', '.join(ALL_SCALARS)}",
-            err=True,
+    scalar_str = (
+        str(scalar).lower() if isinstance(scalar, Component) else scalar.lower()
+    )
+
+    if scalar_str not in ALL_SCALARS:
+        typer.secho(
+            f"[error] Unknown scalar '{scalar_str}'. Choose from: {', '.join(ALL_SCALARS)}",
+            fg="red",
         )
         raise typer.Exit(1)
 
-    # --- load data ---------------------------------------------------------
     typer.echo(f"Loading DataTree from {filepath} …")
-    dt = xr.open_datatree(str(filepath), chunks="auto")  # type: ignore[attr-defined]
+    dt = xr.open_datatree(str(filepath), chunks="auto")
     vmod = VelocityModel.from_datatree(dt)
 
     grids = {}
     for i, (name, (grid, qualities)) in enumerate(vmod.pairwise.items()):
-        typer.echo(f"  Building StructuredGrid for '{name}' (stride={stride}) …")
+        typer.echo(f"  Building '{name}' (stride={stride}) …")
         try:
-            g = _build_structured_grid(i, grid, qualities, scalar, stride)
+            g = _build_structured_grid(i, grid, qualities, scalar_str, stride)
             grids[name] = g
-            typer.echo(f"    → {g.n_points:,} points, bounds: {np.round(g.bounds, 0)}")
-        except Exception as exc:  # noqa: BLE001
-            typer.echo(f"  [error] Failed to build grid for '{name}': {exc}", err=True)
+            typer.echo(f"    → {g.n_points:,} points")
+        except Exception as exc:
+            typer.secho(f"  [error] Failed to build grid for '{name}': {exc}", fg="red")
 
     if not grids:
-        typer.echo("[error] No grids could be built. Exiting.", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit("No grids could be built. Exiting.")
 
-    # --- compute global scalar range across all grids ----------------------
-    all_vals = np.concatenate([g.point_data[scalar] for g in grids.values()])
-    clim = [float(np.nanmin(all_vals)), float(np.nanmax(all_vals))]
-    if min_val is not None:
-        clim[0] = min_val
-    if max_val is not None:
-        clim[1] = max_val
-    typer.echo(f"Scalar '{scalar}' range: {clim[0]:.4g} … {clim[1]:.4g}")
+    multi_block = pv.MultiBlock(list(grids.values()))
+    global_bounds = multi_block.bounds
 
-    # --- set up plotter ----------------------------------------------------
-    pl = pv.Plotter(
-        title=f"Grid viewer — {scalar}",
-        off_screen=off_screen,
-    )
+    all_vals = np.concatenate([g.point_data[scalar_str] for g in grids.values()])
+    clim = [
+        min_val if min_val is not None else float(np.nanmin(all_vals)),
+        max_val if max_val is not None else float(np.nanmax(all_vals)),
+    ]
 
-    # Shared mesh kwargs
-    mesh_kwargs = dict(
-        scalars=scalar,
-        cmap=cmap,
-        clim=clim,
-        opacity=opacity,
-        show_edges=show_edges,
-        show_scalar_bar=False,  # add one shared bar below
-    )
+    pl = pv.Plotter(title=f"Grid viewer — {scalar_str}", off_screen=off_screen)
 
-    if slice_axis is not None:
-        axis_map = {"x": 0, "y": 1, "z": 2}
+    if coastline:
+        add_coastline_underlay(pl, global_bounds, coastline)
+
+    # Render i, j, k arrows based on the original unstrided arrays
+    if show_axes:
+        for _, (grid_ds, _) in vmod.pairwise.items():
+            add_logical_axes(pl, grid_ds, global_bounds)
+
+    mesh_kwargs = {
+        "scalars": scalar_str,
+        "cmap": cmap,
+        "clim": clim,
+        "opacity": opacity,
+        "show_edges": show_edges,
+        "show_scalar_bar": False,
+    }
+
+    if slice_axis:
         ax = slice_axis.lower()
-        if ax not in axis_map:
-            typer.echo(
-                f"[error] --slice-axis must be 'x', 'y', or 'z', got '{slice_axis}'.",
-                err=True,
-            )
-            raise typer.Exit(1)
+        if ax not in ["x", "y", "z"]:
+            raise typer.Exit(f"[error] Invalid axis '{ax}'.")
 
-        typer.echo(
-            f"Adding static {ax.upper()}-slice at fractional pos {slice_pos:.2f} …"
-        )
+        axis_idx = {"x": 0, "y": 1, "z": 2}[ax]
         for name, g in grids.items():
-            lo, hi = g.bounds[axis_map[ax] * 2], g.bounds[axis_map[ax] * 2 + 1]
+            lo, hi = g.bounds[axis_idx * 2], g.bounds[axis_idx * 2 + 1]
             origin = [0.0, 0.0, 0.0]
-            origin[axis_map[ax]] = lo + slice_pos * (hi - lo)
+            origin[axis_idx] = lo + slice_pos * (hi - lo)
+
             normal = [0.0, 0.0, 0.0]
-            normal[axis_map[ax]] = 1.0
-            sliced = g.slice(normal=normal, origin=origin)
-            pl.add_mesh(sliced, **mesh_kwargs, label=name)
-    elif slice_mode.lower() == "orthogonal":
-        typer.echo("Adding interactive orthogonal slice widgets …")
-        for name, g in grids.items():
-            pl.add_mesh_slice_orthogonal(
-                g,
-                **mesh_kwargs,
+            normal[axis_idx] = 1.0
+
+            pl.add_mesh(
+                g.slice(normal=normal, origin=origin), **mesh_kwargs, label=name
             )
+
+    elif slice_mode.lower() == "orthogonal":
+        for g in grids.values():
+            pl.add_mesh_slice_orthogonal(g, **mesh_kwargs)
     else:
-        typer.echo("Rendering solid volumes …")
         for name, g in grids.items():
             pl.add_mesh(g, **mesh_kwargs, label=name)
 
-    # --- shared scalar bar -------------------------------------------------
+    # UI Setup
     pl.add_scalar_bar(
-        title=scalar,
-        n_labels=5,
-        fmt="%.3g",
-        position_x=0.85,
-        position_y=0.05,
-        vertical=True,
+        title=scalar_str, fmt="%.3g", position_x=0.85, position_y=0.05, vertical=True
     )
+    pl.add_axes(xlabel="X (m)", ylabel="Y (m)", zlabel="m (Z)")
 
-    # --- axes and camera ---------------------------------------------------
-    pl.add_axes(
-        xlabel="X (m)",
-        ylabel="Y (m)",
-        zlabel="m (Z)",
-    )
+    for name, g in grids.items():
+        pl.add_point_labels(
+            [g.center],
+            [name],
+            point_size=0,
+            font_size=10,
+            text_color="yellow",
+            shape_opacity=0.0,
+        )
 
     pl.camera_position = "iso"
     pl.camera.up = (0.0, 0.0, -1.0)
     pl.reset_camera()
 
-    # --- grid labels as text actors ----------------------------------------
-    for name, g in grids.items():
-        center = g.center
-        pl.add_point_labels(
-            [center],
-            [name],
-            point_size=0,
-            font_size=10,
-            text_color="yellow",
-            always_visible=True,
-            shape_opacity=0.0,
-        )
-
-    # --- show / save -------------------------------------------------------
-    if screenshot is not None:
+    if screenshot:
         pl.show(auto_close=False)
         pl.screenshot(str(screenshot))
         typer.echo(f"Screenshot saved to {screenshot}")
     else:
-        typer.echo(
-            "Launching viewer.\n"
-            "  Drag  – rotate | Scroll – zoom | Right-drag – pan\n"
-            + (
-                "  Slice widget handles appear on each axis face — drag to move.\n"
-                if slice_mode.lower() == "orthogonal" and slice_axis is None
-                else ""
-            )
-        )
         pl.show()
+
+
+if __name__ == "__main__":
+    app()

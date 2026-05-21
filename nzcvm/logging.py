@@ -1,7 +1,98 @@
 from pathlib import Path
 import logging
 import logging.config
+import threading
+import time
+import psutil
+import logging
+import os
 from dask.callbacks import Callback
+
+
+class ResourceMonitor:
+    def __init__(self, interval: float = 5.0, level: int = logging.INFO):
+        """
+        A context manager that monitors process/system resources in a background thread.
+
+        :param interval: Sleep interval between log outputs in seconds.
+        :param level: The logging level to log performance stats at.
+        """
+        self.interval = interval
+        self.level = level
+
+        self._stop_event = threading.Event()
+        self._monitor_thread = None
+        self._process = psutil.Process(os.getpid())
+        self.logger = logging.getLogger(self.__class__.__name__)
+        self._should_run = self.logger.isEnabledFor(self.level)
+
+    def __enter__(self):
+        # If the level is below what's configured, do absolutely nothing
+        if not self._should_run:
+            return self
+
+        self._stop_event.clear()
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self._monitor_thread.start()
+        return self
+
+    def __exit__(self, _exc_type, _exc_val, _exc_tb):
+        if not self._should_run:
+            return False
+
+        self._stop_event.set()
+        if self._monitor_thread:
+            self._monitor_thread.join()
+        return False
+
+    def _monitor_loop(self):
+        try:
+            last_disk = psutil.disk_io_counters()
+        except Exception:
+            last_disk = None
+
+        last_time = time.time()
+
+        time.sleep(0.1)
+
+        while not self._stop_event.wait(timeout=self.interval):
+            try:
+                current_time = time.time()
+                dt = current_time - last_time
+
+                cpu_p = self._process.cpu_percent()
+
+                mem_info = self._process.memory_info()
+                rss_mb = mem_info.rss / (1024 * 1024)
+
+                current_disk = psutil.disk_io_counters()
+
+                read_speed_mb = 0.0
+                write_speed_mb = 0.0
+
+                if current_disk and last_disk and dt > 0:
+                    read_diff = current_disk.read_bytes - last_disk.read_bytes
+                    write_diff = current_disk.write_bytes - last_disk.write_bytes
+
+                    read_speed_mb = (read_diff / (1024 * 1024)) / dt
+                    write_speed_mb = (write_diff / (1024 * 1024)) / dt
+
+                self.logger.log(
+                    self.level,
+                    f"CPU: {cpu_p:.1f}% | "
+                    f"RSS: {rss_mb:.2f} MB | "
+                    f"Disk Read: {read_speed_mb:.2f} MB/s | "
+                    f"Disk Write: {write_speed_mb:.2f} MB/s",
+                )
+
+                last_disk = current_disk
+                last_time = current_time
+
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                self.logger.warning(
+                    f"Monitoring thread hit a metric collection error: {e}"
+                )
+                break
 
 
 class LogProgress(Callback):

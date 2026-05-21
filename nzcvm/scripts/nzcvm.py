@@ -7,7 +7,6 @@ from distributed import Client
 from dask.distributed import LocalCluster
 
 from dask.diagnostics import profile_visualize
-from dask.diagnostics.profile import ResourceProfiler
 
 import contextlib
 import dask
@@ -23,7 +22,7 @@ from typing import Annotated
 
 import psutil
 import typer
-from nzcvm.logging import configure_logging, LogProgress
+from nzcvm.logging import configure_logging, LogProgress, ResourceMonitor
 
 from nzcvm import formats
 
@@ -96,6 +95,7 @@ def generate(
     ] = False,
     distributed: bool = False,
     progress: bool = False,
+    monitor: bool = False,
     log_level: str = "WARNING",
     log_file: Path | None = None,
 ) -> None:
@@ -135,6 +135,9 @@ def generate(
             )
         elif progress:
             exit_stack.enter_context(TqdmCallback())
+
+        if monitor:
+            exit_stack.enter_context(ResourceMonitor())
 
         profilers = []
 

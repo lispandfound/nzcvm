@@ -31,8 +31,6 @@ class MeshRefinement(ConfigObject):
     resolution: float
     # Bottom of interface layer in *elevation*.
     bottom: float
-    # Deformation of this layer, floating point between 0 and 1.
-    deformation: float
 
 
 DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: 128}

@@ -90,7 +90,8 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     ).as_matrix().astype(np.float32)
 
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
-    min_lon, min_lat = coordinates.apply_affine_transform(transform, min_x, min_y)
+    min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
+    min_lon, min_lat = orientation.transformer(WGS84_CRS).transform(min_x, min_y)
 
     topographic_surface = read_surface_from_path(config.surface)
     z_surface = helpers.compute_surface_elevation(topographic_surface, x_phys, y_phys)

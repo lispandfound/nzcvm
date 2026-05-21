@@ -94,6 +94,8 @@ def generate(
             help="If set, quantise the output in NetCDF/Zarr formats using ZFP"
         ),
     ] = False,
+    distributed: bool = False,
+    progress: bool = False,
     log_level: str = "WARNING",
     log_file: Path | None = None,
 ) -> None:
@@ -106,27 +108,44 @@ def generate(
     logger.info(f"Running with {resolved_n_threads} threads.")
     exit_stack = contextlib.ExitStack()
 
-    cluster = LocalCluster(
-        processes=False, n_workers=1, threads_per_worker=resolved_n_threads
-    )
-
-    client = Client(cluster)
-
-    exit_stack.push(cluster)
-    exit_stack.push(client)
-    exit_stack.push(registry.pipeline_context())
-
-    profilers = []
-
-    velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
-
     with exit_stack:
+        if distributed:
+            cluster = LocalCluster(
+                processes=False, n_workers=1, threads_per_worker=resolved_n_threads
+            )
+
+            client = Client(cluster)
+
+            exit_stack.enter_context(cluster)
+            exit_stack.enter_context(client)
+            # Only need the registry pipeline manager if we are managing references
+            # to the surface or model tree in the pickling. The built-in scheduler
+            # doesn't pickle the objects when run in threaded mode so this can
+            # be skipped.
+            exit_stack.enter_context(registry.pipeline_context())
+        else:
+            exit_stack.enter_context(
+                dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
+            )
+
+        if progress and distributed:
+            raise ValueError(
+                "Distributed scheduler does not support --progress (use the dashboard instead)."
+            )
+        elif progress:
+            exit_stack.enter_context(TqdmCallback())
+
+        profilers = []
+
+        velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
+
         logger.debug("Building model pipeline")
         model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
         logger.debug("Model pipeline built")
 
         velocity_model = VelocityModel.from_config(velocity_model_spec)
         velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
+
         formats.write_velocity_model(
             velocity_model, output, output_format, quantise_arrays=quantise
         )

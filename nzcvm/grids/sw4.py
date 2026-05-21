@@ -27,6 +27,8 @@ nzcvm.velocity_model.VelocityModelSpec : Config dataclass consumed by this modul
 nzcvm.curvilinear_mesh : Low-level mesh boundary and fill-between functions.
 """
 
+import dask
+
 from typing import Any
 
 from nzcvm.grids.grid import Grid, GridSchema
@@ -37,7 +39,6 @@ from nzcvm.config.grids.sw4 import SW4GridConfig
 from scipy.spatial.transform import Rotation
 
 import numpy as np
-import scipy as sp
 import xarray as xr
 import pyproj
 
@@ -95,22 +96,15 @@ def _curvilinear_grid(
     # added to the surface instead of the surface subtracted from the z.
     depth = -surface + z
 
-    depth_min = depth.isel({Coordinate.K: 0}).min()
-    depth_max = depth.isel({Coordinate.K: -1}).max()
+    x, y, z, depth = xr.broadcast(x_phys, y_phys, z, depth)
 
-    x, y, z = xr.broadcast(x_phys, y_phys, z)
-
-    x, y, z = helpers.ensure_chunks(x, y, z)
+    x, y, z, depth = helpers.ensure_chunks(x, y, z, depth)
 
     return GridSchema.new(
         x,
         y,
         z,
         depth,
-        z_min=z_min,
-        z_max=bottom,
-        depth_min=depth_min,
-        depth_max=depth_max,
         resolution=resolution,
         **kwargs,
     )
@@ -156,16 +150,23 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
         offset,
         config.chunks,
     )
+    min_x, min_y = dask.compute(ox.isel(i=0, j=0), oy.isel(i=0, j=0))
+    min_x = min_x.item()
+    min_y = min_y.item()
+
     orientation = config.orientation
     transform = (
         coordinates.translate(orientation.origin_x, orientation.origin_y)
         # This is consistent with the rotation specified in the z-axis down
         # convention.
-        @ Rotation.from_rotvec(np.array([0.0, 0.0, -orientation.azimuth]), degrees=True)
+        @ Rotation.from_rotvec(
+            np.array([0.0, 0.0, orientation.grid_azimuth]), degrees=True
+        )
         .as_matrix()
         .astype(np.float32)
     )
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
+    min_lon, min_lat = coordinates.apply_affine_transform(transform, min_x, min_y)
 
     topographic_surface = read_surface_from_path(config.surface)
     z_surface = helpers.compute_surface_elevation(
@@ -176,10 +177,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
 
     grids = []
     # First layer: curvilinear mesh to account for topography.
-    trns = pyproj.Transformer.from_crs(
-        orientation.origin_crs, WGS84_CRS, always_xy=True
-    )
-    origin_lon, origin_lat = trns.transform(orientation.origin_x, orientation.origin_y)
+    origin_lon, origin_lat = orientation.origin_lat_lon
+
     grids.append(
         _curvilinear_grid(
             x_phys,
@@ -193,6 +192,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             origin_lat=origin_lat,
             origin_lon=origin_lon,
             azimuth=orientation.azimuth,
+            bottom_left_lon=min_lon,
+            bottom_left_lat=min_lat,
         )
     )
 
@@ -216,6 +217,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 origin_lat=origin_lat,
                 origin_lon=origin_lon,
                 azimuth=orientation.azimuth,
+                bottom_left_lon=min_lon,
+                bottom_left_lat=min_lat,
             )
         )
         top = refinement.bottom

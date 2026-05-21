@@ -1,17 +1,17 @@
 import dask
 import pyproj
-from nzcvm.grids.builder import build_grids_from_config
 from collections.abc import Callable
+import numpy as np
+import xarray as xr
+from scipy.spatial.transform import Rotation
+
+from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.surface import read_surface_from_path
 from nzcvm.coordinates import Coordinate, WGS84_CRS
 from nzcvm import coordinates
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.grids import helpers
 from nzcvm.grids.grid import Grid, GridSchema
-from scipy.spatial.transform import Rotation
-
-import xarray as xr
-import numpy as np
 
 
 LAYER_DIM = "layer"
@@ -21,23 +21,28 @@ GRID_NAME = "grid_0"
 def squashed_interpolator(
     z_surface: xr.DataArray, depth: xr.DataArray
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    z_surf_3d, depth_3d = xr.broadcast(z_surface, depth)
-    return z_surf_3d + depth, depth_3d
+    # Rely on implicit mathematical broadcasting.
+    # Returning depth as 1D here is fine, it gets explicitly broadcasted to 3D at the end.
+    return z_surface + depth, depth
 
 
 def squashed_tapered_interpolator(
     z_surface: xr.DataArray, depth: xr.DataArray
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    z_surf_3d, depth_3d = xr.broadcast(z_surface, depth)
+    # Squashed tapered:
+    # z_surface + 2 * d up to -z_surface
+    # z_surface + d after
+    # z_surface + 2 * d > -z_surface
+    # 2 * z_surface + 2 * d > 0
+    # z_surface + d > 0
 
-    shift = np.float32(2) * depth_3d
-    squashed_tapered_z = z_surf_3d - shift
-    distort_mask = squashed_tapered_z > -z_surf_3d
+    squashed_tapered_z = z_surface + depth
+    residual_depth = depth > -z_surface
 
-    depth_new = xr.where(distort_mask, shift, depth_3d)
-    z = xr.where(distort_mask, squashed_tapered_z, -depth_new)
+    # 3. Branchless 3D addition
+    z = squashed_tapered_z + residual_depth * depth
 
-    return z, depth_new
+    return z, z - z_surface
 
 
 def _topography_type_interpolator(
@@ -73,49 +78,33 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         offset,
         config.chunks,
     )
-
-    # In the EMOD3D coordinate system y-axis points south rotating clockwise. We follow the
-    # convention that azimuth points from due north rotating clockwise.
-    # Fortunately, these are equivalent because there is no orientation change.
+    min_x, min_y = dask.compute(ox.sel(i=0, j=0), oy.sel(i=0, j=0))
+    min_x = min_x.item()
+    min_y = min_y.item()
     orientation = config.orientation
+
     transform = coordinates.translate(
         orientation.origin_x, orientation.origin_y
-    ) @ Rotation.from_rotvec(np.array([0, 0, -orientation.azimuth])).as_matrix().astype(
-        np.float32
-    )
+    ) @ Rotation.from_rotvec(
+        np.array([0, 0, orientation.grid_azimuth]), degrees=True
+    ).as_matrix().astype(np.float32)
 
-    # Physical coordinates via affine transform.
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
+    min_lon, min_lat = coordinates.apply_affine_transform(transform, min_x, min_y)
 
     topographic_surface = read_surface_from_path(config.surface)
     z_surface = helpers.compute_surface_elevation(topographic_surface, x_phys, y_phys)
 
     interpolator = _topography_type_interpolator(config.topo_type)
 
-    depth = _depth_array(config.nz, config.resolution, config.chunks[Coordinate.K])
+    depth_1d = _depth_array(config.nz, config.resolution, config.chunks[Coordinate.K])
 
-    z_phys, depth = interpolator(z_surface, depth)
-    z_min = z_phys.isel({Coordinate.K: 0}).min().compute()
-    z_max = z_phys.isel({Coordinate.K: -1}).max()
-    thickness = np.float32(config.nz * config.resolution)
-    match config.topo_type:
-        case TopographyType.SQUASHED:
-            depth_min = np.float32(offset)
-            depth_max = np.float32(config.nz * config.resolution - offset)
-        case TopographyType.SQUASHED_TAPERED if thickness > 2 * abs(z_min.item()):
-            depth_min = np.float32(2 * offset)
-            depth_max = np.float32(config.nz * config.resolution - offset)
-        case TopographyType.SQUASHED_TAPERED:
-            depth_min = np.float32(2 * offset)
-            depth_max = np.float32(config.nz * config.resolution - 2 * offset)
+    z_phys, depth_out = interpolator(z_surface, depth_1d)
 
-    trns = pyproj.Transformer.from_crs(
-        orientation.origin_crs, WGS84_CRS, always_xy=True
-    )
-    origin_lon, origin_lat = trns.transform(orientation.origin_x, orientation.origin_y)
+    origin_lon, origin_lat = orientation.origin_lat_lon
 
-    x, y, z, depth = xr.broadcast(x_phys, y_phys, z_phys, depth)
-    # Depth and z are both chunked correctly so this just ensures that x, y are chunked like z, depth
+    x, y, z, depth = xr.broadcast(x_phys, y_phys, z_phys, depth_out)
+
     depth, x, y, z = helpers.ensure_chunks(depth, x, y, z)
 
     grid = GridSchema.new(
@@ -123,15 +112,13 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         y,
         z,
         depth,
-        z_min=z_min,
-        z_max=z_max,
-        depth_min=depth_min,
-        depth_max=depth_max,
         name=GRID_NAME,
         resolution=resolution,
         origin_lon=origin_lon,
         origin_lat=origin_lat,
         azimuth=orientation.azimuth,
+        bottom_left_lon=min_lon,
+        bottom_left_lat=min_lat,
     )
 
     return {grid.name: grid}

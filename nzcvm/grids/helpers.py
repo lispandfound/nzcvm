@@ -1,31 +1,11 @@
+import pyproj
 from typing import Any
-from nzcvm.coordinates import Affine, Coordinate
-from nzcvm import coordinates
+from nzcvm.coordinates import Coordinate
 
 import dask.array as da
 import numpy as np
 from nzcvm.surface import Surface
 import xarray as xr
-from pyproj import Transformer
-
-
-def affine_transformation(
-    origin_crs: Any, grid_crs: Any, origin_x: float, origin_y: float, azimuth: float
-) -> Affine:
-    """Build the 2-D affine matrix from local grid coordinates to the target CRS.
-
-    Parameters
-    ----------
-    grid :
-        Grid configuration holding origin coordinates, azimuth, and CRS info.
-
-    Returns
-    -------
-    Affine
-        3×3 affine matrix.
-    """
-
-    return
 
 
 def compute_surface_elevation(
@@ -75,8 +55,8 @@ def raw_coordinates(
 
     i = np.arange(ni)
     j = np.arange(nj)
-    xi_raw = (offset + i * resolution).astype(np.float32)
-    yi_raw = (offset + j * resolution).astype(np.float32)
+    xi_raw = (offset + (i - ni / 2) * resolution).astype(np.float32)
+    yi_raw = (offset + (j - nj / 2) * resolution).astype(np.float32)
     xi = da.from_array(xi_raw, chunks=(chunks[Coordinate.I]))
     xj = da.from_array(yi_raw, chunks=(chunks[Coordinate.J]))
 

@@ -624,7 +624,9 @@ class ModelTree:
             where_flat = np.ascontiguousarray(where_np.ravel())
 
         logger.debug("Querying for chunk qualities for range: %s.", model_range)
-        self.inner.query_many(out_flat, x.ravel(), y.ravel(), z.ravel(), params, where_flat)
+        self.inner.query_many(
+            out_flat, x.ravel(), y.ravel(), z.ravel(), params, where_flat
+        )
         logger.debug("Query complete")
         return out_flat.reshape(orig_shape + (6,))
 
@@ -702,6 +704,19 @@ class ModelTree:
             branch.add(f"Transform: {transform_str}")
 
         return tree
+
+    def __getstate__(self):
+        # When standard pickle hits this object, bypass pickling the Rust object
+        state = self.__dict__.copy()
+
+        state["inner"] = registry.pickle_pass(self.inner)
+        return state
+
+    def __setstate__(self, state):
+        # When unpickling, swap the key back for the live object reference
+        self.__dict__.update(state)
+        key = state["inner"]
+        self.inner = registry.REGISTRY[key]
 
 
 def _mesh_model_from_pyvista(

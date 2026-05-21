@@ -27,15 +27,13 @@ class GridSchema(AsDataset):
     name: Attr[str]
     resolution: Attr[float]
 
-    z_min: Data[tuple[()], np.float32]
-    z_max: Data[tuple[()], np.float32]
-
-    depth_min: Data[tuple[()], np.float32]
-    depth_max: Data[tuple[()], np.float32]
-
     origin_lon: Attr[np.float32]
     origin_lat: Attr[np.float32]
+
     azimuth: Attr[np.float32]
+
+    bottom_left_lon: Attr[np.float32]
+    bottom_left_lat: Attr[np.float32]
 
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> Grid:

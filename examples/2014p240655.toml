@@ -1,40 +1,55 @@
 [metadata]
-keywords = []
-authors = []
-references = []
+# Additional metadata which may be stored with the model output, or ignored for
+# outputs that don't support them.
+title = "Domain for geonet event 2014p240655 (designed for SW4 simulation)"
+keywords = ["geonet", "validation"]
+creator_name = "Jake Faulkner"
+creator_email = "jake.faulkner@canterbury.ac.nz"
+repository_doi = "TBD"
+# etc... See the ModelMetadata class for a description of the options that can
+# be included.
 
 [grid]
 type = "sw4"
 surface = "dem.vtk"
 
+# Extent of the model, in km
 extent_x = 210000.0
 extent_y = 330000.0
 
 [grid.orientation]
+# *GLOBAL* (not grid) azimuth measured clockwise from north.
 azimuth = 39.0
+# The grid CRS, NZTM = 2193.
 origin_crs = 2193
+# Location of the centre in grid space.
 origin_x = 1857520.0
 origin_y = 5606532.0
 
-
+# Mesh refinements can be in an arbitrary order and are sorted afterwards
 [grid.refinements.top_layer]
+# Mesh resolution in the layer (m)
 resolution = 100.0
+# Bottom elevation (+z down). 
 bottom = 3500.0
-deformation = 0.0
 
 [grid.refinements.next_layer]
 resolution = 100.0
-bottom = 20000.0
-deformation = 0.0
+bottom = 42000.0
 
-
+# Chunks for internal calculations.
 [grid.chunks]
 i = 256
 j = 256
 k = 128
 
+# Layer specifications. Remove any of these to remove that layer from the calculations.
+
 [[layers]]
+# Enforce lower/upper bounds on qualities
 type = "clamp"
+
+# Enforce Vp/Vs ratios
 min_vp_vs_ratio = 1.73
 max_vp_vs_ratio = 4.0
 
@@ -43,8 +58,12 @@ min = 500.0
 
 
 [[layers]]
+# Offshore basin layer.
 type = "offshore"
+# Coastline to measure distances from.
 coastline = "coastline.wkb.gz"
+
+# Map from depth from surface -> Qualities at that depth.
 model = [
 {bottom_depth = 50.0, rho = 1810.0, vp = 1800.0, vs = 380.0, qp = 100.0, qs = 50.0, alpha = 1.0},
 {bottom_depth = 150.0, rho = 1810.0, vp = 1800.0, vs = 480.0, qp = 100.0, qs = 50.0, alpha = 1.0},
@@ -81,19 +100,26 @@ model = [
 {bottom_depth = 151600.0, rho = 3120.0, vp = 7500.0, vs = 4300.0, qp = 100.0, qs = 50.0, alpha = 1.0},
 {bottom_depth = 10151599.0, rho = 3330.0, vp = 8100.0, vs = 4600.0, qp = 100.0, qs = 50.0, alpha = 1.0},
 ]
+
+# Offshore distance -> depth of basin.
 basin_depth = [
     {distance =  0.0, bottom_depth = 0.0},
     {distance = 20000.0, bottom_depth = 2000.0},
     {distance = 50000.0, bottom_depth = 3000.0}
 ]
+
+# Simplification tolerance for the coastline (interpretation depends on the origin CRS).
 simplification_tolerance = 100.0
 
 [[layers]]
+# Geotechnical weathering layer. Applied under the offshore basin to prevent its
+# calculations replacing the offshore basin layer.
 type = "ely"
 vs30 = "./vs30.vtk"
 depth_t = 450.0
 
 [[layers]]
+# Query layer for complex tomography and 3D basin models.
 type = "query"
 model_path = "./basins"
 model_glob = "ep2020.vtkhdf"

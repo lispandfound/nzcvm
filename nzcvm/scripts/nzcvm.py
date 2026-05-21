@@ -124,6 +124,7 @@ def generate(
             # be skipped.
             exit_stack.enter_context(registry.pipeline_context())
         else:
+            exit_stack.enter_context(LogProgress())
             exit_stack.enter_context(
                 dask.config.set(scheduler="threads", num_workers=resolved_n_threads)
             )

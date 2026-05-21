@@ -198,3 +198,10 @@ Cargo.lock
 *.h5m
 *.vtk
 *.csv
+*.zarr
+*.sfile
+*.rho3dfile
+*.vs3dfile
+*.vp3dfile
+*.wkb.*
+

@@ -6,10 +6,8 @@ from nzcvm.qualities import Qualities, QualitiesSchema
 from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.layers.core import Layer
 
-from typing import Any, ClassVar
 import logging
 
-import numpy as np
 import xarray as xr
 
 from nzcvm.components import Component
@@ -20,25 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
-    _MODEL_REF: ClassVar[ModelTree]
-
     def __init__(self, config: QueryLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
         models = config.model_path.rglob(config.model_glob)
-        QueryLayer._MODEL_REF = ModelTree.load_models(*models)
-
-    @property
-    def model(self) -> ModelTree:
-        return QueryLayer._MODEL_REF
+        self.model = ModelTree.load_models(*models)
 
     def __call__(
         self,
         grid: Grid,
-        *,
         model_range: ModelRange = ModelRange.ALL,
-        out: np.ndarray | None = None,
-        where: np.ndarray | None = None,
-        **kwargs: Any,
     ) -> Qualities:
         """Query the velocity model at every point in the concrete chunk *grid*.
 
@@ -61,21 +49,14 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
             queried where ``True``; other rows in *out* are left unchanged.
         """
         logger.debug("Beginning query layer query with model_range=%s", model_range)
-        component_names = list(Component)
-
-        x = grid.x.values
-        y = grid.y.values
-        z = grid.z.values
-
-        raw = self.model.query_many_raw(
-            x, y, z, model_range=model_range, out=out, where=where
+        darr = xr.apply_ufunc(
+            self.model.query_many_raw,
+            grid.x,
+            grid.y,
+            grid.z,
+            input_core_dims=[[], [], []],
+            output_core_dims=[["component"]],
+            kwargs=dict(model_range=model_range),
         )
-
-        dims = tuple(d for d in grid.x.dims)
-        qualities = xr.DataArray(
-            raw,
-            dims=(*dims, "component"),
-            coords={**{d: grid[d] for d in dims if d in grid.coords}, "component": component_names},
-        )
-        dset = qualities.to_dataset("component")
+        dset = darr.assign_coords(component=list(Component)).to_dataset(dim="component")
         return QualitiesSchema.from_dataset(dset)

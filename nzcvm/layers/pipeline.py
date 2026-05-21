@@ -1,4 +1,5 @@
 import typing
+import gc
 
 from nzcvm.layers.core import Layer, layer_from_config
 from nzcvm.grids import Grid
@@ -50,7 +51,8 @@ def execute_model_pipeline(
 
     def _run_pipeline(chunk: xr.Dataset) -> xr.Dataset:
         grid = typing.cast(Grid, chunk)
-        return pipeline(grid)
+        qualities = pipeline(grid)
+        return qualities
 
     qualities = {
         name: QualitiesSchema.from_dataset(

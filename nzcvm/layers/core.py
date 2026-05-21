@@ -2,6 +2,7 @@
 
 # So that we can use the Layer[Any] without string quotes which look ugly.
 from __future__ import annotations
+from nzcvm.model import ModelRange
 from nzcvm.grids import Grid
 from nzcvm.qualities import Qualities
 import typing
@@ -43,11 +44,7 @@ class Layer(ABC, Generic[C]):
     def __call__(
         self,
         grid: Grid,
-        *,
-        model_range: Any = None,
-        out: Qualities | None = None,
-        where: np.ndarray | None = None,
-        **kwargs: Any,
+        model_range: ModelRange = ModelRange.ALL,
     ) -> Qualities:
         """Apply this layer to *grid* and return the result.
 

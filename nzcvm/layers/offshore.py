@@ -188,7 +188,6 @@ class Coastline:
             input_core_dims=[[], []],
             output_core_dims=[[]],
             output_dtypes=[x.dtype],
-            dask="parallelized",
         )
 
 
@@ -230,17 +229,17 @@ class OffshoreModel:
         )
 
     def qualities(self, depths: xr.DataArray) -> Qualities:
-        depth_flat = depths.values.ravel()
-        sampled_data = step_interpolator(
-            depth_flat, self.model_top_depths, self.model_qualities
+        darr = xr.apply_ufunc(
+            step_interpolator,
+            depths,
+            input_core_dims=[[]],
+            output_core_dims=[["component"]],
+            kwargs=dict(xp=self.model_top_depths, fp=self.model_qualities),
+            output_sizes=dict(component=len(list(Component))),
+            output_dtypes=[depths.dtype],
         )
-        new_shape = depths.shape + (len(Component),)
-        darr = xr.DataArray(
-            sampled_data.reshape(new_shape),
-            coords={**depths.coords, "component": list(Component)},
-            dims=(*depths.dims, "component"),
-        )
-        dset = darr.to_dataset(dim="component")
+        dset = darr.assign_coords(component=list(Component)).to_dataset(dim="component")
+
         return QualitiesSchema.from_dataset(dset)
 
 
@@ -257,9 +256,6 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         grid: Grid,
         *,
         model_range: ModelRange = ModelRange.ALL,
-        out: Qualities | None = None,
-        where: np.ndarray | None = None,
-        **kwargs: Any,
     ) -> xr.Dataset:
         """Apply the offshore taper to the concrete chunk *grid*.
 
@@ -270,14 +266,14 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         In-place update via :func:`~nzcvm.qualities.blend` with ``out`` and
         ``where`` avoids allocating a new result array for the final masked merge.
         """
-        is_above_model_bottom_depth = (grid.depth < self.model.absolute_bottom).values
-        if not np.any(is_above_model_bottom_depth):
+        is_above_model_bottom_depth = grid.depth < self.model.absolute_bottom
+        if not is_above_model_bottom_depth.any():
             logger.debug("Chunk below maximum basin depth, skipping calculation.")
-            return self.next_layer(grid, model_range=model_range, **kwargs)
+            return self.next_layer(grid, model_range=model_range)
 
-        basins = self.next_layer(grid, model_range=ModelRange.BASINS, **kwargs)
+        basins = self.next_layer(grid, model_range=ModelRange.BASINS)
 
-        if np.allclose(basins.alpha.values, 1.0):
+        if np.allclose(basins.alpha, 1.0):
             logger.debug("Chunk inside modelled basin, skipping offshore calculation.")
             return basins
 
@@ -286,22 +282,21 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         logger.debug("Calculating offshore distances")
         offshore_distance = self.coastline.distance(x, y)
         logger.debug("Offshore distances calculated")
-        is_offshore = (offshore_distance > 0).values
+        is_offshore = offshore_distance > 0
 
         basin_depth = self.model.depth(offshore_distance)
 
-        if not np.any(is_offshore):
+        if not is_offshore.any():
             logger.debug("Chunk entirely within onshore region, skipping calculation.")
-            return self.next_layer(grid, model_range=model_range, **kwargs)
+            return self.next_layer(grid, model_range=model_range)
 
-        basin_depth, _ = xr.broadcast(basin_depth, grid.depth)
-        is_above_basin = (grid.depth < basin_depth).values
+        is_above_basin = grid.depth < basin_depth
 
-        if not np.any(is_above_basin):
+        if not is_above_basin.any():
             logger.debug("Chunk below basin surface, skipping calculation.")
-            return self.next_layer(grid, model_range=model_range, **kwargs)
+            return self.next_layer(grid, model_range=model_range)
 
-        background = self.next_layer(grid, model_range=model_range, **kwargs)
+        background = self.next_layer(grid, model_range=model_range)
         logger.debug("Assigning basin qualities using offshore basin model")
         offshore_qualities = self.model.qualities(grid.depth)
 

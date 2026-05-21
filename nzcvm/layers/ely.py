@@ -22,24 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
-    _INTERPOLATOR: ClassVar[Surface]
-
     def __init__(self, config: ElyLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
-        ElyLayer._INTERPOLATOR = read_surface_from_path(config.vs30)
-
-    @property
-    def interpolator(self) -> Surface:
-        return ElyLayer._INTERPOLATOR
+        self.interpolator = read_surface_from_path(config.vs30)
 
     def __call__(
         self,
         grid: Grid,
-        *,
         model_range: ModelRange = ModelRange.ALL,
-        out: Qualities | None = None,
-        where: np.ndarray | None = None,
-        **kwargs: Any,
     ) -> Qualities:
         """Apply the Ely GTL taper to the concrete chunk *grid*.
 
@@ -54,7 +44,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
 
         # Fast path: basins-only queries skip Ely entirely.
         if model_range == ModelRange.BASINS:
-            return self.next_layer(grid, model_range=model_range, **kwargs)
+            return self.next_layer(grid, model_range=model_range)
 
         depth_t = self.config.depth_t
         is_in_taper = (grid.depth < depth_t).values  # numpy bool array
@@ -62,11 +52,11 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         # If the whole chunk is below the taper, skip Ely entirely.
         if not np.any(is_in_taper):
             logger.debug("Chunk outside taper, skipping Ely taper calculation.")
-            return self.next_layer(grid, model_range=model_range, **kwargs)
+            return self.next_layer(grid, model_range=model_range)
 
         basins = None
         if model_range != ModelRange.TOMOGRAPHY:
-            basins = self.next_layer(grid, model_range=ModelRange.BASINS, **kwargs)
+            basins = self.next_layer(grid, model_range=ModelRange.BASINS)
 
             # Inside basins we don't have to compute the tomography or Ely taper.
             if np.allclose(basins.alpha.values, 1.0):
@@ -101,7 +91,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         # calculate the qualities at the surface layer.
         logger.debug("Calculating taper qualities")
         taper_qualities = self.next_layer(
-            surface_layer, model_range=ModelRange.TOMOGRAPHY, **kwargs
+            surface_layer, model_range=ModelRange.TOMOGRAPHY
         ).squeeze()
 
         ely_qualities = ely_vs_profile(
@@ -113,7 +103,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         )
 
         # Get background for all points in this chunk (becomes the out buffer).
-        background = self.next_layer(grid, model_range=model_range, **kwargs)
+        background = self.next_layer(grid, model_range=model_range)
 
         # In-place update: write the ely (or basin-over-ely) blend into
         # background only where the taper is active.  This is equivalent to
@@ -127,6 +117,8 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             # so blend(ely, any_rhs) == ely_qualities (a0 == 1, a1 == 0).
             # We pass background as rhs to satisfy the type signature; its values
             # are multiplied by a1 == 0 and are never actually used in the result.
-            qualities.blend(ely_qualities, background, out=background, where=is_in_taper)
+            qualities.blend(
+                ely_qualities, background, out=background, where=is_in_taper
+            )
 
         return background

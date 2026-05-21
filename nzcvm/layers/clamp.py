@@ -26,13 +26,10 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
     def __call__(
         self,
         grid: Grid,
-        *,
-        model_range: ModelRange | None = None,
-        out: Qualities | None = None,
-        where: np.ndarray | None = None,
-        **kwargs: Any,
+        model_range: ModelRange = ModelRange.ALL,
     ) -> Qualities:
-        qualities = self.next_layer(grid, model_range=model_range, out=out, where=where, **kwargs)
+        qualities = self.next_layer(grid, model_range=model_range)
+
         for c, bound in self.config.clamps.items():
             qualities[c] = qualities[c].clip(min=bound.min, max=bound.max)
 

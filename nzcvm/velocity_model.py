@@ -23,9 +23,11 @@ class VelocityModel:
 
     @property
     def pairwise(self) -> dict[str, tuple[Grid, Qualities]]:
+        quality_keys = set(self.qualities)
         return {
             k: (self.grids[k], self.qualities[k])
-            for k in self.grids.keys() & self.qualities.keys()
+            for k in self.grids.keys()
+            if k in quality_keys
         }
 
     @classmethod

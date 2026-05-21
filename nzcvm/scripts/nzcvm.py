@@ -100,7 +100,7 @@ def generate(
     log_file: Path | None = None,
 ) -> None:
     """Generate a NZCVM velocity model from a config file."""
-    configure_logging(log_level, log_file)
+    configure_logging(log_level.upper(), log_file)
 
     resolved_n_threads = n_threads if n_threads is not None else num_cores()
     logger = logging.getLogger(__name__)

@@ -1,26 +1,23 @@
 """Coordinate systems and spatial transformations for the velocity model.
 
-The core building blocks are composable 4×4 affine matrices (type alias
-:data:`Affine`) plus a :func:`crs_transform` helper for pyproj CRS
-conversions.  Affine transforms are created by the factory functions
-:func:`identity`, :func:`translate`, :func:`rotate`, :func:`scale`,
-:func:`reflect_x`, :func:`reflect_y`, and :func:`transpose_xy` and
+The core building blocks are composable 3×3 affine matrices (type alias
+:data:`Affine`) for 2-D transforms plus a :func:`crs_transform` helper for
+pyproj CRS conversions.  Affine transforms are created by the factory
+functions :func:`translate`, :func:`scale`, and :func:`reflect_x` and
 composed with standard NumPy matrix multiplication (``@``).
 
 A typical pipeline maps local model coordinates to a projected CRS::
 
     from pyproj import Transformer
-    from nzcvm.coordinates import translate, rotate, scale
+    from nzcvm.coordinates import translate, scale
 
     origin_tr = Transformer.from_crs(4326, 2193, always_xy=True)
     ox, oy = origin_tr.transform(172.0, -43.5)
-    affine = translate(ox, oy) @ rotate(30.0, ccw=False)
+    affine = translate(ox, oy)
     crs_transformer = Transformer.from_crs(2193, 4326, always_xy=True)
 
 See Also
 --------
-nzcvm.layers.affine.AffineTransformLayer : Pipeline layer that applies an affine.
-nzcvm.layers.crs.CrsTransformLayer : Pipeline layer that applies a CRS transform.
 nzcvm.velocity_model.ModelMetadata : Stores coordinate-system parameters alongside model metadata.
 """
 
@@ -67,22 +64,6 @@ NZGD2000_EPSG = 4167
 # ---------------------------------------------------------------------------
 # Affine factory functions
 # ---------------------------------------------------------------------------
-
-
-def identity(dims: int = 2) -> Affine:
-    """Return the identity affine matrix.
-
-    Parameters
-    ----------
-    dims :
-        Spatial dimensionality.  ``2`` → 3×3 matrix; ``3`` → 4×4 matrix.
-
-    Returns
-    -------
-    Affine
-        (dims+1)×(dims+1) identity matrix.
-    """
-    return np.eye(dims + 1, dtype=np.float32)
 
 
 def translate(x: float = 0.0, y: float = 0.0, z: float | None = None) -> Affine:
@@ -170,55 +151,6 @@ def reflect_x(dims: int = 2) -> Affine:
         ``2`` → 3×3 (default); ``3`` → 4×4.
     """
     return scale(sx=-1.0) if dims == 2 else scale(sx=-1.0, sy=1.0, sz=1.0)
-
-
-def reflect_y(dims: int = 2) -> Affine:
-    """Return a matrix that negates the y axis.
-
-    Parameters
-    ----------
-    dims :
-        ``2`` → 3×3 (default); ``3`` → 4×4.
-    """
-    return scale(sy=-1.0) if dims == 2 else scale(sx=1.0, sy=-1.0, sz=1.0)
-
-
-def reflect_z() -> Affine:
-    """Return a 4×4 matrix that negates the z axis (3-D only).
-
-    Returns
-    -------
-    Affine
-        4×4 matrix.
-    """
-    return scale(sx=1.0, sy=1.0, sz=-1.0)
-
-
-def transpose_xy(dims: int = 2) -> Affine:
-    """Return a matrix that swaps the x and y axes.
-
-    Parameters
-    ----------
-    dims :
-        ``2`` → 3×3 (default); ``3`` → 4×4.
-
-    Examples
-    --------
-    >>> import numpy as np
-    >>> T = transpose_xy()
-    >>> (T @ np.array([1.0, 2.0, 1.0]))[:2]
-    array([2., 1.])
-    >>> T3 = transpose_xy(dims=3)
-    >>> (T3 @ np.array([1.0, 2.0, 3.0, 1.0]))[:3]
-    array([2., 1., 3.])
-    """
-    n = dims + 1
-    m = np.eye(n, dtype=np.float32)
-    m[0, 0] = 0.0
-    m[1, 1] = 0.0
-    m[0, 1] = 1.0
-    m[1, 0] = 1.0
-    return m
 
 
 # ---------------------------------------------------------------------------

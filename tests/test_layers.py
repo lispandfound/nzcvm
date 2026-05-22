@@ -231,3 +231,82 @@ def test_step_interpolator_clip_above_last() -> None:
     fp = np.array([10.0, 20.0, 30.0], dtype=np.float32)
     result = step_interpolator(np.array([100.0], dtype=np.float32), xp, fp)
     assert result[0] == pytest.approx(30.0)
+
+
+# ---------------------------------------------------------------------------
+# functional_layer deserialization
+# ---------------------------------------------------------------------------
+# The @functional_layer decorator generates a LayerConfig subclass dynamically
+# via make_dataclass.  The non-trivial invariants are:
+#   - the generated config has the right type tag
+#   - it round-trips through dict serialisation
+#   - mashumaro's discriminator (include_subtypes=True) finds the subclass
+#     and reconstructs the correct type from the base LayerConfig.from_dict
+#   - the layer class is registered in Layer.registry under its config class
+#   - a layer instantiated from the reconstructed config produces correct output
+
+
+def test_functional_layer_config_has_correct_type_tag() -> None:
+    from nzcvm.layers.dummy import constant
+
+    cfg = constant.config_cls()
+    assert cfg.type == "constant"
+
+
+def test_functional_layer_config_accepts_custom_parameters() -> None:
+    from nzcvm.layers.dummy import constant
+
+    cfg = constant.config_cls(vs=1234.0, vp=5678.0)
+    assert cfg.vs == pytest.approx(1234.0)
+    assert cfg.vp == pytest.approx(5678.0)
+
+
+def test_functional_layer_config_serialises_to_dict() -> None:
+    from nzcvm.layers.dummy import constant
+
+    cfg = constant.config_cls(vs=999.0)
+    d = cfg.to_dict()
+    assert d["type"] == "constant"
+    assert d["vs"] == pytest.approx(999.0)
+
+
+def test_functional_layer_config_deserialises_via_base_class() -> None:
+    """LayerConfig.from_dict must reconstruct the correct generated subclass."""
+    from nzcvm.config.layers.core import LayerConfig
+    from nzcvm.layers.dummy import constant
+
+    cfg = constant.config_cls(vs=3210.0)
+    d = cfg.to_dict()
+
+    cfg2 = LayerConfig.from_dict(d)
+    assert type(cfg2) is type(cfg)
+    assert cfg2.vs == pytest.approx(3210.0)  # type: ignore[attr-defined]
+    assert cfg2.type == "constant"
+
+
+def test_functional_layer_registered_in_layer_registry() -> None:
+    """The layer class must appear in Layer.registry under its config class."""
+    from nzcvm.layers.core import Layer
+    from nzcvm.layers.dummy import constant
+
+    assert constant.config_cls in Layer.registry
+    assert Layer.registry[constant.config_cls] is constant
+
+
+def test_functional_layer_instantiation_from_deserialised_config() -> None:
+    """End-to-end: config → dict → LayerConfig.from_dict → Layer → call."""
+    from nzcvm.config.layers.core import LayerConfig
+    from nzcvm.layers.core import Layer
+    from nzcvm.layers.dummy import constant
+    from tests.conftest import make_grid
+
+    d = constant.config_cls(vs=2000.0).to_dict()
+    cfg = LayerConfig.from_dict(d)
+
+    LayerCls = Layer.registry[type(cfg)]
+    # Rebuild kwargs from the deserialised config (excluding the 'type' tag)
+    kwargs = {k: v for k, v in cfg.to_dict().items() if k != "type"}
+    layer = LayerCls(**kwargs)
+
+    result = layer(make_grid())
+    assert float(result.vs.mean()) == pytest.approx(2000.0, rel=1e-4)

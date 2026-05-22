@@ -36,11 +36,20 @@ def compute_surface_elevation(
 
 
 def ensure_chunks(*dsets: xr.DataArray) -> list[xr.DataArray]:
-    chunks = dict(dsets[0].chunksizes)
-    return [
-        dset.chunk(chunks) if dict(dset.chunksizes) != chunks else dset
-        for dset in dsets
-    ]
+    """Rechunk all arrays to the finest common chunk spec across all inputs.
+
+    For each dimension, the chunk tuple with the most pieces (i.e. the finest
+    granularity) seen across all input arrays is selected as the target.  This
+    ensures that every output array is chunked along *all* dimensions that any
+    input was chunked along, preventing single-chunk fallback when a 1-D array
+    (e.g. a depth coordinate) is broadcast into a higher-dimensional space.
+    """
+    target: dict = {}
+    for dset in dsets:
+        for dim, sizes in dset.chunksizes.items():
+            if dim not in target or len(sizes) > len(target[dim]):
+                target[dim] = sizes
+    return [dset.chunk(target) for dset in dsets]
 
 
 def raw_coordinates(

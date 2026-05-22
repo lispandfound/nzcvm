@@ -1,6 +1,6 @@
 from dataclasses import dataclass
-from pathlib import Path
 from .core import LayerConfig
+from nzcvm.config.validation import ExistingFile, PositiveFloat
 
 
 @dataclass
@@ -24,6 +24,6 @@ class ElyLayerConfig(LayerConfig):
         z_t = 450.0
     """
 
-    vs30: Path
-    depth_t: float = 450.0
+    vs30: ExistingFile
+    depth_t: PositiveFloat = 450.0
     type: str = "ely"

@@ -1,6 +1,6 @@
+from nzcvm.config.validation import ExistingDir
 from dataclasses import dataclass
 from .core import LayerConfig
-from pathlib import Path
 
 
 @dataclass
@@ -28,6 +28,6 @@ class QueryLayerConfig(LayerConfig):
         model_glob = "*.vtkhdf"
     """
 
-    model_path: Path
+    model_path: ExistingDir
     model_glob: str = "*.vtkhdf"
     type: str = "query"

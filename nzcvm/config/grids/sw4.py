@@ -1,3 +1,4 @@
+from nzcvm.config.validation import PositiveFloat, ExistingFile
 from nzcvm.config.grids.model import Model
 from typing import Literal
 from pathlib import Path
@@ -68,10 +69,10 @@ class SW4GridConfig(GridConfig):
     """
 
     # Topographic surface path.
-    surface: Path
+    surface: ExistingFile
     # Extents in x and y.
-    extent_x: float
-    extent_y: float
+    extent_x: PositiveFloat
+    extent_y: PositiveFloat
 
     orientation: Model
 

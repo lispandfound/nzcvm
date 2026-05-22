@@ -1,7 +1,11 @@
+from nzcvm.config.validation import (
+    PositiveInt,
+    PositiveFloat,
+    ExistingFile,
+)
 from nzcvm.config.grids.model import Model
 from enum import StrEnum, auto
 from typing import Literal
-from pathlib import Path
 from nzcvm.coordinates import Coordinate
 from nzcvm.config.grids import GridConfig
 from dataclasses import dataclass, field
@@ -18,13 +22,13 @@ class TopographyType(StrEnum):
 @dataclass
 class EMOD3DGrid(GridConfig):
     # Topographic surface path.
-    surface: Path
+    surface: ExistingFile
 
-    nx: int
-    ny: int
-    nz: int
+    nx: PositiveInt
+    ny: PositiveInt
+    nz: PositiveInt
 
-    resolution: float
+    resolution: PositiveFloat
 
     # Coordinate metadata
     orientation: Model

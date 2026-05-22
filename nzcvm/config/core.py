@@ -1,3 +1,4 @@
+from typing import get_type_hints, get_origin, get_args, Annotated
 from mashumaro.config import BaseConfig
 from mashumaro.mixins.dict import DataClassDictMixin
 from mashumaro.mixins.json import DataClassJSONMixin
@@ -14,6 +15,36 @@ class ConfigObject(
     ``to_dict`` methods from mashumaro. ``None`` fields are omitted and
     serialisation uses field aliases where defined.
     """
+
+    def __post_init__(self) -> None:
+
+        # Extract validation hints from the class definition. Things like
+        # Annotated[float, is_positive] are parsed and the is_positive function
+        # is then run on the values.
+
+        hints = get_type_hints(self.__class__, include_extras=True)
+
+        for field_name, hint in hints.items():
+            if get_origin(hint) is not Annotated:
+                continue
+
+            metadata_args = get_args(hint)[1:]
+
+            for validator in metadata_args:
+                if not callable(validator):
+                    continue
+
+                current_value = getattr(self, field_name)
+
+                try:
+                    res = validator(current_value)
+                    if res is not None:
+                        setattr(self, field_name, res)
+                except (ValueError, TypeError) as e:
+                    raise ValueError(
+                        f"Validation failed for field '{field_name}' "
+                        f"with value {current_value!r}: {e}"
+                    ) from e
 
     class Meta(BaseConfig):
         serialize_by_alias = True

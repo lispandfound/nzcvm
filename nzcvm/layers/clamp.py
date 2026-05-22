@@ -36,8 +36,8 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
         min_vp_vs_ratio = self.config.min_vp_vs_ratio
         max_vp_vs_ratio = self.config.max_vp_vs_ratio
         if max_vp_vs_ratio or min_vp_vs_ratio:
-            vs = qualities.vp
-            vp = qualities.vs
+            vp = qualities.vp
+            vs = qualities.vs
             min_vp = min_vp_vs_ratio * vs if min_vp_vs_ratio else None
             max_vp = max_vp_vs_ratio * vs if max_vp_vs_ratio else None
             qualities[Component.VP] = vp.clip(

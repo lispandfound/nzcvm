@@ -32,7 +32,7 @@ import dask
 from typing import Any
 
 from nzcvm.grids.grid import Grid, GridSchema
-from nzcvm.coordinates import Coordinate, WGS84_CRS
+from nzcvm.coordinates import Coordinate, WGS84_EPSG
 from nzcvm import coordinates
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.config.grids.sw4 import SW4GridConfig
@@ -156,7 +156,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
 
     orientation = config.orientation
     transform = (
-        coordinates.translate(orientation.origin_x, orientation.origin_y)
+        coordinates.translate(orientation.grid_origin_x, orientation.grid_origin_y)
         # This is consistent with the rotation specified in the z-axis down
         # convention.
         @ Rotation.from_rotvec(
@@ -167,7 +167,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
     )
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
     min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
-    min_lon, min_lat = orientation.transformer(WGS84_CRS).transform(min_x, min_y)
+    min_lon, min_lat = orientation.to_wgs84.transform(min_x, min_y)
 
     topographic_surface = read_surface_from_path(config.surface)
     z_surface = helpers.compute_surface_elevation(
@@ -214,8 +214,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 config.chunks[Coordinate.K],
                 refinement.resolution,
                 name=name,
-                origin_lat=origin_lat,
-                origin_lon=origin_lon,
+                origin_lat=orientation.origin_lat,
+                origin_lon=orientation.origin_lon,
                 azimuth=orientation.azimuth,
                 bottom_left_lon=min_lon,
                 bottom_left_lat=min_lat,

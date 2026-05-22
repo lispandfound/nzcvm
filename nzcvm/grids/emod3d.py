@@ -7,7 +7,7 @@ from scipy.spatial.transform import Rotation
 
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.surface import read_surface_from_path
-from nzcvm.coordinates import Coordinate, WGS84_CRS
+from nzcvm.coordinates import Coordinate, WGS84_EPSG
 from nzcvm import coordinates
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.grids import helpers
@@ -84,14 +84,14 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     orientation = config.orientation
 
     transform = coordinates.translate(
-        orientation.origin_x, orientation.origin_y
+        orientation.grid_origin_x, orientation.grid_origin_y
     ) @ Rotation.from_rotvec(
         np.array([0, 0, orientation.grid_azimuth]), degrees=True
     ).as_matrix().astype(np.float32)
 
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
     min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
-    min_lon, min_lat = orientation.transformer(WGS84_CRS).transform(min_x, min_y)
+    min_lon, min_lat = orientation.to_wgs84.transform(min_x, min_y)
 
     topographic_surface = read_surface_from_path(config.surface)
     z_surface = helpers.compute_surface_elevation(topographic_surface, x_phys, y_phys)

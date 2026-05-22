@@ -5,7 +5,7 @@ from pathlib import Path
 from .core import GridConfig
 from nzcvm.config.core import ConfigObject
 from dataclasses import dataclass, field
-from nzcvm.coordinates import Coordinate, WGS84_CRS, NO_ORIGIN
+from nzcvm.coordinates import Coordinate, WGS84_EPSG, NO_ORIGIN
 
 
 @dataclass

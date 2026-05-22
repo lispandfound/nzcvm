@@ -18,7 +18,9 @@ from hypothesis import given, strategies as st
 
 from nzcvm.components import Component
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
+from nzcvm.grids import Grid
 from nzcvm.layers.clamp import ClampLayer
+from nzcvm.layers.core import Layer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
 from nzcvm.model import ModelRange
 from nzcvm.qualities import QualitiesSchema
@@ -310,3 +312,43 @@ def test_functional_layer_instantiation_from_deserialised_config() -> None:
 
     result = layer(make_grid())
     assert float(result.vs.mean()) == pytest.approx(2000.0, rel=1e-4)
+
+
+def test_adhoc_functional_layer_deserialises() -> None:
+    """An ad-hoc @functional_layer defined inside a test must round-trip through
+    LayerConfig.from_dict — verifying that layers created outside dummy.py work."""
+    from nzcvm.config.layers.core import LayerConfig
+    from nzcvm.layers.core import Layer
+    from nzcvm.layers.functional import functional_layer
+    from nzcvm.qualities import QualitiesSchema
+
+    @functional_layer
+    def zeros(
+        grid: Grid,
+        model_range: ModelRange = ModelRange.ALL,
+        *,
+        next_layer: Layer | None = None,
+    ) -> QualitiesSchema:
+        """Return all-zero qualities for every point in the grid."""
+        import numpy as np
+
+        shape = grid.x.shape
+        z = np.zeros(shape, dtype=np.float32)
+        return QualitiesSchema.new(rho=z, vp=z, vs=z, qp=z, qs=z, alpha=z)
+
+    # Config must carry the right type tag
+    cfg = zeros.config_cls()
+    assert cfg.type == "zeros"
+
+    # Must survive a dict round-trip via the base LayerConfig discriminator
+    d = cfg.to_dict()
+    assert d["type"] == "zeros"
+    cfg2 = LayerConfig.from_dict(d)
+    assert type(cfg2) is type(cfg)
+
+    # Must be findable in Layer.registry and produce the right output
+    assert zeros.config_cls in Layer.registry
+    layer = zeros()
+    result = layer(make_grid())
+    assert float(result.vp.max()) == pytest.approx(0.0)
+    assert float(result.vs.max()) == pytest.approx(0.0)

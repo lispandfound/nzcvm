@@ -164,7 +164,7 @@ class TestEMOD3DCentreRegistration:
         grid = _single_grid(_emod3d_config(flat_surface, resolution=res))
         depths = grid.depth.isel(i=0, j=0).compute().values.astype(np.float64)
         diffs = np.diff(depths)
-        np.testing.assert_allclose(diffs, res, rtol=1e-4)
+        assert list(diffs) == pytest.approx([res] * len(diffs), rel=1e-4)
 
 
 class TestEMOD3DRotation:
@@ -318,7 +318,7 @@ class TestSW4RefinementSeams:
         grid = grids["top"]
         depths = grid.z.isel(i=0, j=0).compute().values.astype(np.float64)
         diffs = np.abs(np.diff(depths))
-        np.testing.assert_allclose(diffs, res, rtol=1e-3)
+        assert list(diffs) == pytest.approx([res] * len(diffs), rel=1e-3)
 
 class TestSW4Rotation:
     def test_nonzero_azimuth_rotates_axes(self, flat_surface: Path) -> None:

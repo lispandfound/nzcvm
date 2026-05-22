@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import field, make_dataclass
-from typing import Any, Callable, Literal, get_type_hints
+from typing import Any, Callable, get_type_hints
 
 from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids import Grid
@@ -95,8 +95,9 @@ def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
         param_names.append(name)
 
     type_tag = func.__name__
-    # Literal type tag required by mashumaro discriminator
-    config_fields.append(("type", Literal[type_tag], field(default=type_tag)))  # type: ignore[arg-type]
+    # Use `str` (not Literal) so mashumaro serialises the field on all Python
+    # versions; the discriminator dispatches on the *value*, not the annotation.
+    config_fields.append(("type", str, field(default=type_tag)))
 
     config_name = func.__name__.title().replace("_", "") + "Config"
     ConfigCls: type[LayerConfig] = make_dataclass(  # type: ignore[assignment]

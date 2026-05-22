@@ -51,10 +51,11 @@ Example
 
 from __future__ import annotations
 
-import dataclasses
 import inspect
-from dataclasses import field
+from dataclasses import field, make_dataclass
 from typing import Any, Callable, get_type_hints
+
+from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpacker
 
 from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids import Grid
@@ -96,29 +97,27 @@ def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
         param_names.append(name)
 
     type_tag = func.__name__
-
-    # Build the config class using type() + @dataclass rather than make_dataclass.
-    # On Python 3.14, make_dataclass uses annotationlib and sets __annotate__
-    # *after* types.new_class() returns, so mashumaro's __init_subclass__ hook
-    # fires before annotations are accessible — producing an empty codec.
-    # Using type() with __annotations__ already in the namespace ensures mashumaro
-    # sees the fields at __init_subclass__ time on every Python version.
-    ns: dict[str, Any] = {"__annotations__": {}}
-    for entry in config_fields:
-        # Each entry is either (name, ann) or (name, ann, field_descriptor).
-        f_name: str = entry[0]
-        f_ann: Any = entry[1]
-        ns["__annotations__"][f_name] = f_ann
-        if len(entry) == 3:
-            ns[f_name] = entry[2]  # field() default/factory descriptor
     # Discriminator field — str so mashumaro serialises it on all Python versions.
-    ns["__annotations__"]["type"] = str
-    ns["type"] = field(default=type_tag)
+    config_fields.append(("type", str, field(default=type_tag)))
 
     config_name = func.__name__.title().replace("_", "") + "Config"
-    ConfigCls: type[LayerConfig] = dataclasses.dataclass(  # type: ignore[assignment]
-        type(config_name, (LayerConfig,), ns)
+    ConfigCls: type[LayerConfig] = make_dataclass(  # type: ignore[assignment]
+        config_name,
+        config_fields,
+        bases=(LayerConfig,),
     )
+
+    # On Python 3.14, make_dataclass sets __annotate__ *after* types.new_class()
+    # returns, so mashumaro's __init_subclass__ hook fires before annotations are
+    # accessible, producing empty codecs.  Re-run the same compile step that
+    # __init_subclass__ would have run, walking ancestors in MRO order to pick up
+    # every mixin's builder params (dict, JSON, TOML, YAML, …).
+    for ancestor in ConfigCls.__mro__[-1:0:-1]:
+        for attr_name in vars(ancestor):
+            if attr_name.endswith("__mashumaro_builder_params"):
+                bp = getattr(ancestor, attr_name)
+                compile_mixin_unpacker(ConfigCls, **bp["unpacker"])
+                compile_mixin_packer(ConfigCls, **bp["packer"])
 
     _captured_param_names = list(param_names)
 

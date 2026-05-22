@@ -102,8 +102,6 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
 
     z_phys, depth_out = interpolator(z_surface, depth_1d)
 
-    origin_lon, origin_lat = orientation.origin_lat_lon
-
     x, y, z, depth = xr.broadcast(x_phys, y_phys, z_phys, depth_out)
 
     depth, x, y, z = helpers.ensure_chunks(depth, x, y, z)
@@ -115,8 +113,8 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         depth,
         name=GRID_NAME,
         resolution=resolution,
-        origin_lon=origin_lon,
-        origin_lat=origin_lat,
+        origin_lon=orientation.origin_lon,
+        origin_lat=orientation.origin_lat,
         azimuth=orientation.azimuth,
         bottom_left_lon=min_lon,
         bottom_left_lat=min_lat,

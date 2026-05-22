@@ -177,9 +177,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
     )
 
     grids = []
-    # First layer: curvilinear mesh to account for topography.
-    origin_lon, origin_lat = orientation.origin_lat_lon
 
+    # First layer: curvilinear mesh to account for topography.
     grids.append(
         _curvilinear_grid(
             x_phys,
@@ -190,8 +189,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             config.chunks[Coordinate.K],
             top_refinement.resolution,
             name=top_name,
-            origin_lat=origin_lat,
-            origin_lon=origin_lon,
+            origin_lat=orientation.origin_lat,
+            origin_lon=orientation.origin_lon,
             azimuth=orientation.azimuth,
             bottom_left_lon=min_lon,
             bottom_left_lat=min_lat,

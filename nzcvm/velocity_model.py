@@ -1,13 +1,15 @@
-from nzcvm.coordinates import Coordinate
-from nzcvm.grids.grid import GridSchema
-from nzcvm.qualities import Qualities, QualitiesSchema
-from typing import Self, Callable
+import dataclasses
+from dataclasses import dataclass, field
+from typing import Callable, Self
+
+import xarray as xr
+
 from nzcvm.config.metadata import ModelMetadata
 from nzcvm.config.velocity_model import VelocityModelConfig
+from nzcvm.coordinates import Coordinate
 from nzcvm.grids import Grid, build_grids_from_config
-from dataclasses import dataclass, field
-import dataclasses
-import xarray as xr
+from nzcvm.grids.grid import GridSchema
+from nzcvm.qualities import Qualities, QualitiesSchema
 
 
 @dataclass

@@ -1,34 +1,45 @@
-import typing
-import gc
-
-from nzcvm.layers.core import Layer, layer_from_config
-from nzcvm.grids import Grid
-from nzcvm.qualities import Qualities, QualitiesSchema, template_like
-from types import SimpleNamespace
-from nzcvm.velocity_model import VelocityModel
-from nzcvm.config.layers import LayerConfig
-from typing import Any, Callable
 import dataclasses
+import typing
+from dataclasses import dataclass
+from typing import Callable, Literal
+
 import xarray as xr
+
+from nzcvm.config.layers import LayerConfig
+from nzcvm.config.layers.core import LayerConfig as LayerConfigBase
+from nzcvm.grids import Grid
+from nzcvm.layers.core import Layer, layer_from_config
+from nzcvm.model import ModelRange
+from nzcvm.qualities import Qualities, QualitiesSchema, template_like
+from nzcvm.velocity_model import VelocityModel
 
 
 class PipelineError(Exception):
     pass
 
 
-def build_pipeline(configs: list[LayerConfig]) -> Layer:
-    if not configs:
-        raise ValueError("Pipeline configuration list cannot be empty.")
+@dataclass
+class _SentinelConfig(LayerConfigBase):
+    type: Literal["_sentinel"] = "_sentinel"  # type: ignore[assignment]
 
-    def fail(grid: Grid, **_kwargs: Any) -> None:
+
+class _SentinelLayer(Layer[_SentinelConfig]):
+    """Terminal sentinel that raises when the grid falls outside all layers."""
+
+    def __init__(self) -> None:
+        super().__init__(_SentinelConfig(), None)  # ty: ignore[invalid-argument-type]
+
+    def __call__(self, grid: Grid, model_range: ModelRange = ModelRange.ALL) -> Qualities:
         e = ValueError("Grid out of bounds of any layer")
         e.add_note(str(grid))
         raise e
 
-    sentinel = SimpleNamespace()
-    sentinel.__call__ = fail
 
-    pipeline = typing.cast(Layer, sentinel)
+def build_pipeline(configs: list[LayerConfig]) -> Layer:
+    if not configs:
+        raise ValueError("Pipeline configuration list cannot be empty.")
+
+    pipeline: Layer = _SentinelLayer()
 
     for config in reversed(configs):
         layer_type = layer_from_config(config)

@@ -29,7 +29,6 @@ import logging
 import uuid
 from typing import Any
 
-
 logger = logging.getLogger(__name__)
 
 #: Global pool mapping UUID strings to Python objects.

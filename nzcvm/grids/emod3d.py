@@ -1,18 +1,17 @@
-import dask
-import pyproj
 from collections.abc import Callable
+
+import dask
 import numpy as np
 import xarray as xr
 from scipy.spatial.transform import Rotation
 
-from nzcvm.grids.builder import build_grids_from_config
-from nzcvm.surface import read_surface_from_path
-from nzcvm.coordinates import Coordinate, WGS84_EPSG
 from nzcvm import coordinates
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
+from nzcvm.coordinates import Coordinate
 from nzcvm.grids import helpers
+from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid, GridSchema
-
+from nzcvm.surface import read_surface_from_path
 
 LAYER_DIM = "layer"
 GRID_NAME = "grid_0"

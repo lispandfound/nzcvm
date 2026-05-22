@@ -10,16 +10,15 @@ python visualise_grid.py model.nc --scalar depth
 python visualise_grid.py model.nc --scalar vp --coastline nz-coastlines-topo-150k.shp
 """
 
-import shapely
-
 import gzip
+from pathlib import Path
+from typing import Annotated
 
 import numpy as np
 import pyvista as pv
+import shapely
 import typer
 import xarray as xr
-from pathlib import Path
-from typing import Annotated
 
 # Adjust these imports according to your local package structure
 from nzcvm.components import Component

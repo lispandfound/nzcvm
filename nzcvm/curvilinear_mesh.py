@@ -8,8 +8,8 @@ The public API has two functions:
   along the K dimension.
 """
 
-import xarray as xr
 import numpy as np
+import xarray as xr
 
 
 def curvilinear_mesh_boundary(

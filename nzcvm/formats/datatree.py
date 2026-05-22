@@ -1,11 +1,13 @@
-from nzcvm.velocity_model import VelocityModel
-from typing import Any
-from nzcvm.formats import quantise
 from enum import Enum
-import xarray as xr
 from pathlib import Path
-from numcodecs import ZFPY, Blosc
+from typing import Any
+
 import hdf5plugin
+import xarray as xr
+from numcodecs import ZFPY, Blosc
+
+from nzcvm.formats import quantise
+from nzcvm.velocity_model import VelocityModel
 
 
 def _coerce_attribute_value_to_netcdf(v: Any) -> Any:

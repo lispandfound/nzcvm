@@ -25,7 +25,6 @@ nzcvm.velocity_model.ModelMetadata : Stores coordinate-system parameters alongsi
 """
 
 from enum import StrEnum, auto
-from typing import Literal
 
 import numpy as np
 import xarray as xr

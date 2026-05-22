@@ -1,46 +1,31 @@
 """Command-line interface for generating NZCVM velocity models."""
 
-from rich.syntax import Syntax
-
-from tomllib import TOMLDecodeError
-from json import JSONDecodeError
-
-
-import sys
-
-from rich.panel import Panel
-
-from mashumaro import MissingField
-
-from mashumaro.exceptions import InvalidFieldValue
-
-from nzcvm import registry
-
-from distributed import Client
-
-from dask.distributed import LocalCluster
-
-from dask.diagnostics import profile_visualize
-
 import contextlib
-import dask
 import logging
-from nzcvm.layers.pipeline import execute_model_pipeline
-
-from nzcvm.velocity_model import VelocityModel
-from nzcvm.config import VelocityModelConfigFormat, VelocityModelConfig
-from tqdm.dask import TqdmCallback
-
+import sys
+from json import JSONDecodeError
 from pathlib import Path
+from tomllib import TOMLDecodeError
 from typing import Annotated, Any
 
+import dask
 import psutil
 import typer
-from nzcvm.logging import configure_logging, LogProgress, ResourceMonitor
-
-from nzcvm import formats
+from dask.diagnostics import profile_visualize
+from dask.distributed import LocalCluster
+from distributed import Client
+from mashumaro import MissingField
+from mashumaro.exceptions import InvalidFieldValue
 from rich.console import Console, Group
+from rich.panel import Panel
+from rich.syntax import Syntax
+from tqdm.dask import TqdmCallback
+
+from nzcvm import formats, registry
+from nzcvm.config import VelocityModelConfig, VelocityModelConfigFormat
 from nzcvm.layers import pipeline
+from nzcvm.layers.pipeline import execute_model_pipeline
+from nzcvm.logging import LogProgress, ResourceMonitor, configure_logging
 from nzcvm.scripts import (
     construct_mesh,
     convert_tomography,
@@ -48,6 +33,7 @@ from nzcvm.scripts import (
     tree_stats,
     view,
 )
+from nzcvm.velocity_model import VelocityModel
 
 
 def _extract_error_snippet(config: str, lineno: int) -> tuple[str, int]:

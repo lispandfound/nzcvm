@@ -1,6 +1,7 @@
+from dataclasses import dataclass
+
 import numpy as np
 from scipy.optimize import minimize
-from dataclasses import dataclass
 
 
 @dataclass

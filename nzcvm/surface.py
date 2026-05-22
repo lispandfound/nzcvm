@@ -5,17 +5,18 @@ interpolation, used by :class:`nzcvm.layers.DepthTransformLayer` to
 convert depth-below-surface coordinates into absolute elevations.
 """
 
+import logging
 from dataclasses import dataclass
-
 from pathlib import Path
 
 import numpy as np
 import pyvista as pv
-import logging
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
-from .nzcvm import PySurfaceModel, surface_model
+
 from nzcvm import registry
+
+from .nzcvm import PySurfaceModel, surface_model
 
 DEFAULT_TOLERANCE = 1e-4
 

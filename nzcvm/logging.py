@@ -1,11 +1,11 @@
-from pathlib import Path
 import logging
 import logging.config
+import os
 import threading
 import time
+from pathlib import Path
+
 import psutil
-import logging
-import os
 from dask.callbacks import Callback
 
 

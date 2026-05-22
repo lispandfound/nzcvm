@@ -1,11 +1,9 @@
-import pyproj
-from typing import Any
-from nzcvm.coordinates import Coordinate
-
 import dask.array as da
 import numpy as np
-from nzcvm.surface import Surface
 import xarray as xr
+
+from nzcvm.coordinates import Coordinate
+from nzcvm.surface import Surface
 
 
 def compute_surface_elevation(

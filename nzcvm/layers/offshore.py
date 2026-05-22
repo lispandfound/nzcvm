@@ -15,41 +15,31 @@ surface, so depth = 0 m is at the surface and depth = 500 m is 500 m below.
 All distances and depths are in **metres**.
 """
 
-from dataclasses import dataclass
-
-
-from nzcvm.qualities import Qualities, QualitiesSchema
-from nzcvm import qualities
-
-from nzcvm.grids import Grid
-
 import functools
-
-from pathlib import Path
-
 import gzip
-
-from nzcvm.config.layers.offshore import (
-    OffshoreBasinConfig,
-    VelocityModel1D,
-    DepthModel,
-)
-
-from typing import Any, Self
 import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Self
 
 import numpy as np
-import xarray as xr
-
-
-from nzcvm.components import Component
-from nzcvm.coordinates import Coordinate
-from nzcvm.layers.core import Layer
-from nzcvm.model import ModelRange
-
 import shapely
 import shapely.ops
+import xarray as xr
 from numba import guvectorize
+
+from nzcvm import qualities
+from nzcvm.components import Component
+from nzcvm.config.layers.offshore import (
+    DepthModel,
+    OffshoreBasinConfig,
+    VelocityModel1D,
+)
+from nzcvm.coordinates import Coordinate
+from nzcvm.grids import Grid
+from nzcvm.layers.core import Layer
+from nzcvm.model import ModelRange
+from nzcvm.qualities import Qualities, QualitiesSchema
 
 logger = logging.getLogger(__name__)
 

@@ -1,18 +1,15 @@
 """Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
 
-from nzcvm.grids import Grid
-from nzcvm.qualities import Qualities, QualitiesSchema
-
-from nzcvm.config.layers.query import QueryLayerConfig
-from nzcvm.layers.core import Layer
-
 import logging
 
 import xarray as xr
 
 from nzcvm.components import Component
+from nzcvm.config.layers.query import QueryLayerConfig
+from nzcvm.grids import Grid
+from nzcvm.layers.core import Layer
 from nzcvm.model import ModelRange, ModelTree
-
+from nzcvm.qualities import Qualities, QualitiesSchema
 
 logger = logging.getLogger(__name__)
 

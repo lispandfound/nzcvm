@@ -1,15 +1,15 @@
-from nzcvm.config.validation import (
-    PositiveInt,
-    PositiveFloat,
-    ExistingFile,
-)
-from nzcvm.config.grids.model import Model
+from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import Literal
-from nzcvm.coordinates import Coordinate
-from nzcvm.config.grids import GridConfig
-from dataclasses import dataclass, field
 
+from nzcvm.config.grids import GridConfig
+from nzcvm.config.grids.model import Model
+from nzcvm.config.validation import (
+    ExistingFile,
+    PositiveFloat,
+    PositiveInt,
+)
+from nzcvm.coordinates import Coordinate
 
 DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: -1}
 

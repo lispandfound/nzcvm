@@ -4,10 +4,6 @@ Writes ``rho3dfile.d``, ``vp3dfile.p``, and ``vs3dfile.s`` binary files into
 a directory using memory-mapped I/O via :mod:`numpy.memmap`.
 """
 
-from nzcvm.qualities import Qualities
-
-from nzcvm.velocity_model import VelocityModel
-
 import os
 from pathlib import Path
 
@@ -17,6 +13,8 @@ import xarray as xr
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
+from nzcvm.qualities import Qualities
+from nzcvm.velocity_model import VelocityModel
 
 RHOFILE = "rho3dfile.d"
 VPFILE = "vp3dfile.p"

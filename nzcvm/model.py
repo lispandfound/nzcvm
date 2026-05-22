@@ -14,12 +14,12 @@ nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
 nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
+import logging
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Protocol, Self, ClassVar
+from typing import Any, Protocol, Self
 
-import logging
 import numpy as np
 import pyvista as pv
 import rich
@@ -29,10 +29,9 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
-from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
-
 from nzcvm.components import Component
 
+from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)

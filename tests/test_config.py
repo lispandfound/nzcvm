@@ -1,0 +1,274 @@
+"""Tests for configuration validation logic and config dispatch.
+
+Covers two concerns:
+
+1. The validator functions in :mod:`nzcvm.config.validation` – tested
+   with Hypothesis property tests where natural, and contract-based unit
+   tests otherwise.
+2. The layer and grid config dispatch that maps a :class:`LayerConfig`
+   subclass to the corresponding :class:`Layer` subclass via
+   :func:`~nzcvm.layers.core.layer_from_config`.
+
+Mashumaro TOML/YAML/JSON decoding is *not* tested here; that is the
+library's responsibility.
+"""
+
+from __future__ import annotations
+
+import pytest
+from hypothesis import given, strategies as st
+from mashumaro.exceptions import InvalidFieldValue
+
+from nzcvm.config.validation import (
+    ge,
+    gt,
+    in_choices,
+    latitude,
+    le,
+    lt,
+    max_len,
+    min_len,
+    regex,
+    validate_non_negative,
+    validate_positive,
+)
+from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
+from nzcvm.config.layers.offshore import VelocityModel1D
+from nzcvm.layers.clamp import ClampLayer
+from nzcvm.layers.core import layer_from_config
+
+
+# ---------------------------------------------------------------------------
+# Numeric validators
+# ---------------------------------------------------------------------------
+
+
+@given(st.floats(min_value=1e-9, max_value=1e9, allow_nan=False))
+def test_validate_positive_accepts_positive(v: float) -> None:
+    assert validate_positive(v) == v
+
+
+@given(st.floats(max_value=0.0, allow_nan=False))
+def test_validate_positive_rejects_non_positive(v: float) -> None:
+    with pytest.raises(ValueError):
+        validate_positive(v)
+
+
+@given(st.floats(min_value=0.0, allow_nan=False, allow_infinity=False))
+def test_validate_non_negative_accepts(v: float) -> None:
+    assert validate_non_negative(v) == v
+
+
+@given(st.floats(max_value=-1e-9, allow_nan=False))
+def test_validate_non_negative_rejects_negative(v: float) -> None:
+    with pytest.raises(ValueError):
+        validate_non_negative(v)
+
+
+@given(
+    limit=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+    v=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+)
+def test_gt_accepts_strictly_greater(limit: float, v: float) -> None:
+    if v > limit:
+        assert gt(limit)(v) == v
+    else:
+        with pytest.raises(ValueError):
+            gt(limit)(v)
+
+
+@given(
+    limit=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+    v=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+)
+def test_ge_accepts_greater_or_equal(limit: float, v: float) -> None:
+    if v >= limit:
+        assert ge(limit)(v) == v
+    else:
+        with pytest.raises(ValueError):
+            ge(limit)(v)
+
+
+@given(
+    limit=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+    v=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+)
+def test_lt_accepts_strictly_less(limit: float, v: float) -> None:
+    if v < limit:
+        assert lt(limit)(v) == v
+    else:
+        with pytest.raises(ValueError):
+            lt(limit)(v)
+
+
+@given(
+    limit=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+    v=st.floats(min_value=-1e6, max_value=1e6, allow_nan=False),
+)
+def test_le_accepts_less_or_equal(limit: float, v: float) -> None:
+    if v <= limit:
+        assert le(limit)(v) == v
+    else:
+        with pytest.raises(ValueError):
+            le(limit)(v)
+
+
+def test_validate_positive_passes_none() -> None:
+    assert validate_positive(None) is None  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# String / sequence validators
+# ---------------------------------------------------------------------------
+
+
+@given(st.integers(min_value=1, max_value=10))
+def test_min_len_accepts_long_enough(n: int) -> None:
+    v = "x" * n
+    assert min_len(n)(v) == v
+
+
+@given(st.integers(min_value=1, max_value=10))
+def test_min_len_rejects_too_short(n: int) -> None:
+    with pytest.raises(ValueError):
+        min_len(n + 1)("x" * n)
+
+
+@given(st.integers(min_value=1, max_value=10))
+def test_max_len_accepts_short_enough(n: int) -> None:
+    v = "x" * n
+    assert max_len(n)(v) == v
+
+
+@given(st.integers(min_value=1, max_value=10))
+def test_max_len_rejects_too_long(n: int) -> None:
+    with pytest.raises(ValueError):
+        max_len(n)("x" * (n + 1))
+
+
+def test_regex_accepts_match() -> None:
+    assert regex(r"^\d+$")("123") == "123"
+
+
+def test_regex_rejects_non_match() -> None:
+    with pytest.raises(ValueError):
+        regex(r"^\d+$")("abc")
+
+
+# ---------------------------------------------------------------------------
+# Geographic validators
+# ---------------------------------------------------------------------------
+
+
+@given(st.floats(min_value=-90.0, max_value=90.0, allow_nan=False))
+def test_latitude_accepts_valid(v: float) -> None:
+    latitude(v)  # should not raise
+
+
+@given(st.floats(allow_nan=False).filter(lambda x: not (-90 <= x <= 90)))
+def test_latitude_rejects_out_of_range(v: float) -> None:
+    with pytest.raises(ValueError):
+        latitude(v)
+
+
+# ---------------------------------------------------------------------------
+# in_choices validator
+# ---------------------------------------------------------------------------
+
+
+@given(st.sampled_from(["a", "b", "c"]))
+def test_in_choices_accepts_member(v: str) -> None:
+    assert in_choices(["a", "b", "c"])(v) == v
+
+
+def test_in_choices_rejects_non_member() -> None:
+    with pytest.raises(ValueError):
+        in_choices(["a", "b"])("z")
+
+
+# ---------------------------------------------------------------------------
+# ClampLayerConfig cross-field validation
+# ---------------------------------------------------------------------------
+
+
+def test_clamp_bound_rejects_inverted_range() -> None:
+    with pytest.raises(InvalidFieldValue):
+        Bound(min=5.0, max=1.0)
+
+
+def test_clamp_bound_rejects_non_positive_max() -> None:
+    with pytest.raises(InvalidFieldValue):
+        Bound(max=-1.0)
+
+
+def test_clamp_bound_accepts_min_only() -> None:
+    b = Bound(min=1.0)
+    assert b.min == 1.0 and b.max is None
+
+
+def test_clamp_bound_accepts_max_only() -> None:
+    b = Bound(max=5.0)
+    assert b.max == 5.0 and b.min is None
+
+
+def test_clamp_config_rejects_inverted_vp_vs_ratio() -> None:
+    with pytest.raises(InvalidFieldValue):
+        ClampLayerConfig(min_vp_vs_ratio=3.0, max_vp_vs_ratio=1.0)
+
+
+def test_clamp_config_accepts_valid_vp_vs_ratio() -> None:
+    c = ClampLayerConfig(min_vp_vs_ratio=1.5, max_vp_vs_ratio=2.5)
+    assert c.min_vp_vs_ratio == 1.5
+
+
+# ---------------------------------------------------------------------------
+# VelocityModel1D physical constraint
+# ---------------------------------------------------------------------------
+
+
+def test_velocity_model_1d_rejects_vp_less_than_vs() -> None:
+    with pytest.raises(ValueError, match="vp > vs"):
+        VelocityModel1D(
+            bottom_depth=100.0,
+            rho=2000.0,
+            vp=2000.0,
+            vs=3000.0,  # vs > vp: illegal
+            qp=100.0,
+            qs=50.0,
+            alpha=1.0,
+        )
+
+
+def test_velocity_model_1d_rejects_equal_vp_vs() -> None:
+    with pytest.raises(ValueError):
+        VelocityModel1D(
+            bottom_depth=0.0,
+            rho=2000.0,
+            vp=3000.0,
+            vs=3000.0,
+            qp=100.0,
+            qs=50.0,
+            alpha=1.0,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Layer config dispatch
+# ---------------------------------------------------------------------------
+
+
+def test_layer_from_config_clamp() -> None:
+    cfg = ClampLayerConfig()
+    assert layer_from_config(cfg) is ClampLayer
+
+
+def test_layer_from_config_unknown_raises() -> None:
+    from nzcvm.config.layers.core import LayerConfig
+    from dataclasses import dataclass
+
+    @dataclass
+    class _UnknownConfig(LayerConfig):
+        type: str = "unknown_xyz"
+
+    with pytest.raises(KeyError):
+        layer_from_config(_UnknownConfig())

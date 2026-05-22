@@ -1,22 +1,19 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
-from nzcvm.layers.core import Layer
-
-
-from typing import Any, ClassVar
 import logging
+
 import numpy as np
 import xarray as xr
 
 from nzcvm import qualities
-from nzcvm.qualities import Qualities, QualitiesSchema
-from nzcvm.grids import Grid
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
+from nzcvm.grids import Grid
+from nzcvm.layers.core import Layer
 from nzcvm.model import ModelRange
-from nzcvm.surface import read_surface_from_path, Surface
-
+from nzcvm.qualities import Qualities
+from nzcvm.surface import read_surface_from_path
 
 logger = logging.getLogger(__name__)
 

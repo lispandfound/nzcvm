@@ -1,7 +1,9 @@
 from dataclasses import dataclass, field
-from typing import Any
+
 from mashumaro.exceptions import InvalidFieldValue
+
 from nzcvm.config.core import ConfigObject
+
 from .core import LayerConfig
 
 

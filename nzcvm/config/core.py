@@ -1,3 +1,4 @@
+from mashumaro.exceptions import InvalidFieldValue
 from typing import get_type_hints, get_origin, get_args, Annotated
 from mashumaro.config import BaseConfig
 from mashumaro.mixins.dict import DataClassDictMixin
@@ -28,7 +29,9 @@ class ConfigObject(
             if get_origin(hint) is not Annotated:
                 continue
 
-            metadata_args = get_args(hint)[1:]
+            args = get_args(hint)
+            type = args[0]
+            metadata_args = args[1:]
 
             for validator in metadata_args:
                 if not callable(validator):
@@ -41,9 +44,12 @@ class ConfigObject(
                     if res is not None:
                         setattr(self, field_name, res)
                 except (ValueError, TypeError) as e:
-                    raise ValueError(
-                        f"Validation failed for field '{field_name}' "
-                        f"with value {current_value!r}: {e}"
+                    raise InvalidFieldValue(
+                        field_name=field_name,
+                        field_type=type,
+                        field_value=current_value,
+                        holder_class=self.__class__,
+                        msg=str(e),
                     ) from e
 
     class Meta(BaseConfig):

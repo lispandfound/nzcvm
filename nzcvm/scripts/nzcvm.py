@@ -1,5 +1,19 @@
 """Command-line interface for generating NZCVM velocity models."""
 
+from rich.syntax import Syntax
+
+from tomllib import TOMLDecodeError
+from json import JSONDecodeError
+
+
+import sys
+
+from rich.panel import Panel
+
+from mashumaro import MissingField
+
+from mashumaro.exceptions import InvalidFieldValue
+
 from nzcvm import registry
 
 from distributed import Client
@@ -18,14 +32,14 @@ from nzcvm.config import VelocityModelConfigFormat, VelocityModelConfig
 from tqdm.dask import TqdmCallback
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import psutil
 import typer
 from nzcvm.logging import configure_logging, LogProgress, ResourceMonitor
 
 from nzcvm import formats
-
+from rich.console import Console, Group
 from nzcvm.layers import pipeline
 from nzcvm.scripts import (
     construct_mesh,
@@ -34,6 +48,121 @@ from nzcvm.scripts import (
     tree_stats,
     view,
 )
+
+
+def _extract_error_snippet(config: str, lineno: int) -> tuple[str, int]:
+    """Slices out the broken line and surrounding context for syntax highlighting."""
+    lines = config.splitlines(keepends=True)
+    start = max(lineno - 3, 0)
+    end = min(lineno + 2, len(lines))
+    context = "".join(lines[start:end])
+    return context, start + 1
+
+
+def print_syntax_error(exc: TOMLDecodeError | JSONDecodeError):
+    """Formats structural syntax violations elegantly inside a single card."""
+    doc = exc.doc  # ty: ignore[unresolved-attribute]
+    lineno = exc.lineno  # ty: ignore[unresolved-attribute]
+    colno = exc.colno  # ty: ignore[unresolved-attribute]
+    msg = exc.msg  # ty: ignore[unresolved-attribute]
+
+    snippet, start_line = _extract_error_snippet(doc, lineno)
+
+    # Header details component
+    text_content = f"  [bold]Line:[/bold]     {lineno}, [bold]Column:[/bold] {colno}, [bold]Error:[/bold] {msg}\n"
+
+    # Build components to pack into the panel
+    renderables: list[Any] = [text_content]
+    lang = "json" if isinstance(exc, JSONDecodeError) else "toml"
+    if snippet:
+        renderables.append(
+            Syntax(
+                snippet,
+                lang,
+                theme="ansi_dark",
+                line_numbers=True,
+                start_line=start_line,
+                highlight_lines={lineno},
+            )
+        )
+
+    console.print()
+    console.print(
+        Panel(
+            Group(*renderables),
+            border_style="red",
+            title=f"[bold red]{lang.upper()} Syntax Error[/bold red]",
+            title_align="left",
+            expand=True,
+        )
+    )
+    console.print()
+
+
+def print_config_error(exc: Exception):
+    """Recursively inspects exception context to surface the specific nested field error."""
+
+    # Track breadcrumbs of fields down the nesting structure
+    field_path = []
+    current_exc = exc
+    most_specific_exc = exc
+
+    while current_exc is not None:
+        if isinstance(current_exc, (InvalidFieldValue, MissingField)):
+            most_specific_exc = current_exc
+            if current_exc.field_name:
+                field_path.append(current_exc.field_name)
+
+        current_exc = getattr(current_exc, "__context__", None)
+
+    path_str = ".".join(field_path) if field_path else "Unknown Configuration Property"
+
+    if isinstance(most_specific_exc, InvalidFieldValue):
+        ctx_class = most_specific_exc.holder_class
+        context_name = (
+            ctx_class.__name__ if hasattr(ctx_class, "__name__") else str(ctx_class)
+        )
+
+        ftype = most_specific_exc.field_type
+        type_name = ftype.__name__ if hasattr(ftype, "__name__") else str(ftype)
+
+        reason = getattr(most_specific_exc, "msg", None) or str(most_specific_exc)
+
+        if "has invalid value" in reason and ":" in reason:
+            reason = reason.split(":", 1)[1].strip()
+
+        error_content = (
+            f"  [bold]Location:[/bold]  [bold blue]{path_str}[/bold blue]\n"
+            f"  [bold]Section:[/bold]   {context_name}\n"
+            f"  [bold]Type:[/bold]      {type_name}\n"
+            f"  [bold]Reason:[/bold]    [white]{reason}[/white]"
+        )
+
+    elif isinstance(most_specific_exc, MissingField):
+        ctx_class = most_specific_exc.holder_class_name
+        context_name = (
+            ctx_class.__name__ if hasattr(ctx_class, "__name__") else str(ctx_class)
+        )
+
+        error_content = (
+            f"[bold red]Missing Required Field:[/bold red]\n\n"
+            f"  [bold]Missing Location:[/bold]  [yellow]{path_str}[/yellow]\n"
+            f"  [bold]Section Context:[/bold]   {context_name}"
+        )
+    else:
+        error_content = str(exc)
+
+    console.print()
+    console.print(
+        Panel(
+            error_content,
+            border_style="red",
+            title="[bold red]Configuration Invalid[/bold red]",
+            title_align="left",
+            expand=True,
+        )
+    )
+    console.print()
 
 
 def num_cores() -> int:
@@ -46,6 +175,9 @@ def num_cores() -> int:
         return cpu_count
     else:
         raise RuntimeError("Cannot determine CPU count.")
+
+
+console = Console(stderr=True)
 
 
 app = typer.Typer(help="NZCVM velocity model toolkit.")
@@ -141,7 +273,14 @@ def generate(
 
         profilers = []
 
-        velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
+        try:
+            velocity_model_spec = VelocityModelConfig.read_config(config, config_format)
+        except (InvalidFieldValue, MissingField) as e:
+            print_config_error(e)
+            sys.exit(1)
+        except (TOMLDecodeError, JSONDecodeError) as e:
+            print_syntax_error(e)
+            sys.exit(1)
 
         logger.debug("Building model pipeline")
         model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)

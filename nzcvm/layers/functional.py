@@ -66,6 +66,28 @@ from nzcvm.qualities import Qualities
 _RUNTIME_PARAMS = frozenset({"grid", "model_range", "next_layer", "return"})
 
 
+def _recompile_mashumaro_codecs(cls: type) -> None:
+    """Recompile mashumaro packer/unpacker codecs for *cls*.
+
+    On Python 3.14, :func:`dataclasses.make_dataclass` sets ``__annotate__``
+    *after* :func:`types.new_class` returns.  Mashumaro's
+    ``__init_subclass__`` hook fires during class creation — before
+    annotations are accessible — so the generated codecs are empty.
+
+    This function replays the same ancestor walk that ``__init_subclass__``
+    performs, picking up every mixin's builder params (dict, JSON, TOML,
+    YAML, …) so that all serialisation formats work correctly.
+    """
+    # Walk from the most-base ancestor down to the direct parent, mirroring
+    # the order mashumaro's own __init_subclass__ uses.
+    for ancestor in reversed(cls.__mro__[1:]):
+        for attr_name in vars(ancestor):
+            if attr_name.endswith("__mashumaro_builder_params"):
+                bp = getattr(ancestor, attr_name)
+                compile_mixin_unpacker(cls, **bp["unpacker"])
+                compile_mixin_packer(cls, **bp["packer"])
+
+
 def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
     """Derive a :class:`~nzcvm.layers.core.Layer` subclass from *func*.
 
@@ -107,17 +129,7 @@ def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
         bases=(LayerConfig,),
     )
 
-    # On Python 3.14, make_dataclass sets __annotate__ *after* types.new_class()
-    # returns, so mashumaro's __init_subclass__ hook fires before annotations are
-    # accessible, producing empty codecs.  Re-run the same compile step that
-    # __init_subclass__ would have run, walking ancestors in MRO order to pick up
-    # every mixin's builder params (dict, JSON, TOML, YAML, …).
-    for ancestor in ConfigCls.__mro__[-1:0:-1]:
-        for attr_name in vars(ancestor):
-            if attr_name.endswith("__mashumaro_builder_params"):
-                bp = getattr(ancestor, attr_name)
-                compile_mixin_unpacker(ConfigCls, **bp["unpacker"])
-                compile_mixin_packer(ConfigCls, **bp["packer"])
+    _recompile_mashumaro_codecs(ConfigCls)
 
     _captured_param_names = list(param_names)
 

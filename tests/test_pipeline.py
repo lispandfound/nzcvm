@@ -46,19 +46,6 @@ def test_build_pipeline_single_config_produces_callable() -> None:
 # Layer ordering: first config is outermost
 # ---------------------------------------------------------------------------
 
-
-def _ordered_pipeline() -> tuple[RecordingLayer, RecordingLayer, CountingLayer]:
-    """Build a three-layer stack using monkey-patched dummy layers.
-
-    Returns the three layers so that call order can be inspected.
-    """
-    # We create two layers manually and compose them to check ordering.
-    terminal = ConstantLayer()
-    inner_counter = CountingLayer(terminal)
-    outer_counter = CountingLayer(inner_counter)
-    return outer_counter, inner_counter, terminal  # type: ignore[return-value]
-
-
 def test_clamp_chain_outer_before_inner() -> None:
     """The outermost ClampLayer runs *before* the inner ConstantLayer."""
     terminal = ConstantLayer(vs=3000.0)

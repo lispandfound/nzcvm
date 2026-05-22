@@ -104,10 +104,13 @@ def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
     # Using type() with __annotations__ already in the namespace ensures mashumaro
     # sees the fields at __init_subclass__ time on every Python version.
     ns: dict[str, Any] = {"__annotations__": {}}
-    for name, ann, *rest in config_fields:
-        ns["__annotations__"][name] = ann
-        if rest:
-            ns[name] = rest[0]  # field() default/factory descriptor
+    for entry in config_fields:
+        # Each entry is either (name, ann) or (name, ann, field_descriptor).
+        f_name: str = entry[0]
+        f_ann: Any = entry[1]
+        ns["__annotations__"][f_name] = f_ann
+        if len(entry) == 3:
+            ns[f_name] = entry[2]  # field() default/factory descriptor
     # Discriminator field — str so mashumaro serialises it on all Python versions.
     ns["__annotations__"]["type"] = str
     ns["type"] = field(default=type_tag)

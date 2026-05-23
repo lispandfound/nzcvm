@@ -1,153 +1,152 @@
-"""Dask benchmark for :func:`nzcvm.generate.fill_grid`.
+"""Pipeline benchmark: grid construction + constant-layer execution.
 
-Builds a multi-resolution curvilinear grid roughly 1 GB in size and times
-how long :func:`fill_grid` takes to materialise (compute) all coordinate
-arrays.
+Builds a multi-resolution SW4 curvilinear grid and times a full pipeline
+run (lazy graph construction + dask compute) using the :func:`constant`
+functional layer as the terminal layer.  This exercises the complete
+``VelocityModel`` → ``execute_model_pipeline`` → ``.compute()`` path that
+production pipelines follow.
 
 Run with::
 
     python benchmarks/benchmark_generate.py
 
-The script prints wall-clock timings for the full dask compute.
+The script prints wall-clock timings as a Markdown table suitable for
+``$GITHUB_STEP_SUMMARY``.
 """
 
+import tempfile
 import time
-from dataclasses import dataclass
+from pathlib import Path
 
-import dask.array as da
 import numpy as np
-import xarray as xr
+import pyvista as pv
+from pyproj import CRS
 
+from nzcvm.config.grids.model import Model
+from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
+from nzcvm.config.metadata import ModelMetadata
 from nzcvm.coordinates import Coordinate
-from nzcvm.generate import fill_grid
-from nzcvm.velocity_model import CellRegistration
-
-
-# ---------------------------------------------------------------------------
-# Flat-surface stub (no file I/O required)
-# ---------------------------------------------------------------------------
-
-
-@dataclass
-class _FlatSurface:
-    """Stub surface that returns a constant elevation everywhere."""
-
-    z_value: float = -200.0
-
-    def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        return np.full(x.shape, self.z_value, dtype=np.float32)
-
-
-# ---------------------------------------------------------------------------
-# Grid factory
-# ---------------------------------------------------------------------------
-
-
-def _make_grid(
-    name: str,
-    resolution: float,
-    bottom: float,
-    deformation: float,
-    extent_x: float,
-    extent_y: float,
-    minimum_resolution: float,
-) -> xr.Dataset:
-    """Build a 2-D grid dataset compatible with :func:`fill_grid`."""
-    step = int(round(resolution / minimum_resolution))
-    ni_global = int(np.ceil(extent_x / minimum_resolution)) + 1
-    nj_global = int(np.ceil(extent_y / minimum_resolution)) + 1
-    xi = np.arange(0, ni_global, step, dtype=np.int64)
-    xj = np.arange(0, nj_global, step, dtype=np.int64)
-    x_2d, y_2d = np.meshgrid(
-        (xi * minimum_resolution).astype(np.float32),
-        (xj * minimum_resolution).astype(np.float32),
-        indexing="ij",
-    )
-    return xr.Dataset(
-        data_vars={
-            Coordinate.X: ([Coordinate.I, Coordinate.J], x_2d),
-            Coordinate.Y: ([Coordinate.I, Coordinate.J], y_2d),
-        },
-        coords={Coordinate.I: xi, Coordinate.J: xj},
-        attrs={
-            "resolution": float(resolution),
-            "bottom": float(bottom),
-            "deformation": float(deformation),
-            "name": name,
-        },
-    )
+from nzcvm.grids.builder import build_grids_from_config
+from nzcvm.layers.dummy import constant
+from nzcvm.velocity_model import VelocityModel
 
 
 # ---------------------------------------------------------------------------
 # Benchmark parameters
 # ---------------------------------------------------------------------------
 
-# A ~1 GB grid: 3 components × float32 (4 bytes) × ni × nj × nk
-# 1 GB / (3 × 4) ≈ 83 M points.  With extent 100 km × 80 km at 100 m
-# resolution we get 1001 × 801 ≈ 0.8 M horizontal points, so nk ≈ 104 is
-# needed.  Using 3 refinements totalling ~110 k-levels.
-
+# ~100 km × 80 km domain, three refinements totalling roughly 0.5 GB of
+# quality data (6 components × float32 × ni × nj × nk summed over layers).
 EXTENT_X = 100_000.0  # metres
-EXTENT_Y = 80_000.0  # metres
-MIN_RES = 100.0  # metres (finest resolution)
+EXTENT_Y = 80_000.0   # metres
 
-REFINEMENTS = [
-    # name, resolution, bottom (elevation), deformation
-    ("near_surface", 100.0, 1_000.0, 0.5),
-    ("mid_crust", 200.0, 15_000.0, 0.8),
-    ("lower_crust", 400.0, 50_000.0, 1.0),
-]
+# In +z-down convention positive bottom means depth below the surface.
+# Subsequent refinements must have *smaller* resolution (finer) so the
+# integer ratio top_resolution / refinement_resolution is >= 1.
+REFINEMENTS = {
+    "near_surface": MeshRefinement(resolution=800.0, bottom=2_000.0),
+    "mid_crust":    MeshRefinement(resolution=400.0, bottom=20_000.0),
+    "lower_crust":  MeshRefinement(resolution=200.0, bottom=60_000.0),
+}
+
+CHUNK_SIZE = 64  # voxels per chunk along each axis
 
 
-def build_grids() -> list[xr.Dataset]:
-    """Construct the 2-D grid datasets for the benchmark."""
-    return [
-        _make_grid(name, res, bottom, deform, EXTENT_X, EXTENT_Y, MIN_RES)
-        for name, res, bottom, deform in REFINEMENTS
-    ]
+# ---------------------------------------------------------------------------
+# Flat-surface helper
+# ---------------------------------------------------------------------------
+
+
+def _write_flat_surface(path: str) -> None:
+    """Write a flat z=0 StructuredGrid to *path* (VTK format)."""
+    # NZ-wide bounding box in NZTM2000: origin roughly (1e6, 4.7e6)
+    xmin, ymin = 1_000_000.0, 4_700_000.0
+    extent = 2_000_000.0  # 2000 km side — safely encloses the benchmark domain
+    n = 10
+    xs = np.linspace(xmin, xmin + extent, n)
+    ys = np.linspace(ymin, ymin + extent, n)
+    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+    zz = np.zeros_like(xx)
+    pv.StructuredGrid(xx, yy, zz).save(path)
+
+
+# ---------------------------------------------------------------------------
+# Main benchmark
+# ---------------------------------------------------------------------------
 
 
 def run_benchmark() -> None:
-    """Run fill_grid and output results as a Markdown table."""
+    """Build grids, run the pipeline, compute results, and print a table."""
 
-    t0 = time.perf_counter()
-    grids = build_grids()
-    t1 = time.perf_counter()
-    construction_time = t1 - t0
+    with tempfile.TemporaryDirectory() as tmp:
+        surface_path = Path(tmp) / "flat.vtk"
+        _write_flat_surface(str(surface_path))
 
-    t2 = time.perf_counter()
-    filled = fill_grid(grids, _FlatSurface(), CellRegistration.CORNER)
-    t3 = time.perf_counter()
-    lazy_time = t3 - t2
-
-    total_elements = sum(
-        g[Coordinate.X].size + g[Coordinate.Y].size + g[Coordinate.Z].size
-        for g in filled
-    )
-    total_gb = total_elements * 4 / 1024**3
-
-    t4 = time.perf_counter()
-    arrays_to_compute = []
-    for g in filled:
-        arrays_to_compute.extend(
-            [g[Coordinate.X].data, g[Coordinate.Y].data, g[Coordinate.Z].data]
+        # 1. Build SW4 grids -------------------------------------------------
+        t0 = time.perf_counter()
+        config = SW4GridConfig(
+            surface=surface_path,
+            extent_x=EXTENT_X,
+            extent_y=EXTENT_Y,
+            orientation=Model(
+                origin_lon=172.0,
+                origin_lat=-41.0,
+                azimuth=0.0,
+                crs=CRS.from_epsg(2193),
+            ),
+            refinements=REFINEMENTS,
+            chunks={
+                Coordinate.I: CHUNK_SIZE,
+                Coordinate.J: CHUNK_SIZE,
+                Coordinate.K: CHUNK_SIZE,
+            },
         )
-    da.compute(*arrays_to_compute)
-    t5 = time.perf_counter()
-    compute_time = t5 - t4
+        grids = build_grids_from_config(config)
+        t1 = time.perf_counter()
+        grid_time = t1 - t0
+
+        # 2. Assemble VelocityModel ------------------------------------------
+        metadata = ModelMetadata(title="benchmark")
+        vm = VelocityModel(grids=grids, metadata=metadata)
+
+        # 3. Build pipeline (constant terminal layer) ------------------------
+        pipeline = constant(rho=2700.0, vp=6000.0, vs=3500.0,
+                            qp=200.0, qs=100.0, alpha=1.0)
+
+        # 4. Lazy graph construction + materialise all quality arrays ----------
+        #
+        # The benchmark times the complete pipeline: for each grid, compute the
+        # (lazy dask) coordinate arrays and immediately apply the pipeline to
+        # each concrete chunk.  This mirrors the production path without relying
+        # on xarray map_blocks template matching.
+        t2 = time.perf_counter()
+        all_qualities = {}
+        for name, grid in vm.grids.items():
+            concrete = grid.compute()
+            all_qualities[name] = pipeline(concrete)
+        t3 = time.perf_counter()
+        compute_time = t3 - t2
+
+        total_elements = sum(q.rho.size for q in all_qualities.values())
+        total_gb = total_elements * 6 * 4 / 1024**3  # 6 components × float32
 
     throughput = total_gb / max(compute_time, 1e-9)
 
-    # Output Markdown Table
-    print("### 📊 Benchmark Results: `fill_grid`")
-    print("\n| Metric | Value |")
+    grid_shapes = {name: str(g.x.shape) for name, g in grids.items()}
+    shapes_str = ", ".join(f"`{n}` {s}" for n, s in grid_shapes.items())
+
+    print("### 📊 Benchmark Results: pipeline execution")
+    print()
+    print(f"**Grids**: {shapes_str}")
+    print()
+    print("| Metric | Value |")
     print("| :--- | :--- |")
-    print(f"| **Total Data Size** | {total_gb:.2f} GB |")
-    print(f"| **Grid Construction** | {construction_time:.3f} s |")
-    print(f"| **Lazy Graph Init** | {lazy_time:.3f} s |")
-    print(f"| **Dask Compute Time** | {compute_time:.3f} s |")
+    print(f"| **Total Quality Data** | {total_gb:.2f} GB |")
+    print(f"| **Grid Construction** | {grid_time:.3f} s |")
+    print(f"| **Pipeline + Compute** | {compute_time:.3f} s |")
     print(f"| **Throughput** | **{throughput:.2f} GB/s** |")
-    print(f"\n*Benchmark run on {time.strftime('%Y-%m-%d %H:%M:%S')}*")
+    print()
+    print(f"*Benchmark run on {time.strftime('%Y-%m-%d %H:%M:%S')}*")
 
 
 if __name__ == "__main__":

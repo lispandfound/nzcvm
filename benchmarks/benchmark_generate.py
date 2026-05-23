@@ -110,15 +110,23 @@ def run_benchmark() -> None:
         vm = VelocityModel(grids=grids, metadata=metadata)
 
         # 3. Build pipeline (constant terminal layer) ------------------------
+        # Values represent typical New Zealand lower-crustal material:
+        # rho ≈ 2700 kg m⁻³, Vp ≈ 6000 m s⁻¹, Vs ≈ 3500 m s⁻¹ (Brocher, 2005),
+        # Qp/Qs ≈ 200/100 (anelastic attenuation), alpha = 1.0 (fully opaque).
         pipeline = constant(rho=2700.0, vp=6000.0, vs=3500.0,
                             qp=200.0, qs=100.0, alpha=1.0)
 
         # 4. Lazy graph construction + materialise all quality arrays ----------
         #
-        # The benchmark times the complete pipeline: for each grid, compute the
-        # (lazy dask) coordinate arrays and immediately apply the pipeline to
-        # each concrete chunk.  This mirrors the production path without relying
-        # on xarray map_blocks template matching.
+        # `.compute()` materialises each grid's dask coordinate arrays before
+        # passing to the pipeline.  We do this here because the `constant`
+        # layer ignores the grid coordinates and returns plain numpy arrays
+        # (no coordinate labels), so the layer is incompatible with xarray
+        # map_blocks' template-matching requirement when used with
+        # coordinate-labelled grids from `build_grids_from_config`.  In
+        # production, layers that preserve coordinate metadata (e.g. model
+        # query layers) can use `execute_model_pipeline` directly for
+        # fully-lazy dispatch.
         t2 = time.perf_counter()
         all_qualities = {}
         for name, grid in vm.grids.items():

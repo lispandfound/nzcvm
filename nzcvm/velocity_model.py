@@ -18,6 +18,14 @@ class VelocityModel:
     metadata: ModelMetadata
     qualities: dict[str, Qualities] = field(default_factory=dict)
 
+    def __post_init__(self):
+        if self.qualities and len(self.qualities) != len(self.grids):
+            n_qualities = len(self.qualities)
+            n_grids = len(self.grids)
+            raise ValueError(
+                f"Length of assigned qualities ({n_qualities}) does not match number of grids ({n_grids})"
+            )
+
     @classmethod
     def from_config(cls, config: VelocityModelConfig) -> Self:
         grids = build_grids_from_config(config.grid)
@@ -25,6 +33,12 @@ class VelocityModel:
 
     @property
     def pairwise(self) -> dict[str, tuple[Grid, Qualities]]:
+        if len(self.grids) != len(self.qualities):
+            n_qualities = len(self.qualities)
+            n_grids = len(self.grids)
+            raise ValueError(
+                f"Cannot traverse pairwise when length of assigned qualities ({n_qualities}) does not match number of grids ({n_grids})"
+            )
         quality_keys = set(self.qualities)
         return {
             k: (self.grids[k], self.qualities[k])

@@ -332,7 +332,8 @@ def model(
             typer.secho(f"  [error] Failed to build grid for '{name}': {exc}", fg="red")
 
     if not grids:
-        raise typer.Exit("No grids could be built. Exiting.")
+        typer.secho("No grids could be built. Exiting.", fg="red")
+        raise typer.Exit(1)
 
     multi_block = pv.MultiBlock(list(grids.values()))
     global_bounds = multi_block.bounds
@@ -365,7 +366,8 @@ def model(
     if slice_axis:
         ax = slice_axis.lower()
         if ax not in ["x", "y", "z"]:
-            raise typer.Exit(f"[error] Invalid axis '{ax}'.")
+            typer.secho(f"[error] Invalid axis '{ax}'.", fg="red")
+            raise typer.Exit(1)
 
         axis_idx = {"x": 0, "y": 1, "z": 2}[ax]
         for name, g in grids.items():
@@ -377,7 +379,7 @@ def model(
             normal[axis_idx] = 1.0
 
             pl.add_mesh(
-                g.slice(normal=normal, origin=origin), **mesh_kwargs, label=name
+                g.slice(normal=normal, origin=origin), **mesh_kwargs, label=name  # ty: ignore[invalid-argument-type]
             )
 
     elif slice_mode.lower() == "orthogonal":
@@ -385,13 +387,13 @@ def model(
             pl.add_mesh_slice_orthogonal(g, **mesh_kwargs)
     else:
         for name, g in grids.items():
-            pl.add_mesh(g, **mesh_kwargs, label=name)
+            pl.add_mesh(g, **mesh_kwargs, label=name)  # ty: ignore[invalid-argument-type]
 
     # UI Setup
-    pl.add_scalar_bar(
+    pl.add_scalar_bar(  # ty: ignore[missing-argument]
         title=scalar_str, fmt="%.3g", position_x=0.85, position_y=0.05, vertical=True
     )
-    pl.add_axes(xlabel="X (m)", ylabel="Y (m)", zlabel="m (Z)")
+    pl.add_axes(xlabel="X (m)", ylabel="Y (m)", zlabel="m (Z)")  # ty: ignore[missing-argument]
 
     for name, g in grids.items():
         pl.add_point_labels(
@@ -405,7 +407,7 @@ def model(
 
     pl.camera_position = "iso"
     pl.camera.up = (0.0, 0.0, -1.0)
-    pl.reset_camera()
+    pl.reset_camera()  # ty: ignore[missing-argument]
 
     if screenshot:
         pl.show(auto_close=False)

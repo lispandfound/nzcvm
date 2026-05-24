@@ -159,7 +159,7 @@ def configure_logging(level: str, log_path: Path | None) -> None:
 
     if log_path:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        logging_config["handlers"]["file"] = {
+        logging_config["handlers"]["file"] = {  # ty: ignore[invalid-assignment]
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "standard",
             "level": level,

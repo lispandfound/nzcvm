@@ -244,9 +244,8 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
     def __call__(
         self,
         grid: Grid,
-        *,
         model_range: ModelRange = ModelRange.ALL,
-    ) -> xr.Dataset:
+    ) -> Qualities:
         """Apply the offshore taper to the concrete chunk *grid*.
 
         The layer is always called on a computed chunk (``map_blocks`` is

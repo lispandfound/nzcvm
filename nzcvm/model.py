@@ -31,7 +31,7 @@ from rich.tree import Tree
 from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
 from nzcvm.components import Component
 
-from .nzcvm import PyModelTree, QueryParams  # ty: ignore[unresolved-import]
+from .nzcvm import PyModelTree, QueryCoordinates, QueryParams  # ty: ignore[unresolved-import]
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
@@ -623,9 +623,8 @@ class ModelTree:
             where_flat = np.ascontiguousarray(where_np.ravel())
 
         logger.debug("Querying for chunk qualities for range: %s.", model_range)
-        self.inner.query_many(
-            out_flat, x.ravel(), y.ravel(), z.ravel(), params, where_flat
-        )
+        coords = QueryCoordinates(x.ravel(), y.ravel(), z.ravel(), where_flat)
+        self.inner.query_many(out_flat, coords, params)
         logger.debug("Query complete")
         return out_flat.reshape(orig_shape + (6,))
 
@@ -683,7 +682,9 @@ class ModelTree:
         for m in data["models"]:
             m_id = m["id"]
             embedded_name = m.get("name") or ""
-            name = embedded_name or self.model_map.get(m_id, f"Model {m_id}")
+            name = embedded_name or (
+                self.model_map.get(m_id, f"Model {m_id}") if self.model_map is not None else f"Model {m_id}"
+            )
 
             branch = tree.add(f"{name} (ID: {m_id})")
             size_mb = round(m["size"] * MB)

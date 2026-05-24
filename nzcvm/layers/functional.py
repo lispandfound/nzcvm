@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import field, make_dataclass
-from typing import Any, Callable, get_type_hints
+from typing import Any, Protocol, get_type_hints
 
 from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpacker
 
@@ -64,6 +64,21 @@ from nzcvm.model import ModelRange
 from nzcvm.qualities import Qualities
 
 _RUNTIME_PARAMS = frozenset({"grid", "model_range", "next_layer", "return"})
+
+
+class _LayerFunc(Protocol):
+    """Protocol for functions that can be wrapped by :func:`functional_layer`."""
+
+    __name__: str
+
+    def __call__(
+        self,
+        grid: Grid,
+        model_range: ModelRange,
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Qualities: ...
 
 
 def _recompile_mashumaro_codecs(cls: type) -> None:
@@ -88,7 +103,7 @@ def _recompile_mashumaro_codecs(cls: type) -> None:
                 compile_mixin_packer(cls, **bp["packer"])
 
 
-def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
+def functional_layer(func: _LayerFunc) -> type[Layer]:
     """Derive a :class:`~nzcvm.layers.core.Layer` subclass from *func*.
 
     Parameters
@@ -123,7 +138,7 @@ def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
     config_fields.append(("type", str, field(default=type_tag)))
 
     config_name = func.__name__.title().replace("_", "") + "Config"
-    ConfigCls: type[LayerConfig] = make_dataclass(  # type: ignore[assignment]
+    ConfigCls: type[LayerConfig] = make_dataclass(  # ty: ignore[invalid-assignment]
         config_name,
         config_fields,
         bases=(LayerConfig,),
@@ -135,7 +150,7 @@ def functional_layer(func: Callable[..., Qualities]) -> type[Layer]:
 
     def _init(self: Any, next_layer: Layer | None = None, **kwargs: Any) -> None:
         config = ConfigCls(**kwargs)
-        Layer.__init__(self, config, next_layer)  # type: ignore[arg-type]
+        Layer.__init__(self, config, next_layer)  # ty: ignore[invalid-argument-type]
         for n in _captured_param_names:
             setattr(self, n, getattr(config, n))
 

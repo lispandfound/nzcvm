@@ -16,7 +16,7 @@ from rich.tree import Tree
 
 from nzcvm import registry
 
-from .nzcvm import PySurfaceModel, surface_model
+from .nzcvm import PySurfaceModel, surface_model  # ty: ignore[unresolved-import]
 
 DEFAULT_TOLERANCE = 1e-4
 

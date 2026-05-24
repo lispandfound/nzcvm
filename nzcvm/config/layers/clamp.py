@@ -41,11 +41,11 @@ class Bound(ConfigObject):
             _validate_bounds("Component", self.min, self.max)
         except ValueError as e:
             # We explicitly raise an InvalidFieldValue bound to the class context
-            raise InvalidFieldValue(
+                                    raise InvalidFieldValue(
                 field_name="max"
                 if self.max and self.min and self.max <= self.min
                 else "min",
-                field_type=float | None,
+                field_type=float | None,  # ty: ignore[invalid-argument-type]
                 field_value={"min": self.min, "max": self.max},
                 holder_class=self.__class__,
                 msg=str(e),
@@ -81,7 +81,7 @@ class ClampLayerConfig(LayerConfig):
 
             raise InvalidFieldValue(
                 field_name=faulty_field,
-                field_type=float | None,
+                field_type=float | None,  # ty: ignore[invalid-argument-type]
                 field_value=getattr(self, faulty_field),
                 holder_class=self.__class__,
                 msg=str(e),

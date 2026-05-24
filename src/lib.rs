@@ -23,12 +23,50 @@ mod nzcvm {
     use nalgebra::{Affine3, Matrix4, Point2, Point3, Point4};
     use ndarray::{array, azip, Array1, Array2, Axis};
     use numpy::{
-        IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyReadwriteArray2,
-        PyUntypedArrayMethods,
+        IntoPyArray, PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2,
+        PyReadwriteArray2, PyUntypedArrayMethods,
     };
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
     use pythonize::pythonize;
+
+    /// Coordinate arrays and optional boolean mask for a vectorised query.
+    ///
+    /// Bundles the three `(N,)` coordinate arrays and an optional `(N,)` boolean
+    /// mask into a single object so that [`PyModelTree::query_many`] stays under
+    /// Clippy's argument-count limit.  The object holds no GIL lock — arrays are
+    /// borrowed only during the actual query call.
+    #[pyclass]
+    pub struct QueryCoordinates {
+        pub x: Py<PyArray1<Real>>,
+        pub y: Py<PyArray1<Real>>,
+        pub z: Py<PyArray1<Real>>,
+        pub mask: Option<Py<PyArray1<bool>>>,
+    }
+
+    #[pymethods]
+    impl QueryCoordinates {
+        /// Create a new ``QueryCoordinates``.
+        ///
+        /// Parameters
+        /// ----------
+        /// x, y, z :
+        ///     Three 1-D float32 coordinate arrays of length *N*.
+        /// mask :
+        ///     Optional 1-D boolean array of length *N*.  When supplied, only
+        ///     points where ``mask[i]`` is ``True`` are queried; other rows in
+        ///     ``out`` are left untouched.
+        #[new]
+        #[pyo3(signature = (x, y, z, mask=None))]
+        pub fn new(
+            x: Py<PyArray1<Real>>,
+            y: Py<PyArray1<Real>>,
+            z: Py<PyArray1<Real>>,
+            mask: Option<Py<PyArray1<bool>>>,
+        ) -> Self {
+            QueryCoordinates { x, y, z, mask }
+        }
+    }
 
     /// Parameters controlling a vectorised query (priority range).
     ///
@@ -370,32 +408,30 @@ mod nzcvm {
         /// * `out`    – `(N, 6)` float32 array that receives the results
         ///   in-place.  Columns are ordered `[rho, vp, vs, qp, qs, alpha]`.
         ///   Rows for points outside all matching models are left unchanged.
-        /// * `x`, `y`, `z` – three `(N,)` float32 coordinate arrays.
+        /// * `coords` – [`QueryCoordinates`] bundling the three `(N,)` float32
+        ///   coordinate arrays and an optional boolean mask.
         /// * `params` – priority bounds; use `QueryParams(0, 255)` for all models.
-        /// * `where`  – optional `(N,)` boolean mask.  When provided only
-        ///   points where `where[i]` is `True` are queried; other rows in
-        ///   `out` are left untouched.
         ///
         /// The GIL is released during the hot loop so other Python threads
         /// can run concurrently.
-        #[pyo3(signature = (out, x, y, z, params, r#where=None))]
+        #[pyo3(signature = (out, coords, params))]
         pub fn query_many(
             &self,
             py: Python<'_>,
             mut out: PyReadwriteArray2<Real>,
-            x: PyReadonlyArray1<Real>,
-            y: PyReadonlyArray1<Real>,
-            z: PyReadonlyArray1<Real>,
+            coords: &QueryCoordinates,
             params: QueryParams,
-            r#where: Option<PyReadonlyArray1<bool>>,
         ) -> PyResult<()> {
             let lo = params.priority_lo;
             let hi = params.priority_hi;
-            // Acquire all array views while the GIL is held.
+            // Borrow all array views while the GIL is held.
             // The views hold no Python token so they are safe to use after detach.
-            let xs = x.as_array();
-            let ys = y.as_array();
-            let zs = z.as_array();
+            let x_ro = coords.x.bind(py).readonly();
+            let y_ro = coords.y.bind(py).readonly();
+            let z_ro = coords.z.bind(py).readonly();
+            let xs = x_ro.as_array();
+            let ys = y_ro.as_array();
+            let zs = z_ro.as_array();
             let n = xs.len();
             if ys.len() != n || zs.len() != n {
                 return Err(PyValueError::new_err(format!(
@@ -412,7 +448,7 @@ mod nzcvm {
                 )));
             }
             let mut buf = out.as_array_mut();
-            match r#where {
+            match &coords.mask {
                 None => {
                     py.detach(|| {
                         azip!((mut lane in buf.rows_mut(), &xi in &xs, &yi in &ys, &zi in &zs) {
@@ -428,8 +464,9 @@ mod nzcvm {
                         });
                     });
                 }
-                Some(mask) => {
-                    let ms = mask.as_array();
+                Some(mask_py) => {
+                    let m_ro = mask_py.bind(py).readonly();
+                    let ms = m_ro.as_array();
                     if ms.len() != n {
                         return Err(PyValueError::new_err(format!(
                             "where mask must have length {n}; got {}",
@@ -604,11 +641,12 @@ mod nzcvm {
     #[pymodule_init]
     fn init(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_class::<PyMeshModel>()?;
-        m.add_class::<PySurfaceModel>()?; // New class
+        m.add_class::<PySurfaceModel>()?;
         m.add_class::<PyModelTree>()?;
         m.add_class::<QueryParams>()?;
+        m.add_class::<QueryCoordinates>()?;
         m.add_function(wrap_pyfunction!(mesh_model, m)?)?;
-        m.add_function(wrap_pyfunction!(surface_model, m)?)?; // New function
+        m.add_function(wrap_pyfunction!(surface_model, m)?)?;
         m.add_function(wrap_pyfunction!(model_tree, m)?)?;
         m.add_function(wrap_pyfunction!(blend_many, m)?)?;
 

@@ -93,4 +93,4 @@ def to_emod3d(velocity_model: VelocityModel, directory: Path):
     sources = [rho_source, vp_source, vs_source]
     targets = [rho_target, vp_target, vs_target]
 
-    da.store(sources, targets, lock=True)
+    da.store(sources, targets, lock=True)  # ty: ignore[invalid-argument-type]

@@ -1,11 +1,11 @@
-from pathlib import Path
 import logging
 import logging.config
+import os
 import threading
 import time
+from pathlib import Path
+
 import psutil
-import logging
-import os
 from dask.callbacks import Callback
 
 
@@ -159,7 +159,7 @@ def configure_logging(level: str, log_path: Path | None) -> None:
 
     if log_path:
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        logging_config["handlers"]["file"] = {
+        logging_config["handlers"]["file"] = {  # ty: ignore[invalid-assignment]
             "class": "logging.handlers.RotatingFileHandler",
             "formatter": "standard",
             "level": level,

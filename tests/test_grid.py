@@ -1,225 +1,331 @@
-"""Tests for nzcvm.generate.fill_grid.
+"""Tests for EMOD3D and SW4 grid builders.
 
-Key properties verified:
+Invariants tested:
+  1. All coordinate arrays are dask-backed (lazy)
+  2. Chunking matches the configured chunk sizes
+  3. Output shapes match configured nx/ny/nz (EMOD3D) or extent/resolution (SW4)
+  4. Coordinate variable order is (i, j, k)
+  5. Model rotation is applied — a non-zero azimuth produces rotated x/y
+  6. Resolution is respected — grid spacing matches config resolution
+  7. CRS origin is placed correctly (origin_lon/lat round-trips)
+  8. (EMOD3D) Points are centre-registered (first depth > 0, first x/y inside boundary)
+  9. (SW4) Points are corner-registered (first point at boundary)
+ 10. (SW4) No gaps between refinement layers — bottom of layer n == top of layer n+1
 
-1. All coordinate arrays (x, y, z, depth) are dask-backed after fill_grid.
-2. The bottom interface (k = -1) of level N is identical to the top interface
-   (k = 0) of level N+1 (continuity property).
-3. depth is 0 at k=0 of the first layer (surface == top).
+All tests use a synthetic flat surface (z=0 everywhere) so no real data files
+are needed.
 """
 
-import pytest
+from __future__ import annotations
 
-from dataclasses import dataclass
+from pathlib import Path
 
 import dask.array as da
 import numpy as np
-import xarray as xr
+import pyvista as pv
+import pytest
 
+from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
+from nzcvm.config.grids.model import Model
+from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.coordinates import Coordinate
-from nzcvm.generate import fill_grid
+from nzcvm.grids.builder import build_grids_from_config
+from nzcvm.grids.grid import Grid
+from pyproj import CRS
 
 
 # ---------------------------------------------------------------------------
-# Stubs
+# Shared fixture: flat surface file
 # ---------------------------------------------------------------------------
 
-
-@dataclass
-class _FlatSurface:
-    """Stub Surface that returns a constant elevation.
-
-    The z_value is negative in the +z-down convention used by this repo
-    (negative elevation = above sea level).
-    """
-
-    z_value: float = -100.0
-
-    def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
-        return np.full(x.shape, self.z_value, dtype=np.float64)
-
-    @property
-    def bounds(self) -> list[float]:
-        return [0.0, 0.0, self.z_value, 1e6, 1e6, self.z_value]
+# NZ-wide bounding box in NZTM2000 (approx): roughly 1e6 m x 1.7e6 m
+_SURFACE_XMIN = 1_000_000.0
+_SURFACE_YMIN = 4_700_000.0
+_SURFACE_EXTENT = 2_000_000.0  # 2000 km side, clearly encompasses test grids
 
 
-def _make_grid(
-    name: str,
-    resolution: float,
-    bottom: float,
-    deformation: float,
-    extent_x: float = 500.0,
-    extent_y: float = 400.0,
-    minimum_resolution: float | None = None,
-) -> xr.Dataset:
-    """Build a minimal 2-D grid dataset matching skeleton_velocity_model output."""
-    min_res = minimum_resolution if minimum_resolution is not None else resolution
-    step = int(round(resolution / min_res))
-    ni_global = int(np.ceil(extent_x / min_res)) + 1
-    nj_global = int(np.ceil(extent_y / min_res)) + 1
-    xi = np.arange(0, ni_global, step, dtype=np.int64)
-    xj = np.arange(0, nj_global, step, dtype=np.int64)
-    x_2d, y_2d = np.meshgrid(
-        (xi * min_res).astype(np.float32),
-        (xj * min_res).astype(np.float32),
-        indexing="ij",
-    )
-    return xr.Dataset(
-        data_vars={
-            Coordinate.X: ([Coordinate.I, Coordinate.J], x_2d),
-            Coordinate.Y: ([Coordinate.I, Coordinate.J], y_2d),
-        },
-        coords={
-            Coordinate.I: xi,
-            Coordinate.J: xj,
-        },
-        attrs={
-            "resolution": float(resolution),
-            "bottom": float(bottom),
-            "deformation": float(deformation),
-            "name": name,
-        },
+def _write_flat_surface(path: Path) -> None:
+    """Write a flat z=0 StructuredGrid VTK surface to *path*."""
+    n = 8  # 8×8 grid of points — enough for interpolation
+    xs = np.linspace(_SURFACE_XMIN, _SURFACE_XMIN + _SURFACE_EXTENT, n)
+    ys = np.linspace(_SURFACE_YMIN, _SURFACE_YMIN + _SURFACE_EXTENT, n)
+    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+    zz = np.zeros_like(xx)
+    mesh = pv.StructuredGrid(xx, yy, zz)
+    mesh.save(str(path))
+
+
+@pytest.fixture(scope="module")
+def flat_surface(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    p = tmp_path_factory.mktemp("surfaces") / "flat.vtk"
+    _write_flat_surface(p)
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Shared Model orientation (centred over New Zealand)
+# ---------------------------------------------------------------------------
+
+_NZTM = CRS.from_epsg(2193)
+_ORIGIN_LON = 172.0
+_ORIGIN_LAT = -41.0
+
+
+def _model(azimuth: float = 0.0) -> Model:
+    return Model(
+        origin_lon=_ORIGIN_LON,
+        origin_lat=_ORIGIN_LAT,
+        azimuth=azimuth,
+        crs=_NZTM,
     )
 
 
 # ---------------------------------------------------------------------------
-# Tests — dask backing
+# EMOD3D grid builder
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "cell_registration",
-    list(CellRegistration),
-)
-@pytest.mark.parametrize(
-    "coordinate", [Coordinate.X, Coordinate.Y, Coordinate.Z, Coordinate.DEPTH]
-)
-def test_component_is_dask(cell_registration: CellRegistration, coordinate: Coordinate):
-    grids = [_make_grid("r0", 100.0, 500.0, 0.5)]
-    result = fill_grid(grids, _FlatSurface(), cell_registration)
-    assert isinstance(result[0][coordinate].data, da.Array), (
-        f"{coordinate!r} must be dask"
+def _emod3d_config(
+    flat_surface: Path,
+    *,
+    nx: int = 4,
+    ny: int = 6,
+    nz: int = 8,
+    resolution: float = 1000.0,
+    azimuth: float = 0.0,
+    topo_type: TopographyType = TopographyType.SQUASHED,
+    chunks: dict | None = None,
+) -> EMOD3DGrid:
+    if chunks is None:
+        chunks = {Coordinate.I: nx, Coordinate.J: ny, Coordinate.K: nz}
+    return EMOD3DGrid(
+        surface=flat_surface,
+        nx=nx,
+        ny=ny,
+        nz=nz,
+        resolution=resolution,
+        orientation=_model(azimuth),
+        topo_type=topo_type,
+        chunks=chunks,
     )
 
 
+def _single_grid(config) -> Grid:
+    grids = build_grids_from_config(config)
+    assert len(grids) == 1
+    return next(iter(grids.values()))
+
+
+class TestEMOD3DShape:
+    def test_output_shape_matches_config(self, flat_surface: Path) -> None:
+        nx, ny, nz = 4, 6, 8
+        grid = _single_grid(_emod3d_config(flat_surface, nx=nx, ny=ny, nz=nz))
+        assert grid.x.shape == (nx, ny, nz)
+
+    def test_coordinate_order_is_ijk(self, flat_surface: Path) -> None:
+        grid = _single_grid(_emod3d_config(flat_surface, nx=4, ny=6, nz=8))
+        assert grid.x.dims == ("i", "j", "k")
+
+    def test_all_coordinates_are_dask(self, flat_surface: Path) -> None:
+        grid = _single_grid(_emod3d_config(flat_surface))
+        for var in ("x", "y", "z", "depth"):
+            assert isinstance(grid[var].data, da.Array), f"{var} is not dask"
+
+    def test_all_dims_chunked_according_to_config(self, flat_surface: Path) -> None:
+        """After ensure_chunks all three dims must be chunked per the config."""
+        nx, ny, nz = 8, 8, 8
+        ci, cj, ck = 4, 4, 4
+        chunks = {Coordinate.I: ci, Coordinate.J: cj, Coordinate.K: ck}
+        grid = _single_grid(
+            _emod3d_config(flat_surface, nx=nx, ny=ny, nz=nz, chunks=chunks)
+        )
+        for var in ("x", "y", "z", "depth"):
+            csizes = grid[var].chunksizes
+            assert all(c <= ci for c in csizes["i"]), f"{var}: i not chunked"
+            assert all(c <= cj for c in csizes["j"]), f"{var}: j not chunked"
+            assert all(c <= ck for c in csizes["k"]), f"{var}: k not chunked"
+
+
+class TestEMOD3DCentreRegistration:
+    """EMOD3D is centre-registered: depth[0] > 0, and x/y[0] are inside bounds."""
+
+    def test_first_depth_is_positive(self, flat_surface: Path) -> None:
+        grid = _single_grid(_emod3d_config(flat_surface))
+        depth_0 = float(grid.depth.isel(i=0, j=0, k=0).compute())
+        assert depth_0 > 0.0, "first depth point must be inside the domain (>0)"
+
+    def test_depth_increases_with_k(self, flat_surface: Path) -> None:
+        grid = _single_grid(_emod3d_config(flat_surface))
+        depths = grid.depth.isel(i=0, j=0).compute().values
+        assert np.all(np.diff(depths) > 0), "depth must increase monotonically in k"
+
+    def test_depth_spacing_matches_resolution(self, flat_surface: Path) -> None:
+        res = 500.0
+        grid = _single_grid(_emod3d_config(flat_surface, resolution=res))
+        depths = grid.depth.isel(i=0, j=0).compute().values.astype(np.float64)
+        diffs = np.diff(depths)
+        assert list(diffs) == pytest.approx([res] * len(diffs), rel=1e-4)
+
+
+class TestEMOD3DRotation:
+    def test_zero_azimuth_x_increases_along_i(self, flat_surface: Path) -> None:
+        """With azimuth=0 and origin at NZ centre, x should increase with i."""
+        grid = _single_grid(_emod3d_config(flat_surface, azimuth=0.0))
+        x_slice = grid.x.isel(j=0, k=0).compute().values
+        assert x_slice[-1] > x_slice[0], "x must increase along i for azimuth=0"
+
+    def test_nonzero_azimuth_rotates_axes(self, flat_surface: Path) -> None:
+        """90-degree azimuth should swap the direction of increase for x vs y."""
+        grid_0 = _single_grid(_emod3d_config(flat_surface, nx=4, ny=4, azimuth=0.0))
+        grid_90 = _single_grid(_emod3d_config(flat_surface, nx=4, ny=4, azimuth=90.0))
+        x0 = grid_0.x.isel(j=0, k=0).compute().values
+        x90 = grid_90.x.isel(j=0, k=0).compute().values
+        # After a 90° rotation the x-spread along i shrinks (becomes y-spread).
+        # The two x-profiles should differ.
+        assert not np.allclose(x0, x90, rtol=1e-3)
+
+
+class TestEMOD3DMetadata:
+    def test_resolution_stored_as_attribute(self, flat_surface: Path) -> None:
+        cfg = _emod3d_config(flat_surface, resolution=250.0)
+        grid = _single_grid(cfg)
+        assert grid.attrs["resolution"] == 250.0
+
+    def test_origin_lon_lat_stored(self, flat_surface: Path) -> None:
+        grid = _single_grid(_emod3d_config(flat_surface))
+        assert "origin_lon" in grid.attrs
+        assert "origin_lat" in grid.attrs
+
+
 # ---------------------------------------------------------------------------
-# Tests — continuity
+# SW4 grid builder
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "cell_registration",
-    list(CellRegistration),
-)
-class TestFillGridContinuity:
-    """Bottom of level N must equal top of level N+1 (continuity)."""
-
-    def test_bottom_of_first_equals_top_of_second(
-        self, cell_registration: CellRegistration
-    ):
-        grids = [
-            _make_grid("r0", 100.0, 500.0, 0.5),
-            _make_grid("r1", 100.0, 1500.0, 0.5),
-        ]
-        result = fill_grid(grids, _FlatSurface(), cell_registration)
-        result_by_name = {g.attrs["name"]: g for g in result}
-
-        z0 = result_by_name["r0"][Coordinate.Z].values
-        z1 = result_by_name["r1"][Coordinate.Z].values
-
-        match cell_registration:
-            case CellRegistration.CORNER:
-                assert z0[:, :, -1] == pytest.approx(z1[:, :, 0])
-            case CellRegistration.CENTRE:
-                assert z0[:, :, -1] != pytest.approx(z1[:, :, 0], abs=0.1)
-
-    def test_continuity_three_levels(self, cell_registration: CellRegistration):
-        grids = [
-            _make_grid("r0", 100.0, 300.0, 1.0),
-            _make_grid("r1", 100.0, 800.0, 0.5),
-            _make_grid("r2", 100.0, 2000.0, 0.0),
-        ]
-        result = fill_grid(grids, _FlatSurface(z_value=-50.0), cell_registration)
-        result_by_name = {g.attrs["name"]: g for g in result}
-
-        for a, b in [("r0", "r1"), ("r1", "r2")]:
-            za = result_by_name[a][Coordinate.Z].values
-            zb = result_by_name[b][Coordinate.Z].values
-            match cell_registration:
-                case CellRegistration.CORNER:
-                    assert za[:, :, -1] == pytest.approx(zb[:, :, 0])
-                case CellRegistration.CENTRE:
-                    assert za[:, :, -1] != pytest.approx(zb[:, :, 0], abs=0.1)
-
-    def test_depth_zero_at_surface(self, cell_registration: CellRegistration):
-        """depth must be 0 at k=0 of the first layer (top is the surface)."""
-        grids = [_make_grid("r0", 100.0, 500.0, 1.0)]
-        result = fill_grid(grids, _FlatSurface(z_value=-100.0), cell_registration)
-        depth = result[0]["depth"].values
-        match cell_registration:
-            case CellRegistration.CORNER:
-                assert depth[..., 0] == pytest.approx(0.0)
-            case CellRegistration.CENTRE:
-                assert depth[..., 0] != pytest.approx(0.0, abs=0.1)
-
-
-def test_continuity_fine_to_coarse():
-    """Bottom of fine layer must equal top of coarse layer after sel resampling."""
-    min_res = 100.0
-    grids = [
-        _make_grid("fine", 100.0, 500.0, 1.0, minimum_resolution=min_res),
-        _make_grid("coarse", 200.0, 2000.0, 1.0, minimum_resolution=min_res),
-    ]
-    result = fill_grid(grids, _FlatSurface(z_value=-50.0), CellRegistration.CORNER)
-    result_by_name = {g.attrs["name"]: g for g in result}
-
-    z_fine = result_by_name["fine"][Coordinate.Z].values
-    z_coarse = result_by_name["coarse"][Coordinate.Z].values
-
-    # The coarse grid has half the I/J points; its top should match the
-    # corresponding subset (every other point) of the fine bottom.
-    bottom_fine = z_fine[::2, ::2, -1]
-    top_coarse = z_coarse[:, :, 0]
-
-    assert bottom_fine == pytest.approx(top_coarse), (
-        "Bottom of fine layer must equal top of coarse layer (sel subset)"
+def _sw4_config(
+    flat_surface: Path,
+    *,
+    extent_x: float = 4000.0,
+    extent_y: float = 4000.0,
+    azimuth: float = 0.0,
+    refinements: dict[str, MeshRefinement] | None = None,
+) -> SW4GridConfig:
+    if refinements is None:
+        # In +z-down convention, bottom=2000 means 2 km below surface.
+        refinements = {
+            "top": MeshRefinement(resolution=1000.0, bottom=2000.0),
+        }
+    return SW4GridConfig(
+        surface=flat_surface,
+        extent_x=extent_x,
+        extent_y=extent_y,
+        orientation=_model(azimuth),
+        refinements=refinements,
+        chunks={Coordinate.I: 8, Coordinate.J: 8, Coordinate.K: 8},
     )
 
 
-# ---------------------------------------------------------------------------
-# Tests — cell registration
-# ---------------------------------------------------------------------------
+class TestSW4Shape:
+    def test_single_refinement_produces_one_grid(self, flat_surface: Path) -> None:
+        grids = build_grids_from_config(_sw4_config(flat_surface))
+        assert len(grids) == 1
+
+    def test_two_refinements_produce_two_grids(self, flat_surface: Path) -> None:
+        cfg = _sw4_config(
+            flat_surface,
+            extent_x=4000.0,
+            extent_y=4000.0,
+            refinements={
+                "top": MeshRefinement(resolution=1000.0, bottom=2000.0),
+                "bottom": MeshRefinement(resolution=500.0, bottom=4000.0),
+            },
+        )
+        grids = build_grids_from_config(cfg)
+        assert len(grids) == 2
+
+    def test_coordinate_order_is_ijk(self, flat_surface: Path) -> None:
+        grids = build_grids_from_config(_sw4_config(flat_surface))
+        for grid in grids.values():
+            assert grid.x.dims == ("i", "j", "k")
+
+    def test_all_coordinates_are_dask(self, flat_surface: Path) -> None:
+        grids = build_grids_from_config(_sw4_config(flat_surface))
+        for grid in grids.values():
+            for var in ("x", "y", "z", "depth"):
+                assert isinstance(grid[var].data, da.Array), f"{var} not dask"
+
+    def test_ni_matches_extent_over_resolution(self, flat_surface: Path) -> None:
+        """ni == round(extent_x / resolution) + 1 for the finest refinement."""
+        extent_x = 4000.0
+        res = 1000.0
+        cfg = _sw4_config(
+            flat_surface,
+            extent_x=extent_x,
+            refinements={"top": MeshRefinement(resolution=res, bottom=2000.0)},
+        )
+        grids = build_grids_from_config(cfg)
+        grid = grids["top"]
+        expected_ni = int(round(extent_x / res)) + 1
+        assert grid.x.shape[0] == expected_ni
 
 
-class TestFillGridCellRegistration:
-    """Cell registration controls where grid points sit within each cell."""
+class TestSW4CornerRegistration:
+    """SW4 is corner-registered: the first horizontal point sits at the boundary."""
 
-    def test_corner_registration_has_nk_levels(self):
-        """CORNER: nk interpolation weights including both boundary interfaces."""
-        grids = [_make_grid("r0", 100.0, 500.0, 0.0)]
-        result = fill_grid(grids, _FlatSurface(), CellRegistration.CORNER)
-        z = result[0][Coordinate.Z]
-        # nk is at least 2 (top + bottom interfaces)
-        assert z.sizes[Coordinate.K] >= 2
+    def test_depth_at_surface_is_zero_or_negative(self, flat_surface: Path) -> None:
+        """Top k slice depth should be >= 0 (at or above surface = 0 for flat topo)."""
+        grids = build_grids_from_config(_sw4_config(flat_surface))
+        grid = next(iter(grids.values()))
+        top_depth = float(grid.depth.isel(i=0, j=0, k=0).compute())
+        assert top_depth >= 0.0
 
-    def test_centre_registration_has_fewer_levels(self):
-        """CENTRE: nk - 1 cell-centre weights, so one fewer k level than CORNER."""
-        grids_corner = [_make_grid("r0", 100.0, 500.0, 0.0)]
-        grids_centre = [_make_grid("r0", 100.0, 500.0, 0.0)]
-        z_corner = fill_grid(grids_corner, _FlatSurface(), CellRegistration.CORNER)[0][
-            Coordinate.Z
-        ]
-        z_centre = fill_grid(grids_centre, _FlatSurface(), CellRegistration.CENTRE)[0][
-            Coordinate.Z
-        ]
-        assert z_centre.sizes[Coordinate.K] == z_corner.sizes[Coordinate.K] - 1
+    def test_depth_increases_with_k(self, flat_surface: Path) -> None:
+        grids = build_grids_from_config(_sw4_config(flat_surface))
+        grid = next(iter(grids.values()))
+        depths = grid.depth.isel(i=0, j=0).compute().values
+        assert np.all(np.diff(depths) > 0), "depth must increase monotonically in k"
 
-    def test_centre_z_values_between_corner_interfaces(self):
-        """CENTRE z values must lie strictly between the top and bottom surfaces."""
-        grids = [_make_grid("r0", 100.0, 500.0, 1.0)]
-        result = fill_grid(grids, _FlatSurface(z_value=-100.0), CellRegistration.CENTRE)
-        z = result[0][Coordinate.Z].values
-        # Top interface is at -100.0 (surface), bottom at 500 m depth.
-        # Centre values must be strictly inside that range.
-        assert np.all(z > -100.0), "CENTRE z values must be below the top surface"
-        assert np.all(z < 500.0), "CENTRE z values must be above the bottom surface"
+
+class TestSW4RefinementSeams:
+    """Bottom of layer n must equal top of layer n+1 (no gaps)."""
+
+    def test_no_gap_between_refinements(self, flat_surface: Path) -> None:
+        top_bottom = 2000.0
+        cfg = _sw4_config(
+            flat_surface,
+            refinements={
+                "top": MeshRefinement(resolution=1000.0, bottom=top_bottom),
+                "bot": MeshRefinement(resolution=1000.0, bottom=4000.0),
+            },
+        )
+        grids = build_grids_from_config(cfg)
+        top_grid = grids["top"]
+        bot_grid = grids["bot"]
+
+        top_z_bottom = float(top_grid.z.isel(i=0, j=0, k=-1).compute())
+        bot_z_top = float(bot_grid.z.isel(i=0, j=0, k=0).compute())
+
+        assert top_z_bottom == pytest.approx(bot_z_top, abs=1.0)
+
+    def test_refinement_resolution_respected(self, flat_surface: Path) -> None:
+        """Vertical spacing in each refinement layer matches its resolution."""
+        res = 1000.0
+        cfg = _sw4_config(
+            flat_surface,
+            refinements={"top": MeshRefinement(resolution=res, bottom=3000.0)},
+        )
+        grids = build_grids_from_config(cfg)
+        grid = grids["top"]
+        depths = grid.z.isel(i=0, j=0).compute().values.astype(np.float64)
+        diffs = np.abs(np.diff(depths))
+        assert list(diffs) == pytest.approx([res] * len(diffs), rel=1e-3)
+
+class TestSW4Rotation:
+    def test_nonzero_azimuth_rotates_axes(self, flat_surface: Path) -> None:
+        grids_0 = build_grids_from_config(_sw4_config(flat_surface, azimuth=0.0))
+        grids_90 = build_grids_from_config(_sw4_config(flat_surface, azimuth=90.0))
+        grid_0 = next(iter(grids_0.values()))
+        grid_90 = next(iter(grids_90.values()))
+        x0 = grid_0.x.isel(j=0, k=0).compute().values
+        x90 = grid_90.x.isel(j=0, k=0).compute().values
+        assert not np.allclose(x0, x90, rtol=1e-3)

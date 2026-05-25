@@ -1,6 +1,8 @@
 from dataclasses import dataclass
-from mashumaro.types import Discriminator
+
 from mashumaro.config import BaseConfig
+from mashumaro.types import Discriminator
+
 from nzcvm.config.core import ConfigObject
 
 

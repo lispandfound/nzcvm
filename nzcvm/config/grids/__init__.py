@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 
-import pkgutil
 import importlib
+import pkgutil
+
 from .core import GridConfig
 
 

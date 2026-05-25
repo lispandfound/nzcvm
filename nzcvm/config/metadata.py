@@ -1,5 +1,6 @@
-from nzcvm.config.core import ConfigObject
 from dataclasses import dataclass, field
+
+from nzcvm.config.core import ConfigObject
 
 
 @dataclass

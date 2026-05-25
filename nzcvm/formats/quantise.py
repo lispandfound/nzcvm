@@ -1,7 +1,7 @@
 from typing import Hashable
-from zarr.codecs import Blosc, ZFPY
-import xarray as xr
 
+import xarray as xr
+from zarr.codecs import ZFPY, Blosc
 
 DEFAULT_PRECISION: dict[Hashable, dict] = {
     "x": dict(tolerance=0.5),

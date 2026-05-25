@@ -1,12 +1,12 @@
-from typing import Any, Literal
-from nzcvm.components import Component
-from xarray_dataclasses import AsDataset, Data, DataOptions
 from dataclasses import dataclass
-import numpy as np
+from typing import Literal
 
+import numpy as np
 import xarray as xr
+from xarray_dataclasses import AsDataset, Data, DataOptions
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
+from nzcvm.components import Component
 
 
 class Qualities(xr.Dataset):

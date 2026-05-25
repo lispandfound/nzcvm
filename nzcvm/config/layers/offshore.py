@@ -1,15 +1,15 @@
-from typing import Annotated
-from pathlib import Path
-from .core import LayerConfig
-from nzcvm.config.core import ConfigObject
 from dataclasses import dataclass
+from typing import Annotated
 
+from nzcvm.config.core import ConfigObject
 from nzcvm.config.validation import (
+    ExistingFile,
     NonNegativeFloat,
     PositiveFloat,
     UnitIntervalFloat,
-    ExistingFile,
 )
+
+from .core import LayerConfig
 
 
 @dataclass

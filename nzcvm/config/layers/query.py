@@ -1,5 +1,7 @@
-from nzcvm.config.validation import ExistingDir
 from dataclasses import dataclass
+
+from nzcvm.config.validation import ExistingDir
+
 from .core import LayerConfig
 
 

@@ -1,10 +1,9 @@
-from typing import Literal
-import xarray as xr
 from dataclasses import dataclass
-from xarray_dataclasses import AsDataset, Attr, Data, DataOptions
-
+from typing import Literal
 
 import numpy as np
+import xarray as xr
+from xarray_dataclasses import AsDataset, Attr, Data, DataOptions
 
 
 class Grid(xr.Dataset):

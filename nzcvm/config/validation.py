@@ -1,9 +1,10 @@
 import os
-import pyproj
-from mashumaro.types import SerializationStrategy
 import re
 from pathlib import Path
-from typing import Any, Callable, Collection, Annotated
+from typing import Annotated, Any, Callable, Collection
+
+import pyproj
+from mashumaro.types import SerializationStrategy
 
 
 def validate_path_exists(p: Path) -> Path:

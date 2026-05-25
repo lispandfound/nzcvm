@@ -12,11 +12,21 @@ from nzcvm.grids.grid import GridSchema
 from nzcvm.qualities import Qualities, QualitiesSchema
 
 
-@dataclass
+@dataclass(frozen=True)
 class VelocityModel:
     grids: dict[str, Grid]
     metadata: ModelMetadata
     qualities: dict[str, Qualities] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.qualities and set(self.qualities) != set(self.grids):
+            qualities = sorted(self.qualities)
+            grids = sorted(self.grids)
+
+            raise ValueError(
+                f"Length of assigned qualities ({', '.join(qualities)}) "
+                f"does not match number of grids ({', '.join(grids)})"
+            )
 
     @classmethod
     def from_config(cls, config: VelocityModelConfig) -> Self:
@@ -25,6 +35,13 @@ class VelocityModel:
 
     @property
     def pairwise(self) -> dict[str, tuple[Grid, Qualities]]:
+        if not self.qualities:
+            # We don't need to recheck this dataset because: (a) velocity model
+            # is frozen, and (b) the invariant set(self.qualities) ==
+            # set(self.grids) is checked in post init.
+            raise ValueError(
+                "Cannot traverse pairwise when assigned qualities are empty"
+            )
         quality_keys = set(self.qualities)
         return {
             k: (self.grids[k], self.qualities[k])

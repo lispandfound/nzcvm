@@ -72,7 +72,7 @@ def simple_velocity_model():
     return VelocityModel(
         grids={"g0": g0, "g1": g1},
         qualities={"g0": q0, "g1": q1},
-        metadata=ModelMetadata(),  # replace if your VelocityModel requires actual metadata
+        metadata=ModelMetadata(),
     )
 
 

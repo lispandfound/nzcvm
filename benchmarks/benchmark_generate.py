@@ -1,10 +1,11 @@
 """Pipeline benchmark: grid construction + constant-layer execution.
 
-Builds a multi-resolution SW4 curvilinear grid and times a full pipeline
-run (lazy graph construction + dask compute) using the :func:`constant`
-functional layer as the terminal layer.  This exercises the complete
-``VelocityModel`` → ``execute_model_pipeline`` → ``.compute()`` path that
-production pipelines follow.
+Builds a multi-resolution SW4 curvilinear grid and times pipeline
+evaluation (lazy graph construction + dask compute) using the
+:func:`constant` functional layer as the terminal layer. The benchmark
+constructs the pipeline and evaluates it directly for each concrete grid,
+rather than exercising the ``VelocityModel`` → ``execute_model_pipeline``
+wrapper path used by production pipelines.
 
 Run with::
 

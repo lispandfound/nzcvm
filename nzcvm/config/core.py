@@ -1,6 +1,7 @@
-from mashumaro.exceptions import InvalidFieldValue
-from typing import get_type_hints, get_origin, get_args, Annotated
+from typing import Annotated, get_args, get_origin, get_type_hints
+
 from mashumaro.config import BaseConfig
+from mashumaro.exceptions import InvalidFieldValue
 from mashumaro.mixins.dict import DataClassDictMixin
 from mashumaro.mixins.json import DataClassJSONMixin
 from mashumaro.mixins.toml import DataClassTOMLMixin

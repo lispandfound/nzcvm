@@ -32,22 +32,20 @@ nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree from this
 nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
 """
 
-from nzcvm.config.grids import GridConfig
-
-from nzcvm.config.layers import LayerConfig
-
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from pathlib import Path
 from typing import Self
+
 from mashumaro.codecs.json import JSONDecoder
 from mashumaro.codecs.toml import TOMLDecoder
 from mashumaro.codecs.yaml import YAMLDecoder
 
 # This import just registers all the layers, so while it isn't used directly its plugin architecture is.
 from nzcvm.config.core import ConfigObject
+from nzcvm.config.grids import GridConfig
+from nzcvm.config.layers import LayerConfig
 from nzcvm.config.metadata import ModelMetadata
-
 
 DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
 

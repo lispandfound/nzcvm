@@ -1,6 +1,8 @@
 from dataclasses import dataclass
-from .core import LayerConfig
+
 from nzcvm.config.validation import ExistingFile, PositiveFloat
+
+from .core import LayerConfig
 
 
 @dataclass

@@ -29,7 +29,6 @@ import logging
 import uuid
 from typing import Any
 
-
 logger = logging.getLogger(__name__)
 
 #: Global pool mapping UUID strings to Python objects.
@@ -55,7 +54,7 @@ def pipeline_context():
 
     Examples
     --------
-    >>> with pipeline_context():
+    >>> with pipeline_context():  # doctest: +SKIP
     ...     vm_result = execute_model_pipeline(velocity_model, pipeline)
     ...     formats.write_velocity_model(vm_result, output)
     """

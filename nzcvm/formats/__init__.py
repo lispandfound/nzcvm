@@ -8,8 +8,9 @@ to the appropriate writer.
 from enum import StrEnum, auto
 from pathlib import Path
 
+from nzcvm.velocity_model import VelocityModel
 
-from . import emod3d, sfile, datatree
+from . import datatree, emod3d, sfile
 
 
 class Format(StrEnum):

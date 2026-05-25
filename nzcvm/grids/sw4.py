@@ -27,23 +27,20 @@ nzcvm.velocity_model.VelocityModelSpec : Config dataclass consumed by this modul
 nzcvm.curvilinear_mesh : Low-level mesh boundary and fill-between functions.
 """
 
-import dask
-
 from typing import Any
 
-from nzcvm.grids.grid import Grid, GridSchema
-from nzcvm.coordinates import Coordinate, WGS84_EPSG
-from nzcvm import coordinates
-from nzcvm.grids.builder import build_grids_from_config
-from nzcvm.config.grids.sw4 import SW4GridConfig
-from scipy.spatial.transform import Rotation
-
+import dask
 import numpy as np
 import xarray as xr
-import pyproj
+from scipy.spatial.transform import Rotation
 
-from nzcvm.surface import read_surface_from_path
+from nzcvm import coordinates
+from nzcvm.config.grids.sw4 import SW4GridConfig
+from nzcvm.coordinates import Coordinate
 from nzcvm.grids import helpers
+from nzcvm.grids.builder import build_grids_from_config
+from nzcvm.grids.grid import Grid, GridSchema
+from nzcvm.surface import read_surface_from_path
 
 
 def _logical_k_indices(nk: int, dtype: np.dtype, k_offset: int = 0) -> xr.DataArray:

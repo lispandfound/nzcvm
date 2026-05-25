@@ -2,15 +2,15 @@
 
 # So that we can use the Layer[Any] without string quotes which look ugly.
 from __future__ import annotations
-from nzcvm.model import ModelRange
-from nzcvm.grids import Grid
-from nzcvm.qualities import Qualities
-import typing
-from nzcvm.config.layers import LayerConfig
-from typing import TypeVar, Any, Generic
-from abc import ABC, abstractmethod
-import numpy as np
 
+import typing
+from abc import ABC, abstractmethod
+from typing import Any, Generic, TypeVar
+
+from nzcvm.config.layers import LayerConfig
+from nzcvm.grids import Grid
+from nzcvm.model import ModelRange
+from nzcvm.qualities import Qualities
 
 C = TypeVar("C", bound=LayerConfig)
 

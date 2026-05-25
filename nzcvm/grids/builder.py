@@ -1,8 +1,9 @@
 """Structural protocol for grid builders."""
 
-from typing import Any
-from nzcvm.grids.grid import Grid
 import functools
+from typing import Any
+
+from nzcvm.grids.grid import Grid
 
 
 @functools.singledispatch

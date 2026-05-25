@@ -4,22 +4,19 @@ Writes a multi-grid velocity model in the NZCVM sfile HDF5 format used by
 downstream seismic simulation tools.
 """
 
-import dask
-
+import queue
+import threading
+from contextlib import AbstractContextManager
 from pathlib import Path
 
-from nzcvm.velocity_model import VelocityModel
-
-
+import dask
 import dask.array as da
 import h5py
 import numpy as np
-import threading
-import queue
-from contextlib import AbstractContextManager
 
 from nzcvm.components import Component
 from nzcvm.coordinates import Coordinate
+from nzcvm.velocity_model import VelocityModel
 
 # Global attributes
 ATTENUATION_ATTR = "Attenuation"

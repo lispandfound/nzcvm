@@ -44,10 +44,9 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             return self.next_layer(grid, model_range=model_range)
 
         depth_t = self.config.depth_t
-        is_in_taper = (grid.depth < depth_t).values  # numpy bool array
-
+        is_in_taper = grid.depth < depth_t
         # If the whole chunk is below the taper, skip Ely entirely.
-        if not np.any(is_in_taper):
+        if not is_in_taper.any():
             logger.debug("Chunk outside taper, skipping Ely taper calculation.")
             return self.next_layer(grid, model_range=model_range)
 
@@ -73,6 +72,8 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             output_core_dims=[[]],
             output_dtypes=[np.float32],
         )
+        non_nan_vs30, _ = xr.broadcast(~np.isnan(vs30), grid.z)
+        is_in_taper &= non_nan_vs30
 
         # Select a z-layer of the block.
         # The array [0] as the selection is important because it preserves the k
@@ -108,14 +109,17 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         # allocating a new result array.
         if basins is not None:
             # blend(basins foreground, ely background) → write into background
-            qualities.blend(basins, ely_qualities, out=background, where=is_in_taper)
+
+            qualities.blend(
+                basins, ely_qualities, out=background, where=is_in_taper.values
+            )
         else:
             # ely_qualities is the foreground (lhs) with alpha == 1.0 everywhere,
             # so blend(ely, any_rhs) == ely_qualities (a0 == 1, a1 == 0).
             # We pass background as rhs to satisfy the type signature; its values
             # are multiplied by a1 == 0 and are never actually used in the result.
             qualities.blend(
-                ely_qualities, background, out=background, where=is_in_taper
+                ely_qualities, background, out=background, where=is_in_taper.values
             )
 
         return background

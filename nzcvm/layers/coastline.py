@@ -90,9 +90,6 @@ def _ray_cast_intersections(
 
 
 class CoastlineLayer(Layer[CoastlineConfig], config_cls=CoastlineConfig):
-    segments: np.ndarray  # shape: (S, 2, 2)
-    tree: shapely.STRtree
-
     def __init__(self, config: CoastlineConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
         coastline = shapely.ops.orient(

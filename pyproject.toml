@@ -26,6 +26,7 @@ dependencies = [
     "pyproj>=3.7.2",
     "pyvista>=0.47.2",
     "rich>=14.3.3",
+    "rioxarray>=0.22.0",
     "scikit-learn>=1.8.0",
     "scipy>=1.17.1",
     "shapely>=2.1.2",

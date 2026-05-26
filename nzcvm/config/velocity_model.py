@@ -32,6 +32,8 @@ nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree from this
 nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
 """
 
+from mashumaro.exceptions import InvalidFieldValue
+
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from pathlib import Path
@@ -75,6 +77,23 @@ class VelocityModelConfig(ConfigObject):
     grid: GridConfig
     metadata: ModelMetadata = field(default_factory=ModelMetadata)
     layers: list[LayerConfig] = field(default_factory=list)
+
+    def __post_init__(self):
+        # Check layer dependencies.
+        provided = set()
+        for layer in self.layers:
+            requirements = set(layer.requires)
+            if not requirements <= provided:
+                required_str = ", ".join(sorted(requirements - provided))
+                layer_type = getattr(layer, "type", None)
+                raise InvalidFieldValue(
+                    field_name=f"layers.{layer_type}" if layer_type else "layers",
+                    field_type=layer.__class__,
+                    field_value=layer,
+                    holder_class=self.__class__,
+                    msg=f"Layer requires {required_str} coordinates but no configured layer provides them.",
+                )
+            provided.update(layer.provides)
 
     @classmethod
     def read_config(

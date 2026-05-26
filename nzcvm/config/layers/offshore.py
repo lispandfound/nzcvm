@@ -1,9 +1,8 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated
 
 from nzcvm.config.core import ConfigObject
 from nzcvm.config.validation import (
-    ExistingFile,
     NonNegativeFloat,
     PositiveFloat,
     UnitIntervalFloat,
@@ -68,8 +67,8 @@ class OffshoreBasinConfig(LayerConfig):
         ]
     """
 
-    coastline: ExistingFile
     basin_depth: list[DepthModel]
     model: list[VelocityModel1D]
     simplification_tolerance: Annotated[float | None, NonNegativeFloat] = None
     type: str = "offshore"
+    requires: list[str] = field(default_factory=lambda: ["coastline"], init=False)

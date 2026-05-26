@@ -26,7 +26,7 @@ import numpy as np
 import shapely
 import shapely.ops
 import xarray as xr
-from numba import guvectorize
+
 
 from nzcvm import qualities
 from nzcvm.components import Component
@@ -59,24 +59,6 @@ def step_interpolator(
     return fp[idx]
 
 
-def _read_compressed_shapely_wkb(path: Path) -> shapely.Geometry:
-    with gzip.open(path) as handle:
-        return shapely.from_wkb(handle.read())
-
-
-def _extract_segments(geometry: shapely.Geometry) -> np.ndarray:
-    boundary = geometry.boundary
-    lines = boundary.geoms if hasattr(boundary, "geoms") else [boundary]
-
-    extracted_segments = []
-    for line in lines:
-        coords = np.array(line.coords)
-        for i in range(len(coords) - 1):
-            extracted_segments.append([coords[i], coords[i + 1]])
-
-    return np.array(extracted_segments)
-
-
 def _extract_qualities(layers: list[VelocityModel1D]) -> np.ndarray:
     qualities = []
 
@@ -90,11 +72,10 @@ def _extract_qualities(layers: list[VelocityModel1D]) -> np.ndarray:
 def _build_model_interpolator(
     model: list[VelocityModel1D], absolute_bottom: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    layers = sorted(model, key=lambda model: model.bottom_depth)
-
+    layers = list(sorted(model, key=lambda model: model.bottom_depth))
     # Trim excess layers from velocity model
     end_idx = max(
-        range(len(layers)), key=lambda i: layers[i].bottom_depth < absolute_bottom
+        i for i in range(len(layers)) if layers[i].bottom_depth < absolute_bottom
     )
     layers = layers[: end_idx + 1]
 
@@ -105,80 +86,6 @@ def _build_model_interpolator(
     model_qualities = _extract_qualities(layers)
 
     return top_depths, model_qualities
-
-
-@guvectorize(
-    ["void(float32[:], float32[:], float32[:,:], float32[:])"],
-    "(d),(),(s,d)->()",  # Update the layout here
-    nopython=True,
-    fastmath=True,
-)
-def _signed_segment_distance(point, distance, candidates, out):
-    cross_product = (candidates[1, 0] - candidates[0, 0]) * (
-        point[1] - candidates[0, 1]
-    ) - (candidates[1, 1] - candidates[0, 1]) * (point[0] - candidates[0, 0])
-
-    out[0] = 0.0 if cross_product >= 0.0 else distance[0]
-
-
-@dataclass(frozen=True)
-class Coastline:
-    """Encapsulates geometry arrays and a thread-safe STRtree for exact distance metrics."""
-
-    segments: np.ndarray  # shape: (S, 2, 2)
-    # TODO: Replace with geo-index to remove overhead creating points in the _compute_chunk_dist
-    # Requires https://github.com/georust/geo-index/issues/150 to be fixed.
-    tree: shapely.STRtree
-
-    @classmethod
-    def build(cls, coastline_path: Path) -> Self:
-        coastline = shapely.ops.orient(
-            _read_compressed_shapely_wkb(coastline_path), sign=1.0
-        )
-
-        segments = _extract_segments(coastline).astype(np.float32)
-
-        lines = [shapely.geometry.LineString(seg) for seg in segments]
-        tree = shapely.STRtree(lines)
-
-        return cls(segments=segments, tree=tree)
-
-    def distance(self, x: xr.DataArray, y: xr.DataArray) -> xr.DataArray:
-        """
-        Calculates offshore signed distance fields using an immutable STRtree
-        and a fast Numba vector backend.
-        """
-
-        def _compute_chunk_dist(x_chunk, y_chunk):
-            orig_shape = x_chunk.shape
-            x_flat = x_chunk.ravel()
-            y_flat = y_chunk.ravel()
-
-            pts = shapely.points(x_flat, y_flat)
-
-            nearest_idx, distance = self.tree.query_nearest(
-                pts, return_distance=True, all_matches=False
-            )
-            nearest_idx = nearest_idx[1]
-
-            distance = distance.astype(np.float32)
-            candidate_segments = self.segments[nearest_idx]
-            pts_array = np.column_stack((x_flat, y_flat))
-
-            distances_flat = _signed_segment_distance(
-                pts_array, distance, candidate_segments
-            )
-
-            return distances_flat.reshape(orig_shape)
-
-        return xr.apply_ufunc(
-            _compute_chunk_dist,
-            x,
-            y,
-            input_core_dims=[[], []],
-            output_core_dims=[[]],
-            output_dtypes=[x.dtype],
-        )
 
 
 @dataclass(frozen=True)
@@ -236,10 +143,7 @@ class OffshoreModel:
 class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinConfig):
     def __init__(self, config: OffshoreBasinConfig, next_layer: Layer):
         super().__init__(config, next_layer)
-        logger.debug("Building coastline model")
-        self.coastline = Coastline.build(config.coastline)
         self.model = OffshoreModel.build(config.basin_depth, config.model)
-        self.next_layer = next_layer
 
     def __call__(
         self,
@@ -269,7 +173,7 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         x = grid.x.isel({Coordinate.K: 0})
         y = grid.y.isel({Coordinate.K: 0})
         logger.debug("Calculating offshore distances")
-        offshore_distance = self.coastline.distance(x, y)
+        offshore_distance = grid["coastline"]
         logger.debug("Offshore distances calculated")
         is_offshore = offshore_distance > 0
 
@@ -286,7 +190,7 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
             return self.next_layer(grid, model_range=model_range)
 
         background = self.next_layer(grid, model_range=model_range)
-        logger.debug("Assigning basin qualities using offshore basin model")
+
         offshore_qualities = self.model.qualities(grid.depth)
 
         # In-place update: write blend(basins, offshore) into background only
@@ -294,6 +198,10 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         # Equivalent to xr.where(mask, blend(basins, offshore), background) but
         # avoids allocating a new result array.
         mask = is_above_basin & is_offshore
+        logger.debug(
+            "Assigning basin qualities using offshore basin model (to %d points)",
+            mask.sum(),
+        )
         qualities.blend(basins, offshore_qualities, out=background, where=mask)
 
         return background

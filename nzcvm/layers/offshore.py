@@ -16,15 +16,11 @@ All distances and depths are in **metres**.
 """
 
 import functools
-import gzip
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Self
 
 import numpy as np
-import shapely
-import shapely.ops
 import xarray as xr
 
 
@@ -170,10 +166,8 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
             logger.debug("Chunk inside modelled basin, skipping offshore calculation.")
             return basins
 
-        x = grid.x.isel({Coordinate.K: 0})
-        y = grid.y.isel({Coordinate.K: 0})
         logger.debug("Calculating offshore distances")
-        offshore_distance = grid["coastline"]
+        offshore_distance = grid[Coordinate.COASTLINE]
         logger.debug("Offshore distances calculated")
         is_offshore = offshore_distance > 0
 

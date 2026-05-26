@@ -51,6 +51,7 @@ class Coordinate(StrEnum):
     Y = auto()
     Z = auto()
     DEPTH = auto()
+    COASTLINE = auto()
     I = auto()  # noqa: E741
     J = auto()
     K = auto()

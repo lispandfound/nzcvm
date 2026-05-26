@@ -29,12 +29,12 @@ origin_y = 5606532.0
 # Mesh refinements can be in an arbitrary order and are sorted afterwards
 [grid.refinements.top_layer]
 # Mesh resolution in the layer (m)
-resolution = 100.0
+resolution = 400.0
 # Bottom elevation (+z down). 
 bottom = 3500.0
 
 [grid.refinements.next_layer]
-resolution = 100.0
+resolution = 400.0
 bottom = 42000.0
 
 # Chunks for internal calculations.

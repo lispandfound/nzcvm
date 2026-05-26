@@ -48,11 +48,9 @@ class AsyncHDF5Writer(AbstractContextManager):
         self.stop_event = threading.Event()
 
     def _write_loop(self):
-        # Open the file ONCE in this thread to avoid overhead
         with h5py.File(self.filename, "r+") as f:
             while not (self.stop_event.is_set() and self.queue.empty()):
                 try:
-                    # Timeout allows checking stop_event
                     path, key, value = self.queue.get(timeout=1)
                     f[path][key] = value
                     self.queue.task_done()

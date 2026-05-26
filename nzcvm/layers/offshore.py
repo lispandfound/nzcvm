@@ -184,7 +184,6 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
             return self.next_layer(grid, model_range=model_range)
 
         background = self.next_layer(grid, model_range=model_range)
-
         offshore_qualities = self.model.qualities(grid.depth)
 
         # In-place update: write blend(basins, offshore) into background only

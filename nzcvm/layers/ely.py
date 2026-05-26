@@ -44,9 +44,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             return self.next_layer(grid, model_range=model_range)
 
         depth_t = self.config.depth_t
-        is_in_taper = (grid.depth < depth_t) & np.isclose(
-            grid[Coordinate.COASTLINE], 0.0
-        )
+        is_in_taper = (grid.depth < depth_t) & (grid[Coordinate.COASTLINE] <= 1e-6)
         # If the whole chunk is below the taper, skip Ely entirely.
         if not is_in_taper.any():
             logger.debug("Chunk outside taper, skipping Ely taper calculation.")

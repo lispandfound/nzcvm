@@ -77,9 +77,13 @@ def add_logical_axes(
         return
 
     for p_axis, label, color in axes_config:
-        if not (norm := np.linalg.norm(vec := p_axis - p0)):
+        vec = p_axis - p0
+        if label != 'k':
+            vec[-1] = 0.0
+            
+        if not (norm := np.linalg.norm(vec)):
             continue
-
+        
         direction = vec / norm
         pl.add_mesh(
             pv.Arrow(

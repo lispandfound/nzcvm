@@ -1,6 +1,7 @@
 import gzip
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
 import shapely
@@ -10,10 +11,13 @@ from numba import guvectorize
 
 from nzcvm.config.layers.coastline import CoastlineConfig
 from nzcvm.coordinates import Coordinate
-from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.qualities import Qualities
 from nzcvm.query import ModelRange
+
+if TYPE_CHECKING:
+    from nzcvm.grids.grid import Grid
+    from nzcvm.qualities import Qualities
+    
 
 logger = logging.getLogger(__name__)
 

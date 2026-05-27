@@ -53,15 +53,17 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import field, make_dataclass
-from typing import Any, Protocol, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
 
 from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpacker
 
 from nzcvm.config.layers.core import LayerConfig
-from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.qualities import Qualities
 from nzcvm.query import ModelRange
+
+if TYPE_CHECKING:
+    from nzcvm.grids.grid import Grid
+    from nzcvm.qualities import Qualities
 
 _RUNTIME_PARAMS = frozenset({"grid", "model_range", "next_layer", "return"})
 
@@ -148,18 +150,15 @@ def functional_layer(func: _LayerFunc) -> type[Layer]:
 
     _captured_param_names = list(param_names)
 
-    def _init(self: Any, next_layer: Layer | None = None, **kwargs: Any) -> None:
-        config = ConfigCls(**kwargs)
+    def _init(self: Any, config: Any, next_layer: Layer | None = None) -> None:
         Layer.__init__(self, config, next_layer)  # ty: ignore[invalid-argument-type]
-        for n in _captured_param_names:
-            setattr(self, n, getattr(config, n))
 
     def _call(
         self: Any,
         grid: Grid,
         model_range: ModelRange = ModelRange.ALL,
     ) -> Qualities:
-        params = {n: getattr(self, n) for n in _captured_param_names}
+        params = {n: getattr(self.config, n) for n in _captured_param_names}
         return func(grid, model_range, next_layer=self.next_layer, **params)
 
     LayerCls: type[Layer] = type(  # type: ignore[assignment]

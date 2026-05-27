@@ -1,17 +1,19 @@
 import dataclasses
 import typing
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import TYPE_CHECKING, Callable, Literal
 
 import xarray as xr
 
-from nzcvm.config.layers import LayerConfig
-from nzcvm.config.layers.core import LayerConfig as LayerConfigBase
+from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer, layer_from_config
-from nzcvm.model import ModelRange
-from nzcvm.qualities import Qualities, QualitiesSchema, template_like
+from nzcvm.qualities import QualitiesSchema, template_like
+from nzcvm.query import ModelRange
 from nzcvm.velocity_model import VelocityModel
+
+if TYPE_CHECKING:
+    from nzcvm.qualities import Qualities
 
 
 class PipelineError(Exception):
@@ -19,8 +21,8 @@ class PipelineError(Exception):
 
 
 @dataclass
-class _SentinelConfig(LayerConfigBase):
-    type: Literal["_sentinel"] = "_sentinel"  # type: ignore[assignment]
+class _SentinelConfig(LayerConfig):
+    type: Literal["_sentinel"] = "_sentinel" 
 
 
 class _SentinelLayer(Layer[_SentinelConfig]):

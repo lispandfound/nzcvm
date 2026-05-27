@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import typing
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from nzcvm.config.layers import LayerConfig
-from nzcvm.grids.grid import Grid
-from nzcvm.model import ModelRange
-from nzcvm.qualities import Qualities
+from nzcvm.query import ModelRange
+
+if TYPE_CHECKING:
+    from nzcvm.grids.grid import Grid
+    from nzcvm.qualities import Qualities
 
 C = TypeVar("C", bound=LayerConfig)
 

@@ -4,16 +4,20 @@ import logging
 
 import numpy as np
 import xarray as xr
-
+from typing import TYPE_CHECKING
 from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
-from nzcvm.grids.grid import Grid
+
 from nzcvm.layers.core import Layer
-from nzcvm.qualities import Qualities
+
 from nzcvm.query import ModelRange
 from nzcvm.surface import read_surface_from_path
+
+if TYPE_CHECKING:
+    from nzcvm.grids.grid import Grid
+    from nzcvm.qualities import Qualities
 
 logger = logging.getLogger(__name__)
 

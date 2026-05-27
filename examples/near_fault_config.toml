@@ -1,0 +1,48 @@
+[metadata]
+# Additional metadata which may be stored with the model output, or ignored for
+# outputs that don't support them.
+title = "Domain for geonet event 2014p240655 (designed for SW4 simulation)"
+keywords = ["geonet", "validation"]
+creator_name = "Jake Faulkner"
+creator_email = "jake.faulkner@canterbury.ac.nz"
+repository_doi = "TBD"
+# etc... See the ModelMetadata class for a description of the options that can
+# be included.
+
+[grid]
+type = "sw4"
+surface = "./resources/dem.vtk"
+
+# Extent of the model, in m
+extent_x = 50000.0
+extent_y = 50000.0
+
+[grid.orientation]
+azimuth = 0.0
+crs = 2193
+origin_lon = 172.0
+origin_lat = -43.0
+
+# Mesh refinements can be in an arbitrary order and are sorted afterwards
+[grid.refinements.top_layer]
+# Mesh resolution in the layer (m)
+resolution = 100.0
+# Bottom elevation (+z down). 
+bottom = 3500.0
+
+# Chunks for internal calculations.
+[grid.chunks]
+i = 128
+j = 128
+k = 128
+
+[[layers]]
+type = "fault_zone"
+fault_x = 1519974.0
+fault_y = 5242405.0
+fault_z = 100.0 
+
+[[layers]]
+type = "query"
+model_path = "./models"
+model_glob = "ep2020.vtkhdf"

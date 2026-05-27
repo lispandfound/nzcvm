@@ -18,7 +18,7 @@ All distances and depths are in **metres**.
 import functools
 import logging
 from dataclasses import dataclass
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import xarray as xr
@@ -31,11 +31,14 @@ from nzcvm.config.layers.offshore import (
     VelocityModel1D,
 )
 from nzcvm.coordinates import Coordinate
-from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.qualities import Qualities, QualitiesSchema
+from nzcvm.qualities import QualitiesSchema
 from nzcvm.query import ModelRange
 
+if TYPE_CHECKING:
+    from nzcvm.grids.grid import Grid
+    from nzcvm.qualities import Qualities
+    
 logger = logging.getLogger(__name__)
 
 

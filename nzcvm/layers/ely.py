@@ -1,10 +1,14 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
+from __future__ import annotations
+
 import logging
+
+from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
-from typing import TYPE_CHECKING
+
 from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
@@ -32,14 +36,14 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         grid: Grid,
         model_range: ModelRange = ModelRange.ALL,
     ) -> Qualities:
-        """Apply the Ely GTL taper to the concrete chunk *grid*.
+        """Apply the Ely GTL taper to *grid* and return the result.
 
-        The layer is always called on a computed chunk (``map_blocks`` is
-        hoisted to :func:`~nzcvm.layers.pipeline.execute_model_pipeline`), so
-        all operations use plain NumPy / xarray without creating Dask tasks.
-
-        In-place update via :func:`~nzcvm.qualities.blend` with ``out`` and
-        ``where`` avoids allocating a new array for the final masked merge.
+        Parameters
+        ----------
+        grid :
+            Grid chunk to evaluate.
+        model_range :
+            Priority range for velocity-model queries.
         """
         logger.debug("Beginning Ely Taper with model_range=%s", model_range)
 

@@ -36,28 +36,24 @@ class DepthModel(ConfigObject):
 
 @dataclass
 class OffshoreBasinConfig(LayerConfig):
-    """Configuration DTO for an :class:`~nzcvm.layers.offshore.OffshoreBasin`.
+    """Configuration DTO for an :class:`~nzcvm.layers.offshore.OffshoreBasinLayer`.
 
     Parameters
     ----------
-    coastline :
-        Path to the coastline file.
     basin_depth :
-        Basin depth (see `DepthModel`).
-    simplification_tolerance : float
-        Simplification tolerance for coastline (in m), see `shapely.simplify` to
-        understand the meaning of this parameter.
-    basin_model :
-        Basin model to use (dictionary of `Component` keys)
-
+        List of :class:`DepthModel` entries mapping offshore distance (m) to
+        basin bottom depth (m).  The taper depth at any given distance is
+        interpolated from this table.
+    model :
+        Ordered list of :class:`VelocityModel1D` entries defining the
+        velocity–depth profile used in the offshore region.
 
     Examples
     --------
     TOML::
 
         [[layers]]
-        type = "basin"
-        coastline = "path/to/coastline.wkb.gz"
+        type = "offshore"
         model = [
             {"bottom_depth": 100.0, "rho": 1820, "vp": 1720, "vs": 500, "qp": 100.0, "qs": 50.0, "alpha": 1.0}
         ]

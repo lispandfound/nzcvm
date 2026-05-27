@@ -1,22 +1,25 @@
 """Surface interpolation for topography-based depth transforms.
 
-A :class:`Surface` wraps a PyVista mesh and provides point-query
-interpolation, used by :class:`nzcvm.layers.DepthTransformLayer` to
-convert depth-below-surface coordinates into absolute elevations.
+A :class:`Surface` wraps a surface mesh and provides point-query
+interpolation, used to convert depth-below-surface coordinates into
+absolute elevations.
 """
 
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
-import pyvista as pv
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import registry
 
 from .nzcvm import PySurfaceModel, surface_model  # ty: ignore[unresolved-import]
+
+if TYPE_CHECKING:
+    from nzcvm.mesh import StructuredMesh
 
 DEFAULT_TOLERANCE = 1e-4
 
@@ -25,24 +28,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Surface:
-    """A lazily-sampled surface interpolator backed by a PyVista mesh.
+    """A surface interpolator backed by a triangulated mesh.
 
-    Parameters
-    ----------
-    mesh :
-        PyVista dataset with an active scalar array representing elevation
-        (z values) at each point.
-    bounds :
-        Six-element array ``[xmin, ymin, zmin, xmax, ymax, zmax]`` of the
-        mesh bounding box.
-    n_points :
-        Number of points in the mesh.
+    Given a set of (x, y) query points, returns the interpolated elevation
+    (z) value at each location.  Used by grid builders to convert
+    depth-below-surface coordinates to absolute elevations.
 
     See Also
     --------
-    build_surface_interpolator : Construct a ``Surface`` from a PyVista dataset.
+    build_surface_interpolator : Construct a ``Surface`` from a structured mesh.
     read_surface_from_path : Load a ``Surface`` directly from a file path.
-    nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
 
     inner: PySurfaceModel
@@ -61,11 +56,6 @@ class Surface:
         -------
         numpy.ndarray
             Elevation (z) values with the same shape as *x*.
-
-        Raises
-        ------
-        ValueError
-            If any query point falls outside the surface boundaries.
         """
         logger.debug(f"Calculating z values for x, y (size = {x.size}).")
         pts = np.stack((x.flatten(), y.flatten()), axis=-1)
@@ -101,51 +91,116 @@ class Surface:
         yield tree
 
 
-def build_surface_interpolator(mesh_data: pv.StructuredGrid) -> Surface:
-    logger.debug("Triangulating model surface")
-    surf = mesh_data.extract_surface(algorithm="dataset_surface").triangulate()
+def build_surface_interpolator(mesh: "StructuredMesh") -> Surface:
+    """Build a :class:`Surface` interpolator from a :class:`~nzcvm.mesh.StructuredMesh`.
 
-    logger.debug("Building vertices and faces")
-    # Cast and force an explicit deep copy to isolate memory from VTK
-    z = surf.points[:, 2].astype(np.float32).copy()
-    vertices = surf.points[:, :2].astype(np.float32).copy()
+    Parameters
+    ----------
+    mesh:
+        A structured surface mesh (e.g. a DEM read with
+        :func:`~nzcvm.mesh.read_structured_vtkhdf`).
 
-    raw_faces = surf.faces.reshape(-1, 4)  # Reshape to (N, 4)
-    # Drop the padding column and copy to ensure a contiguous C-aligned layout
-    faces = raw_faces[:, 1:].astype(np.uint64).copy()
+    Returns
+    -------
+    Surface
+    """
+    logger.debug("Building surface interpolator from structured mesh")
+    nx, ny, nz = mesh.dims
+    assert nz == 1, f"Expected a single-layer surface (nz=1), got nz={nz}"
 
-    logger.debug("Constructing inner model")
+    points = np.asarray(mesh.points, dtype=np.float32)
+    z = points[:, 2].copy()
+    vertices = points[:, :2].copy()
+
+    # Triangulate the structured grid: two triangles per quad cell
+    # Point index: i + j*nx, where i in [0, nx), j in [0, ny)
+    ii, jj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
+    p00 = (ii + jj * nx).ravel()
+    p10 = ((ii + 1) + jj * nx).ravel()
+    p11 = ((ii + 1) + (jj + 1) * nx).ravel()
+    p01 = (ii + (jj + 1) * nx).ravel()
+    tri1 = np.stack((p00, p10, p11), axis=1)
+    tri2 = np.stack((p00, p11, p01), axis=1)
+    faces = np.vstack((tri1, tri2)).astype(np.uint64)
+
+    logger.debug("Constructing inner surface model")
     inner = surface_model(vertices, faces, z)
     logger.debug("Inner model constructed.")
 
-    # Calculate bounds for the Python wrapper
-    z_min, z_max = z.min(), z.max()
-    bounds = surf.bounds
-
-    return Surface(
-        inner,
-        bounds=np.array(
-            [
-                bounds[0],
-                bounds[2],
-                z_min,  # x_min, y_min, z_min
-                bounds[1],
-                bounds[3],
-                z_max,  # x_max, y_max, z_max
-            ]
-        ),
-        n_points=surf.n_points,
+    bounds = np.array(
+        [
+            vertices[:, 0].min(),
+            vertices[:, 1].min(),
+            float(z.min()),
+            vertices[:, 0].max(),
+            vertices[:, 1].max(),
+            float(z.max()),
+        ]
     )
+
+    return Surface(inner, bounds=bounds, n_points=len(points))
+
+
+def _surface_from_meshio(path: Path) -> Surface:
+    """Build a :class:`Surface` from a legacy mesh file via meshio.
+
+    Supports any format readable by meshio that contains triangles or quads.
+
+    Parameters
+    ----------
+    path:
+        Path to the mesh file.
+    """
+    import meshio
+
+    logger.debug(f"Reading surface mesh via meshio: {path}")
+    mesh = meshio.read(str(path))
+    points = np.asarray(mesh.points, dtype=np.float32)
+    z = points[:, 2].copy()
+    vertices = points[:, :2].copy()
+
+    faces: np.ndarray | None = None
+    for cell_block in mesh.cells:
+        if cell_block.type == "triangle":
+            faces = cell_block.data.astype(np.uint64)
+            break
+        elif cell_block.type == "quad":
+            q = cell_block.data
+            tri1 = q[:, [0, 1, 2]]
+            tri2 = q[:, [0, 2, 3]]
+            faces = np.vstack((tri1, tri2)).astype(np.uint64)
+            break
+
+    if faces is None:
+        raise ValueError(
+            f"Cannot build surface interpolator from {path}: "
+            "no triangle or quad cells found."
+        )
+
+    inner = surface_model(vertices, faces, z)
+    bounds = np.array(
+        [
+            vertices[:, 0].min(),
+            vertices[:, 1].min(),
+            float(z.min()),
+            vertices[:, 0].max(),
+            vertices[:, 1].max(),
+            float(z.max()),
+        ]
+    )
+    return Surface(inner, bounds=bounds, n_points=len(points))
 
 
 def read_surface_from_path(surface_path: Path) -> Surface:
     """Load a surface mesh from *surface_path* and return a :class:`Surface`.
 
+    VTKHDF ``.vtkhdf`` files are read natively with h5py.  All other
+    formats are handled by meshio.
+
     Parameters
     ----------
     surface_path :
-        Path to any file format supported by PyVista (e.g. VTK, VTKHDF,
-        STL).
+        Path to a VTKHDF or meshio-readable mesh file.
 
     Returns
     -------
@@ -155,6 +210,10 @@ def read_surface_from_path(surface_path: Path) -> Surface:
     --------
     build_surface_interpolator : Build a ``Surface`` from an in-memory mesh.
     """
-    mesh_data = pv.read(surface_path)
-    assert isinstance(mesh_data, pv.StructuredGrid)
-    return build_surface_interpolator(mesh_data)
+    suffix = Path(surface_path).suffix.lower()
+    if suffix == ".vtkhdf":
+        from nzcvm.mesh import read_structured_vtkhdf
+
+        mesh = read_structured_vtkhdf(surface_path)
+        return build_surface_interpolator(mesh)
+    return _surface_from_meshio(surface_path)

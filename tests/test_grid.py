@@ -23,7 +23,6 @@ from pathlib import Path
 import dask.array as da
 import numpy as np
 import pytest
-import pyvista as pv
 from pyproj import CRS
 
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
@@ -32,6 +31,7 @@ from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
+from nzcvm.mesh import StructuredMesh, write_structured_vtkhdf
 
 # ---------------------------------------------------------------------------
 # Shared fixture: flat surface file
@@ -44,19 +44,20 @@ _SURFACE_EXTENT = 2_000_000.0  # 2000 km side, clearly encompasses test grids
 
 
 def _write_flat_surface(path: Path) -> None:
-    """Write a flat z=0 StructuredGrid VTK surface to *path*."""
+    """Write a flat z=0 StructuredMesh VTKHDF surface to *path*."""
     n = 8  # 8×8 grid of points — enough for interpolation
-    xs = np.linspace(_SURFACE_XMIN, _SURFACE_XMIN + _SURFACE_EXTENT, n)
-    ys = np.linspace(_SURFACE_YMIN, _SURFACE_YMIN + _SURFACE_EXTENT, n)
+    xs = np.linspace(_SURFACE_XMIN, _SURFACE_XMIN + _SURFACE_EXTENT, n, dtype=np.float32)
+    ys = np.linspace(_SURFACE_YMIN, _SURFACE_YMIN + _SURFACE_EXTENT, n, dtype=np.float32)
     xx, yy = np.meshgrid(xs, ys, indexing="ij")
     zz = np.zeros_like(xx)
-    mesh = pv.StructuredGrid(xx, yy, zz)
-    mesh.save(str(path))
+    pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+    mesh = StructuredMesh(points=pts, dims=(n, n, 1))
+    write_structured_vtkhdf(path, mesh)
 
 
 @pytest.fixture(scope="module")
 def flat_surface(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    p = tmp_path_factory.mktemp("surfaces") / "flat.vtk"
+    p = tmp_path_factory.mktemp("surfaces") / "flat.vtkhdf"
     _write_flat_surface(p)
     return p
 

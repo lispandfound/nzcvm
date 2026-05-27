@@ -6,8 +6,14 @@ from typing import Annotated
 import h5py
 import numpy as np
 import pyproj
-import pyvista as pv
 import typer
+
+try:
+    import pyvista as pv
+
+    _PYVISTA_AVAILABLE = True
+except ImportError:
+    _PYVISTA_AVAILABLE = False
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -34,7 +40,12 @@ def read_surface_file(
 
 def construct_surface_mesh(
     x: np.ndarray, y: np.ndarray, scalars: np.ndarray
-) -> pv.UnstructuredGrid:
+) -> "pv.UnstructuredGrid":
+    if not _PYVISTA_AVAILABLE:
+        raise ImportError(
+            "pyvista is required for surface_cli. "
+            "Install it with: pip install nzcvm[visualization]"
+        )
     rows, cols = x.shape
 
     # 1. Create the points array (N x 3)
@@ -60,8 +71,8 @@ def construct_surface_mesh(
     )
 
     # 3. Define Cell Types
-    # pv.CellType.QUAD is integer 9
-    cell_types = np.full(p0.size, pv.CellType.QUAD, type=np.uint8)
+    # VTK QUAD cell type = 9
+    cell_types = np.full(p0.size, 9, dtype=np.uint8)
 
     # 4. Construct the UnstructuredGrid
     grid = pv.UnstructuredGrid(cells, cell_types, points)

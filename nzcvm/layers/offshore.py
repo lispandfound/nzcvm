@@ -1,19 +1,16 @@
-"""Pipeline layer for applying offshore taper.
+"""Pipeline layer for applying the offshore taper.
 
-The offshore taper fills the near-surface velocity model in the ocean and at
-the coast-to-ocean transition.  It is the seaward analogue of the Ely GTL
-layer: instead of using the Vs30 surface as a reference, it interpolates a 1-D
-depth–velocity model that is parametrised by the horizontal distance from the
-coastline.
+The offshore layer fills near-surface velocities in ocean regions and at the
+coast-to-ocean transition.  It is the seaward counterpart of the Ely GTL
+layer: rather than using a Vs30 surface, it interpolates a 1-D depth–velocity
+profile parametrised by horizontal distance from the coastline.
 
-Coordinate reference system
-----------------------------
-All ``x``, ``y`` coordinates used by this module are in NZTM2000 (EPSG:2193),
-a metric transverse-Mercator projection.  Depth (``z``) follows the repository
-``+z down`` convention: positive values point downward from the Earth's
-surface, so depth = 0 m is at the surface and depth = 500 m is 500 m below.
-All distances and depths are in **metres**.
+Requires the ``coastline`` coordinate to be present on the grid, which is
+provided by :class:`~nzcvm.layers.coastline.CoastlineLayer`.
 """
+
+from __future__ import annotations
+
 
 import functools
 import logging
@@ -148,14 +145,15 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         grid: Grid,
         model_range: ModelRange = ModelRange.ALL,
     ) -> Qualities:
-        """Apply the offshore taper to the concrete chunk *grid*.
+        """Apply the offshore taper to *grid* and return the result.
 
-        The layer is always called on a computed chunk (``map_blocks`` is
-        hoisted to :func:`~nzcvm.layers.pipeline.execute_model_pipeline`), so
-        all operations use plain NumPy / xarray without creating Dask tasks.
-
-        In-place update via :func:`~nzcvm.qualities.blend` with ``out`` and
-        ``where`` avoids allocating a new result array for the final masked merge.
+        Parameters
+        ----------
+        grid :
+            Grid chunk to evaluate.  Must have the ``coastline`` coordinate
+            set by :class:`~nzcvm.layers.coastline.CoastlineLayer`.
+        model_range :
+            Priority range for velocity-model queries.
         """
         is_above_model_bottom_depth = grid.depth < self.model.absolute_bottom
         if not is_above_model_bottom_depth.any():

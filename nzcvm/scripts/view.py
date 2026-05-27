@@ -16,7 +16,6 @@ from pathlib import Path
 from typing import Annotated
 
 import numpy as np
-import pyvista as pv
 import shapely
 import typer
 import xarray as xr
@@ -26,6 +25,18 @@ from nzcvm.components import Component
 from nzcvm.grids.grid import Grid
 from nzcvm.qualities import Qualities
 from nzcvm.velocity_model import VelocityModel
+
+
+def _require_pyvista():  # type: ignore[return]
+    """Import pyvista or raise a helpful error."""
+    try:
+        import pyvista as pv
+        return pv
+    except ImportError as err:
+        raise ImportError(
+            "pyvista is required for the view command. "
+            "Install it with: pip install nzcvm[visualization]"
+        ) from err
 
 # ---------------------------------------------------------------------------
 # Types & Constants
@@ -55,9 +66,10 @@ app = typer.Typer(
 
 
 def add_logical_axes(
-    pl: pv.Plotter, grid: xr.Dataset, bounds: tuple[float, ...]
+    pl: object, grid: xr.Dataset, bounds: tuple[float, ...]
 ) -> None:
     """Draws i, j, k logical direction vectors starting from the logical origin."""
+    pv = _require_pyvista()
     w, e, s, n, z_min, z_max = bounds
     scale = np.linalg.norm([e - w, n - s, z_max - z_min]) * 0.15
 
@@ -111,9 +123,10 @@ def add_logical_axes(
 
 
 def add_coastline_underlay(
-    pl: pv.Plotter, bounds: tuple[float, ...], coastline_path: Path
+    pl: object, bounds: tuple[float, ...], coastline_path: Path
 ) -> None:
     """Reads a vector geometry file in NZTM and plots it as a clean line underlay."""
+    pv = _require_pyvista()
     z_level = bounds[4] - 500
     with gzip.open(coastline_path) as handle:
         coastline = shapely.from_wkb(handle.read())
@@ -163,8 +176,9 @@ def _build_structured_grid(
     grid2: Grid | None = None,
     qualities2: Qualities | None = None,
     diff_mode: DiffMode = DiffMode.NONE,
-) -> pv.StructuredGrid:
+) -> object:
     """Build a PyVista StructuredGrid from merged xarray Datasets, optionally applying a functional difference mapping."""
+    pv = _require_pyvista()
     ds1 = xr.merge([grid1, qualities1])
 
     if diff_mode != DiffMode.NONE and grid2 is not None and qualities2 is not None:
@@ -218,6 +232,7 @@ def basin(
     ] = None,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
+    pv = _require_pyvista()
     pl, mesh_data = pv.Plotter(), pv.read(mesh)
 
     if topography:
@@ -305,6 +320,7 @@ def model(
     max_val: float | None = None,
 ) -> None:
     """Load an xarray DataTree pipeline and visualise model grids cleanly."""
+    pv = _require_pyvista()
     scalar_str = str(scalar.value if isinstance(scalar, Component) else scalar).lower()
 
     if scalar_str not in ALL_SCALARS:

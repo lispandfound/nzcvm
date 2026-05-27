@@ -1,12 +1,12 @@
 """New Zealand Community Velocity Model (NZCVM).
 
 Tools for building and querying tetrahedral velocity models. The main
-entry point is :class:`nzcvm.model.Model`, which wraps a compiled Rust
-backend for fast spatial queries.
+entry point is :class:`nzcvm.model.ModelTree`, which provides fast
+spatial queries over one or more tetrahedral mesh models.
 
 See Also
 --------
-nzcvm.model.Model : High-level velocity-model interface.
-nzcvm.velocity_model.VelocityModelSpec : Grid configuration for model evaluation.
+nzcvm.model.ModelTree : High-level velocity-model interface.
+nzcvm.config.velocity_model.VelocityModelConfig : Top-level configuration for model generation.
 nzcvm.layers : Pipeline layers that transform and query models.
 """

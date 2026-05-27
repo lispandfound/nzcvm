@@ -12,13 +12,12 @@ import numba
 import numpy as np
 import pandas as pd
 import pyproj
-import pyvista as pv
 import scipy as sp
 import shapely
 import shapely.ops
 import typer
 
-from nzcvm.mesh import make_mesh
+from nzcvm.mesh import TetrahedralMesh, make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -133,7 +132,7 @@ class Layer:
 
 def construct_volumetric_mesh(
     layers: list[Layer], priority: int
-) -> pv.UnstructuredGrid:
+) -> TetrahedralMesh:
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
     rho = np.array([layer.rho for layer in layers])

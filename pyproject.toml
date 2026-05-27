@@ -24,7 +24,6 @@ dependencies = [
     "platformdirs>=4.9.6",
     "psutil>=7.2.2",
     "pyproj>=3.7.2",
-    "pyvista>=0.47.2",
     "rich>=14.3.3",
     "rioxarray>=0.22.0",
     "scikit-learn>=1.8.0",
@@ -37,6 +36,9 @@ dependencies = [
     "zarr>=3.1.6",
     "zfpy>=1.0.1",
 ]
+
+[project.optional-dependencies]
+visualization = ["pyvista>=0.47.2"]
 
 [project.scripts]
 nzcvm = "nzcvm.scripts.nzcvm:app"

@@ -6,7 +6,7 @@ import xarray as xr
 
 from nzcvm.components import Component
 from nzcvm.config.layers.query import QueryLayerConfig
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.model import ModelTree
 from nzcvm.query import ModelRange

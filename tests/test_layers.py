@@ -18,7 +18,7 @@ from hypothesis import given, strategies as st
 
 from nzcvm.components import Component
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.core import Layer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer

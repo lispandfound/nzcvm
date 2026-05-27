@@ -29,7 +29,7 @@ Example
 ::
 
     from nzcvm.layers.functional import functional_layer
-    from nzcvm.grids import Grid
+    from nzcvm.grids.grid import Grid
     from nzcvm.model import ModelRange
 
     @functional_layer
@@ -58,7 +58,7 @@ from typing import Any, Protocol, get_type_hints
 from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpacker
 
 from nzcvm.config.layers.core import LayerConfig
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities

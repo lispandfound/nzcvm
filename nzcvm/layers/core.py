@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Generic, TypeVar
 
 from nzcvm.config.layers import LayerConfig
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.model import ModelRange
 from nzcvm.qualities import Qualities
 

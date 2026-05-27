@@ -7,8 +7,8 @@ import xarray as xr
 from nzcvm.config.metadata import ModelMetadata
 from nzcvm.config.velocity_model import VelocityModelConfig
 from nzcvm.coordinates import Coordinate
-from nzcvm.grids import Grid, build_grids_from_config
-from nzcvm.grids.grid import GridSchema
+from nzcvm.grids.builder import build_grids_from_config
+from nzcvm.grids.grid import Grid, GridSchema
 from nzcvm.qualities import Qualities, QualitiesSchema
 
 

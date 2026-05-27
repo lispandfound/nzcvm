@@ -4,7 +4,7 @@ import logging
 
 from nzcvm.components import Component
 from nzcvm.config.layers.clamp import ClampLayerConfig
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities

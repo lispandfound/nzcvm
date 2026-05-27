@@ -23,7 +23,7 @@ import xarray as xr
 
 # Adjust these imports according to your local package structure
 from nzcvm.components import Component
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.qualities import Qualities
 from nzcvm.velocity_model import VelocityModel
 

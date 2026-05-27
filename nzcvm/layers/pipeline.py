@@ -7,7 +7,7 @@ import xarray as xr
 
 from nzcvm.config.layers import LayerConfig
 from nzcvm.config.layers.core import LayerConfig as LayerConfigBase
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer, layer_from_config
 from nzcvm.model import ModelRange
 from nzcvm.qualities import Qualities, QualitiesSchema, template_like

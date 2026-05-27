@@ -11,7 +11,7 @@ import xarray as xr
 
 import gzip
 from nzcvm.config.layers.coastline import CoastlineConfig
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 import shapely
 

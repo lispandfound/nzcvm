@@ -9,7 +9,7 @@ from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
-from nzcvm.grids import Grid
+from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.model import ModelRange
 from nzcvm.qualities import Qualities

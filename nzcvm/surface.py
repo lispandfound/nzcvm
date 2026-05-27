@@ -25,24 +25,16 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class Surface:
-    """A lazily-sampled surface interpolator backed by a PyVista mesh.
+    """A surface interpolator backed by a triangulated mesh.
 
-    Parameters
-    ----------
-    mesh :
-        PyVista dataset with an active scalar array representing elevation
-        (z values) at each point.
-    bounds :
-        Six-element array ``[xmin, ymin, zmin, xmax, ymax, zmax]`` of the
-        mesh bounding box.
-    n_points :
-        Number of points in the mesh.
+    Given a set of (x, y) query points, returns the interpolated elevation
+    (z) value at each location.  Used by grid builders to convert
+    depth-below-surface coordinates to absolute elevations.
 
     See Also
     --------
     build_surface_interpolator : Construct a ``Surface`` from a PyVista dataset.
     read_surface_from_path : Load a ``Surface`` directly from a file path.
-    nzcvm.layers.DepthTransformLayer : Layer that uses a ``Surface`` to shift z coordinates.
     """
 
     inner: PySurfaceModel
@@ -61,11 +53,6 @@ class Surface:
         -------
         numpy.ndarray
             Elevation (z) values with the same shape as *x*.
-
-        Raises
-        ------
-        ValueError
-            If any query point falls outside the surface boundaries.
         """
         logger.debug(f"Calculating z values for x, y (size = {x.size}).")
         pts = np.stack((x.flatten(), y.flatten()), axis=-1)

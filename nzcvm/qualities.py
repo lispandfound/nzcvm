@@ -10,9 +10,11 @@ from nzcvm.components import Component
 
 
 class Qualities(xr.Dataset):
-    """
-    A typed subclass of xarray.Dataset that enforces specific coordinate variables
-    and guarantees that updates are strictly lazy (Dask-backed).
+    """Typed :class:`xarray.Dataset` subclass holding seismic material properties.
+
+    Contains one variable for each :class:`~nzcvm.components.Component`
+    (``rho``, ``vp``, ``vs``, ``qp``, ``qs``, ``alpha``) on an ``(i, j, k)``
+    grid.
     """
 
     __slots__ = ()
@@ -36,7 +38,7 @@ class QualitiesSchema(AsDataset):
 
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> Qualities:
-        """Parses, validates, and builds a Grid from a standard xr.Dataset."""
+        """Build a :class:`Qualities` instance from a plain :class:`xarray.Dataset`."""
         return cls.new(**dataset.data_vars)  # ty: ignore[invalid-argument-type, missing-argument]
 
 
@@ -67,15 +69,24 @@ def blend(
 ) -> Qualities:
     """Alpha-composite *lhs* (foreground) over *rhs* (background).
 
-    The blend arithmetic is performed in Rust (``blend_many``) via
-    ``xr.apply_ufunc``.  Follows NumPy ufunc conventions for *out* and *where*:
+    Parameters
+    ----------
+    lhs :
+        Foreground qualities.
+    rhs :
+        Background qualities.
+    out :
+        Optional existing :class:`Qualities` dataset to write results into
+        in-place.  When provided it is also returned.
+    where :
+        Optional boolean array broadcastable to the qualities shape.  When
+        supplied, results are written only where the mask is ``True``; other
+        positions in *out* are left unchanged.  Requires *out* to be provided.
 
-    * *out* – an existing :class:`Qualities` dataset to write results into
-      in-place.  When provided it is also returned.
-    * *where* – a boolean array broadcastable to the qualities shape.  When
-      supplied, results are written only to positions where the mask is
-      ``True``; other positions in *out* are left unchanged.  Requires *out*
-      to be provided.
+    Returns
+    -------
+    Qualities
+        Alpha-composited result, or *out* if provided.
     """
     component_names = list(Component)
 

@@ -43,25 +43,28 @@ def ely_vs_profile(
     vs_at_z_t: xr.DataArray,
     depth_t: float,
 ) -> Qualities:
-    """Compute the Ely GTL Vs profile at depths ``z``.
+    """Compute the Ely GTL velocity profile at each depth value.
 
     Parameters
     ----------
     depth :
-        Depth values (metres, positive downwards) for which to compute Vs.
-        Values must satisfy ``0 <= z <= z_t``.
+        Depth values (metres, positive downwards).  Values should satisfy
+        ``0 <= depth <= depth_t``.
     vs30 :
-        Site-average shear-wave velocity over the top 30 m (m/s).
+        Site-average shear-wave velocity over the top 30 m (m s⁻¹).
+    vp_at_z_t :
+        P-wave velocity at the reference depth *depth_t* from the underlying
+        tomography model (m s⁻¹).
     vs_at_z_t :
-        Shear-wave velocity at the reference depth ``z_t`` taken from the
-        underlying tomography model (m/s).
-    z_t :
-        Reference depth (metres).
+        S-wave velocity at the reference depth *depth_t* from the underlying
+        tomography model (m s⁻¹).
+    depth_t :
+        Reference depth (metres) at which the taper meets the tomography.
 
     Returns
     -------
-    DataArray
-        Ely GTL computed velocities and densities.
+    Qualities
+        Ely GTL velocities and derived densities at each depth point.
     """
     depth_norm = depth / depth_t
     depth_norm_sq = np.square(depth_norm)

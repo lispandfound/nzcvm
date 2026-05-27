@@ -1,30 +1,15 @@
-"""Build and populate the curvilinear velocity model DataTree.
+"""SW4 curvilinear velocity model grid builder.
 
-:func:`skeleton_velocity_model` is the main entry point. It:
-
-1. Builds per-refinement 2-D grid datasets with physical ``x``/``y``
-   coordinate arrays, optionally offset by half a cell for
-   ``cell_registration=CellRegistration.CENTRE``.
-2. Loads the topographic surface from ``velocity_velocity_model.grid.surface``.
-3. Calls :func:`fill_grid` to populate each dataset with the 3-D curvilinear
-   ``z``, ``depth``, and broadcast ``x``/``y`` arrays.
-4. Assembles everything into an :class:`xarray.DataTree`.
-
-Coordinates are chunked lazily using explicit block sizes defined in the model
-configuration (:attr:`~nzcvm.velocity_model.Grid.chunks`). This ensures predictable
-memory usage and scales reliably across distributed Dask workers, regardless of
-the physical domain extent or the number of downstream arrays.
-
-When consecutive grids have different horizontal resolutions, :func:`fill_grid`
-resamples the preceding level's bottom surface to the next level's index
-coordinates using :meth:`xarray.DataArray.sel`. This works because all grids
-share a common global integer index space (via :func:`skeleton_velocity_model`),
-so a coarser grid's indices are a strict subset of the finer grid's indices.
+Provides :func:`skeleton_velocity_model` and :func:`fill_grid` for
+constructing the 3-D curvilinear mesh defined by a
+:class:`~nzcvm.config.grids.sw4.SW4GridConfig`.  Grids are returned as
+:class:`xarray.DataTree` nodes with chunked coordinates and topography-following
+``z`` / ``depth`` arrays.
 
 See Also
 --------
-nzcvm.velocity_model.VelocityModelSpec : Config dataclass consumed by this module.
-nzcvm.curvilinear_mesh : Low-level mesh boundary and fill-between functions.
+nzcvm.config.grids.sw4.SW4GridConfig : Grid configuration.
+nzcvm.grids.helpers : Shared surface-elevation helpers.
 """
 
 from typing import Any

@@ -1,15 +1,14 @@
-"""Grid configuration for velocity models.
+"""Top-level configuration for NZCVM velocity models.
 
-:class:`VelocityModelSpec` is the top-level configuration object, typically
-loaded from a TOML/YAML/JSON config file.  Pass it to
-:func:`~nzcvm.generate.skeleton_velocity_model` to build and populate an
-:class:`xarray.DataTree` with 3-D curvilinear meshgrids.
+:class:`VelocityModelConfig` is loaded from a TOML, YAML, or JSON config file
+and passed to :class:`~nzcvm.velocity_model.VelocityModel` to build the grid
+and query pipeline.
 
-Layers are configured as an ordered list of :data:`LayerConfig` objects under
-the ``layers`` key of the config file.  The list defines the pipeline
-composition: the first entry is the outermost layer applied to each grid
-block; the last entry must be a :class:`ModelLayerConfig` that performs the
-actual velocity-model queries.  A minimal TOML example::
+Layers are configured as an ordered list of :class:`~nzcvm.config.layers.LayerConfig`
+objects under the ``layers`` key.  The list defines the pipeline: the first
+entry is the outermost layer and the last must be a
+:class:`~nzcvm.config.layers.query.QueryLayerConfig` that performs the actual
+velocity-model queries.  A minimal TOML example::
 
     [[layers]]
     type = "clamp"
@@ -19,17 +18,17 @@ actual velocity-model queries.  A minimal TOML example::
     [[layers]]
     type = "ely"
     vs30 = "path/to/vs30.h5"
-    z_t = 450.0
+    depth_t = 450.0
 
     [[layers]]
-    type = "model"
+    type = "query"
     model_path = "path/to/models"
     model_glob = "*.vtkhdf"
 
 See Also
 --------
-nzcvm.generate.skeleton_velocity_model : Build and populate a DataTree from this spec.
-nzcvm.layers : Pipeline layers that query and transform the populated DataTree.
+nzcvm.velocity_model.VelocityModel : Model object built from this config.
+nzcvm.layers : Pipeline layers that query and transform the model.
 """
 
 from dataclasses import dataclass, field
@@ -52,7 +51,7 @@ DECODER_MAP = {"yaml": YAMLDecoder, "json": JSONDecoder, "toml": TOMLDecoder}
 
 
 class VelocityModelConfigFormat(StrEnum):
-    """Supported serialisation formats for :class:`VelocityModelSpec` configs."""
+    """Supported serialisation formats for :class:`VelocityModelConfig` files."""
 
     INFERRED = auto()
     YAML = auto()
@@ -64,13 +63,14 @@ class VelocityModelConfigFormat(StrEnum):
 class VelocityModelConfig(ConfigObject):
     """Top-level configuration for an NZCVM velocity model.
 
-    Holds the model metadata, a :class:`GridConfig` describing the mesh
-    structure, and an ordered list of :class:`LayerConfig` objects that define
-    the query pipeline.
+    Holds model metadata, a :class:`~nzcvm.config.grids.GridConfig` describing
+    the mesh structure, and an ordered list of
+    :class:`~nzcvm.config.layers.LayerConfig` objects that define the query
+    pipeline.
 
     See Also
     --------
-    VelocityModelSpec.read_config : Load from a TOML, YAML, or JSON file.
+    VelocityModelConfig.read_config : Load from a TOML, YAML, or JSON file.
     """
 
     grid: GridConfig
@@ -100,19 +100,19 @@ class VelocityModelConfig(ConfigObject):
         config_path: Path | str,
         format: VelocityModelConfigFormat = VelocityModelConfigFormat.INFERRED,
     ) -> Self:
-        """Load a :class:`VelocityModelSpec` from a TOML, YAML, or JSON file.
+        """Load a :class:`VelocityModelConfig` from a TOML, YAML, or JSON file.
 
         Parameters
         ----------
         config_path :
             Path to the configuration file.
         format :
-            Explicit file format, or ``VelocityModelSpecFormat.INFERRED`` to
+            Explicit file format, or ``VelocityModelConfigFormat.INFERRED`` to
             detect from the file extension.
 
         Returns
         -------
-        VelocityModelSpec
+        VelocityModelConfig
         """
         config_path = Path(config_path)
         decoder = (

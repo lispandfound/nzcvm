@@ -7,7 +7,7 @@ from .core import LayerConfig
 
 @dataclass
 class ElyLayerConfig(LayerConfig):
-    """Configuration DTO for an :class:`~nzcvm.layers.ely.ElyTaperLayer`.
+    """Configuration DTO for an :class:`~nzcvm.layers.ely.ElyLayer`.
 
     Parameters
     ----------
@@ -23,7 +23,7 @@ class ElyLayerConfig(LayerConfig):
         [[layers]]
         type = "ely"
         vs30 = "path/to/vs30.h5"
-        z_t = 450.0
+        depth_t = 450.0
     """
 
     vs30: ExistingFile

@@ -36,10 +36,7 @@ Affine = np.ndarray[tuple[int, int], np.dtype[np.float32]]
 class Coordinate(StrEnum):
     """Grid axis label for projected spatial and logical index coordinates.
 
-    These are used directly as xarray dimension or variable names. Note
-    that ``Coordinate`` in this module lacks the ``COMPONENT`` member;
-    use :class:`nzcvm.components.Coordinate` when a component axis is
-    also needed.
+    Used directly as xarray dimension or variable names.
 
     Examples
     --------
@@ -160,13 +157,7 @@ def reflect_x(dims: int = 2) -> Affine:
 
 
 def crs_transform(x, y, *, transformer: Transformer):
-    """Apply a pyproj CRS transform, dispatching for xarray DataArrays.
-
-    When *x* or *y* is an :class:`xarray.DataArray` (potentially dask-backed),
-    the transform is applied via two :func:`xarray.apply_ufunc` calls with
-    ``dask='parallelized'`` so that no Dask graph is triggered prematurely and
-    no rechunking is required.  Plain NumPy arrays and scalars are passed
-    directly to :meth:`pyproj.Transformer.transform`.
+    """Apply a pyproj CRS transform to *x* and *y*.
 
     Parameters
     ----------

@@ -11,20 +11,19 @@ def compute_surface_elevation(
     x: xr.DataArray,
     y: xr.DataArray,
 ) -> xr.DataArray:
-    """Evaluate *topography* at the shallowest grid's (x, y) and persist.
+    """Evaluate *topography* at each (x, y) grid point.
 
     Parameters
     ----------
-    top_grid :
-        The shallowest (finest-resolution) 2-D grid dataset, already chunked
-        horizontally.
     topography :
         Loaded topographic surface.
+    x, y :
+        Projected coordinates of the grid points.
 
     Returns
     -------
     xarray.DataArray
-        Persisted elevation array (same shape and chunks as *top_grid*'s x/y).
+        Elevation values with the same shape and chunks as *x*.
     """
     return xr.apply_ufunc(
         topography.transform,

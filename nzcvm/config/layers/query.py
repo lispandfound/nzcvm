@@ -7,16 +7,16 @@ from .core import LayerConfig
 
 @dataclass
 class QueryLayerConfig(LayerConfig):
-    """Configuration DTO for a :class:`~nzcvm.layers.query.ModelLayer`.
+    """Configuration DTO for a :class:`~nzcvm.layers.query.QueryLayer`.
 
     Specifies where to find the velocity-model mesh files.  *model_path*
     and *model_glob* together identify the set of ``*.vtkhdf`` files to load.
 
     Parameters
     ----------
-    model_path : Path | None
+    model_path :
         Directory containing the mesh files.
-    model_glob : str
+    model_glob :
         Glob pattern used to find mesh files under *model_path*
         (default ``"*.vtkhdf"``).
 
@@ -25,7 +25,7 @@ class QueryLayerConfig(LayerConfig):
     TOML::
 
         [[layers]]
-        type = "model"
+        type = "query"
         model_path = "path/to/models"
         model_glob = "*.vtkhdf"
     """

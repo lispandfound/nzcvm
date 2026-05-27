@@ -5,12 +5,7 @@ from nzcvm.config.core import ConfigObject
 
 @dataclass
 class ModelMetadata(ConfigObject):
-    """Coordinate, descriptive, attribution, and repository metadata for a model.
-
-    See Also
-    --------
-    ModelMetadata.coordinate_system : Extracts a :class:`~nzcvm.coordinates.CoordinateSystem`.
-    """
+    """Descriptive, attribution, and repository metadata for a model."""
 
     # Basic Descriptive Metadata
     title: str | None = None

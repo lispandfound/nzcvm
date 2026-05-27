@@ -1,4 +1,4 @@
-"""Pipeline layer that queries a :class:`~nzcvm.model.Model`."""
+"""Pipeline layer that queries a :class:`~nzcvm.model.ModelTree`."""
 import logging
 from typing import TYPE_CHECKING
 
@@ -29,25 +29,14 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
         grid: Grid,
         model_range: ModelRange = ModelRange.ALL,
     ) -> Qualities:
-        """Query the velocity model at every point in the concrete chunk *grid*.
-
-        The layer is always called with a computed (non-dask) chunk because
-        :func:`~nzcvm.layers.pipeline.execute_model_pipeline` hoists the
-        single ``map_blocks`` call to the top level.  Plain NumPy operations
-        are therefore sufficient here — no ``apply_ufunc`` or Dask is needed.
+        """Query the velocity model at every grid point and return the results.
 
         Parameters
         ----------
         grid :
-            Concrete chunk with spatial variables ``x``, ``y``, ``z``.
+            Grid chunk with spatial variables ``x``, ``y``, ``z``.
         model_range :
             Priority range used for the query.
-        out :
-            Optional pre-allocated ``(*shape, 6)`` float32 buffer to write
-            into (passed through to :meth:`~nzcvm.model.ModelTree.query_many_raw`).
-        where :
-            Optional boolean mask broadcastable to the grid shape.  Only
-            queried where ``True``; other rows in *out* are left unchanged.
         """
         logger.debug("Beginning query layer query with model_range=%s", model_range)
         darr = xr.apply_ufunc(

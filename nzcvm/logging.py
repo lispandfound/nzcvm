@@ -11,11 +11,14 @@ from dask.callbacks import Callback
 
 class ResourceMonitor:
     def __init__(self, interval: float = 5.0, level: int = logging.INFO):
-        """
-        A context manager that monitors process/system resources in a background thread.
+        """Context manager that logs process/system resource usage in the background.
 
-        :param interval: Sleep interval between log outputs in seconds.
-        :param level: The logging level to log performance stats at.
+        Parameters
+        ----------
+        interval :
+            Sleep interval between log outputs (seconds).
+        level :
+            Logging level for performance stats.
         """
         self.interval = interval
         self.level = level

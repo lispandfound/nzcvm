@@ -18,7 +18,6 @@ import pyvista as pv
 import scipy as sp
 import shapely
 import shapely.ops
-
 from nzcvm.mesh import make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
@@ -30,6 +29,7 @@ def parser() -> argparse.ArgumentParser:
     args.add_argument("topography", type=Path, help="Tomography to measure depths from")
     args.add_argument("top_surface", type=Path, help="Top surface to read")
     args.add_argument("bottom_surface", type=Path, help="Bottom files to read")
+    args.add_argument('smooth', type=float, help='Smoothing distance')
     args.add_argument(
         "output",
         type=Path,
@@ -475,8 +475,13 @@ def main():
     args = arg_parser.parse_args()
 
     collection = shapely.from_geojson(args.bounds.read_text())
-    poly = preprocess_polygon(collection.geoms[0]).simplify(args.s)
+    internal_poly = preprocess_polygon(collection.geoms[0]).simplify(args.s)
 
+    if args.smoothing > 0:
+        poly = shapely.buffer(args.smoothing)
+    else:
+        poly = internal_poly
+    
     triangulation = triangulate_polygon(poly, args.r)
     top_surface = read_surface_file(args.top_surface)
     if top_surface.size > 1e6:
@@ -502,6 +507,13 @@ def main():
     )
     mesh = construct_volumetric_mesh(layers, args.priority)
 
+    if args.smoothing > 0:
+        points_2d = shapely.points(mesh.points[:, 0], mesh.points[:, 1])
+        distances = shapely.distance(points_2d, internal_poly)
+        alpha = np.interp(distances, [0.0, args.smoothing], [1.0, 0.0])
+        mesh.point_data['alpha'] = alpha
+        
+    
     print_mesh_stats(mesh)
 
     mesh.save(str(args.output))

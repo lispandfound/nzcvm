@@ -8,12 +8,11 @@ from typing import Annotated
 import numba
 import numpy as np
 import pandas as pd
-import pyvista as pv
 import typer
 from pyproj import CRS, Transformer
 
 from nzcvm.coordinates import Affine, reflect_x, scale, translate
-from nzcvm.mesh import make_mesh
+from nzcvm.mesh import TetrahedralMesh, make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
 CRS_WGS = CRS.from_epsg(4326)
@@ -157,7 +156,7 @@ def tet_connectivity(ni: int, nj: int, nk: int):
 
 def data_frame_to_mesh(
     df: pd.DataFrame, tomography_model: TomographyModel
-) -> pv.UnstructuredGrid:
+) -> TetrahedralMesh:
     rho = df[tomography_model.rho] * 1000
     vp = df[tomography_model.vp] * 1000
     vs = df[tomography_model.vs] * 1000

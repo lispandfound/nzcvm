@@ -9,6 +9,9 @@ Requires the ``coastline`` coordinate to be present on the grid, which is
 provided by :class:`~nzcvm.layers.coastline.CoastlineLayer`.
 """
 
+from __future__ import annotations
+
+
 import functools
 import logging
 from dataclasses import dataclass

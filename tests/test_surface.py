@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-import pyvista as pv
 from hypothesis import given
 from hypothesis import strategies as st
 
+from nzcvm.mesh import StructuredMesh
 from nzcvm.surface import Surface, build_surface_interpolator
 
 # ---------------------------------------------------------------------------
@@ -29,14 +29,13 @@ def _flat_surface(
     z: float = 5.0, side: float = 10.0, cx: float = 5.0, cy: float = 5.0
 ) -> Surface:
     """Flat plane at constant elevation *z* covering [cx-side/2, cx+side/2]²."""
-    mesh = pv.Plane(
-        center=(cx, cy, z),
-        direction=(0, 0, 1),
-        i_size=side,
-        j_size=side,
-        i_resolution=4,
-        j_resolution=4,
-    )
+    n = 5  # 5×5 grid — matches pv.Plane(i_resolution=4, j_resolution=4)
+    xs = np.linspace(cx - side / 2, cx + side / 2, n, dtype=np.float32)
+    ys = np.linspace(cy - side / 2, cy + side / 2, n, dtype=np.float32)
+    xx, yy = np.meshgrid(xs, ys, indexing="ij")
+    zz = np.full_like(xx, z)
+    pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
+    mesh = StructuredMesh(points=pts, dims=(n, n, 1))
     return build_surface_interpolator(mesh)
 
 

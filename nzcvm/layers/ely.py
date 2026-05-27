@@ -1,10 +1,14 @@
 """Pipeline layer for applying the Ely et al. (2010) GTL taper."""
 
+from __future__ import annotations
+
 import logging
+
+from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
-from typing import TYPE_CHECKING
+
 from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate

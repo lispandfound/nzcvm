@@ -20,7 +20,6 @@ from pathlib import Path
 from typing import Any, Self
 
 import numpy as np
-import pyvista as pv
 import rich
 import xarray as xr
 from mashumaro.mixins.dict import DataClassDictMixin
@@ -227,24 +226,23 @@ class MeshModel:
 
     @classmethod
     def from_path(cls, path: Path) -> Self:
-        model = pv.read(path)
-        if not isinstance(model, pv.UnstructuredGrid):
-            raise ValueError(f"Model is not an unstructured grid, received {model!r}")
-        return cls.from_mesh(model)
+        from nzcvm.mesh import read_unstructured_vtkhdf
+
+        return cls(_mesh_model_from_tetra(read_unstructured_vtkhdf(path)))
 
     @classmethod
     def from_mesh(
         cls,
-        mesh: pv.UnstructuredGrid,
+        mesh: "nzcvm.mesh.TetrahedralMesh",
         name: str | None = None,
     ) -> Self:
-        """Build a :class:`MeshModel` from a PyVista ``UnstructuredGrid``.
+        """Build a :class:`MeshModel` from a :class:`~nzcvm.mesh.TetrahedralMesh`.
 
         Parameters
         ----------
         mesh :
-            An ``UnstructuredGrid`` with the NZCVM cell and field data
-            layout (see :func:`nzcvm.mesh.make_mesh`).
+            A :class:`~nzcvm.mesh.TetrahedralMesh` with the NZCVM cell and
+            field data layout (see :func:`nzcvm.mesh.make_mesh`).
         name :
             Optional human-readable name.  Takes precedence over any name
             stored in ``mesh.field_data["name"]``.
@@ -255,10 +253,10 @@ class MeshModel:
 
         See Also
         --------
-        nzcvm.mesh.make_mesh : Create a compatible ``UnstructuredGrid``.
+        nzcvm.mesh.make_mesh : Create a compatible :class:`~nzcvm.mesh.TetrahedralMesh`.
         ModelTree : Combine multiple ``MeshModel`` instances for priority-blended queries.
         """
-        return cls(_mesh_model_from_pyvista(mesh, name=name))
+        return cls(_mesh_model_from_tetra(mesh, name=name))
 
     @property
     def name(self) -> str:
@@ -347,7 +345,7 @@ class ModelTree:
     See Also
     --------
     ModelTree.load_models : Load from VTKHDF files or a directory.
-    ModelTree.from_mesh : Build from an in-memory PyVista mesh.
+    ModelTree.from_mesh : Build from an in-memory :class:`~nzcvm.mesh.TetrahedralMesh`.
     ModelTree.query : Single-point quality query.
     ModelTree.query_many : Vectorised multi-point query returning an xarray Dataset.
     """
@@ -391,15 +389,15 @@ class ModelTree:
 
     @classmethod
     def from_mesh(
-        cls, mesh_model: pv.UnstructuredGrid, model_map: dict | None = None
+        cls, mesh_model: "nzcvm.mesh.TetrahedralMesh", model_map: dict | None = None
     ) -> Self:
-        """Build a :class:`ModelTree` from a single in-memory PyVista mesh.
+        """Build a :class:`ModelTree` from a single in-memory :class:`~nzcvm.mesh.TetrahedralMesh`.
 
         Parameters
         ----------
         mesh_model :
-            An ``UnstructuredGrid`` with the NZCVM cell and field data
-            layout (see :func:`nzcvm.mesh.make_mesh`).
+            A :class:`~nzcvm.mesh.TetrahedralMesh` with the NZCVM cell and
+            field data layout (see :func:`nzcvm.mesh.make_mesh`).
         model_map :
             Optional mapping from integer model ID to a display name.
 
@@ -410,9 +408,9 @@ class ModelTree:
         See Also
         --------
         ModelTree.load_models : Load from VTKHDF files on disk.
-        nzcvm.mesh.make_mesh : Create a compatible ``UnstructuredGrid``.
+        nzcvm.mesh.make_mesh : Create a compatible :class:`~nzcvm.mesh.TetrahedralMesh`.
         """
-        raw_mesh_model = _mesh_model_from_pyvista(mesh_model)
+        raw_mesh_model = _mesh_model_from_tetra(mesh_model)
         raw = nzcvm.model_tree([raw_mesh_model])
         return cls(raw, model_map or {})
 
@@ -683,14 +681,13 @@ class ModelTree:
         self.inner = registry.REGISTRY[key]
 
 
-def _mesh_model_from_pyvista(
-    mesh_model: pv.UnstructuredGrid, name: str | None = None
+def _mesh_model_from_tetra(
+    mesh_model: "nzcvm.mesh.TetrahedralMesh", name: str | None = None
 ) -> Any:
-    """Build a PyMeshModel from a pyvista UnstructuredGrid with strict memory isolation."""
-    connectivity = np.array(
-        mesh_model.cells_dict[np.uint8(pv.CellType.TETRA)], dtype=np.uint64
+    """Build a PyMeshModel from a :class:`~nzcvm.mesh.TetrahedralMesh`."""
+    connectivity = np.ascontiguousarray(
+        np.asarray(mesh_model.connectivity, dtype=np.uint64)
     )
-    connectivity = np.ascontiguousarray(connectivity)
 
     types = np.array(mesh_model.cell_data["model_type"]).copy(order="C")
 
@@ -712,10 +709,13 @@ def _mesh_model_from_pyvista(
     else:
         priority = np.uint8(np.array(mesh_model.field_data["priority"])[0])
 
-    if name is None and "name" in mesh_model.field_data:
-        raw_names = mesh_model.field_data["name"]
-        if len(raw_names) > 0:
-            name = str(raw_names[0])
+    if name is None:
+        if mesh_model.name is not None:
+            name = mesh_model.name
+        elif "name" in mesh_model.field_data:
+            raw_names = mesh_model.field_data["name"]
+            if len(raw_names) > 0:
+                name = str(raw_names[0])
 
     transform = mesh_model.field_data.get("transform")
     if transform is not None:

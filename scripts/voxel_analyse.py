@@ -22,7 +22,6 @@ from rich.progress import (
 )
 from rich.table import Table
 
-
 console = Console()
 
 

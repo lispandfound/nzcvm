@@ -13,12 +13,12 @@ tests focus on the Python-level contracts:
 from __future__ import annotations
 
 import numpy as np
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.model import ModelRange, ModelTree, MeshModel
+from nzcvm.model import MeshModel, ModelRange, ModelTree
 from tests.conftest import _mesh_model
-
 
 # ---------------------------------------------------------------------------
 # ModelRange enum contract

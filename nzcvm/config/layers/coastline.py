@@ -1,6 +1,7 @@
-from nzcvm.config.validation import ExistingPath
 from dataclasses import dataclass, field
+
 from nzcvm.config.layers import LayerConfig
+from nzcvm.config.validation import ExistingPath
 
 
 @dataclass

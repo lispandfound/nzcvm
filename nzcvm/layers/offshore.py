@@ -23,7 +23,6 @@ from typing import Self
 import numpy as np
 import xarray as xr
 
-
 from nzcvm import qualities
 from nzcvm.components import Component
 from nzcvm.config.layers.offshore import (
@@ -34,8 +33,8 @@ from nzcvm.config.layers.offshore import (
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities, QualitiesSchema
+from nzcvm.query import ModelRange
 
 logger = logging.getLogger(__name__)
 

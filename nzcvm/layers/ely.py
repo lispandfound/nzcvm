@@ -11,8 +11,8 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.model import ModelRange
 from nzcvm.qualities import Qualities
+from nzcvm.query import ModelRange
 from nzcvm.surface import read_surface_from_path
 
 logger = logging.getLogger(__name__)

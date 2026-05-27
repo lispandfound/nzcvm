@@ -31,7 +31,6 @@ from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.layers.dummy import constant
 from nzcvm.velocity_model import VelocityModel
 
-
 # ---------------------------------------------------------------------------
 # Benchmark parameters
 # ---------------------------------------------------------------------------

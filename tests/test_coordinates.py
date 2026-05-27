@@ -7,10 +7,10 @@ not that NumPy can multiply matrices or that pyproj can reproject coordinates.
 from __future__ import annotations
 
 import numpy as np
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from nzcvm.coordinates import reflect_x, scale, translate
-
 
 # ---------------------------------------------------------------------------
 # translate

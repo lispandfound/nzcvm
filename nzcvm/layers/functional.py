@@ -60,8 +60,8 @@ from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpack
 from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities
+from nzcvm.query import ModelRange
 
 _RUNTIME_PARAMS = frozenset({"grid", "model_range", "next_layer", "return"})
 

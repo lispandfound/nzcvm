@@ -9,8 +9,8 @@ from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.model import ModelTree
-from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities, QualitiesSchema
+from nzcvm.query import ModelRange
 
 logger = logging.getLogger(__name__)
 

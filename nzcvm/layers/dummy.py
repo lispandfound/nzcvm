@@ -36,9 +36,8 @@ from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.layers.functional import functional_layer
-from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities, QualitiesSchema
-
+from nzcvm.query import ModelRange
 
 # ---------------------------------------------------------------------------
 # Functional layers

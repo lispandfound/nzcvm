@@ -13,7 +13,7 @@ python visualise_grid.py model.nc --scalar vs --compare-to model2.nc --diff-mode
 import gzip
 from enum import StrEnum, auto
 from pathlib import Path
-from typing import Annotated, Callable
+from typing import Annotated
 
 import numpy as np
 import pyvista as pv

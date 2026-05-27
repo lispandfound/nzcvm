@@ -14,7 +14,8 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 
 from nzcvm.components import Component
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
@@ -22,10 +23,9 @@ from nzcvm.grids.grid import Grid
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.core import Layer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
-from nzcvm.query import ModelRange
 from nzcvm.qualities import QualitiesSchema
+from nzcvm.query import ModelRange
 from tests.conftest import make_grid
-
 
 # ---------------------------------------------------------------------------
 # Helpers

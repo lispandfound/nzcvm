@@ -14,6 +14,6 @@ Layer types
     Clamps seismic component values to per-component min/max bounds.
 """
 
-from nzcvm.layers import clamp, ely, offshore, query, coastline
+from nzcvm.layers import clamp, coastline, ely, offshore, query
 
 __all__ = ["ely", "clamp", "offshore", "query", "coastline"]

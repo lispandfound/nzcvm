@@ -1,16 +1,16 @@
-from nzcvm.coordinates import Coordinate
-from nzcvm.config.metadata import ModelMetadata
-import numpy as np
-import h5py
-import pytest
-
 from pathlib import Path
 
-from nzcvm.velocity_model import VelocityModel
+import dask.array as da
+import h5py
+import numpy as np
+import pytest
+
+from nzcvm.config.metadata import ModelMetadata
+from nzcvm.coordinates import Coordinate
+from nzcvm.formats import sfile
 from nzcvm.grids.grid import GridSchema
 from nzcvm.qualities import QualitiesSchema
-from nzcvm.formats import sfile
-import dask.array as da
+from nzcvm.velocity_model import VelocityModel
 
 
 def _grid(name: str, resolution: float, base: float, shape=(2, 3, 4)):

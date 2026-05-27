@@ -6,7 +6,6 @@ import pytest
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.grids.grid import Grid, GridSchema
 
-
 # ---------------------------------------------------------------------------
 # Rust-level helpers
 # ---------------------------------------------------------------------------

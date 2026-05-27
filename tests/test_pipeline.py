@@ -17,7 +17,6 @@ from nzcvm.layers.pipeline import build_pipeline
 from nzcvm.model import ModelRange
 from tests.conftest import make_grid
 
-
 # ---------------------------------------------------------------------------
 # build_pipeline guard-rail
 # ---------------------------------------------------------------------------
@@ -100,9 +99,9 @@ def test_model_range_propagated_through_clamp() -> None:
 
 
 def test_execute_pipeline_populates_all_grids() -> None:
+    from nzcvm.config.metadata import ModelMetadata
     from nzcvm.layers.pipeline import execute_model_pipeline
     from nzcvm.velocity_model import VelocityModel
-    from nzcvm.config.metadata import ModelMetadata
 
     # Two named grids of different sizes
     grids = {

@@ -1,5 +1,4 @@
 from dataclasses import dataclass, field
-from typing import Annotated
 
 from nzcvm.config.core import ConfigObject
 from nzcvm.config.validation import (

@@ -16,9 +16,12 @@ library's responsibility.
 from __future__ import annotations
 
 import pytest
-from hypothesis import given, strategies as st
+from hypothesis import given
+from hypothesis import strategies as st
 from mashumaro.exceptions import InvalidFieldValue
 
+from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
+from nzcvm.config.layers.offshore import VelocityModel1D
 from nzcvm.config.validation import (
     ge,
     gt,
@@ -32,11 +35,8 @@ from nzcvm.config.validation import (
     validate_non_negative,
     validate_positive,
 )
-from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
-from nzcvm.config.layers.offshore import VelocityModel1D
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.core import layer_from_config
-
 
 # ---------------------------------------------------------------------------
 # Numeric validators
@@ -263,8 +263,9 @@ def test_layer_from_config_clamp() -> None:
 
 
 def test_layer_from_config_unknown_raises() -> None:
-    from nzcvm.config.layers.core import LayerConfig
     from dataclasses import dataclass
+
+    from nzcvm.config.layers.core import LayerConfig
 
     @dataclass
     class _UnknownConfig(LayerConfig):

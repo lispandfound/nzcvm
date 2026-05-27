@@ -1,19 +1,19 @@
-from nzcvm.coordinates import Coordinate
-from nzcvm.qualities import Qualities
-from nzcvm.query import ModelRange
-from numba import guvectorize
-import shapely.ops
-
+import gzip
 import logging
 from pathlib import Path
-import numpy as np
-import xarray as xr
 
-import gzip
+import numpy as np
+import shapely
+import shapely.ops
+import xarray as xr
+from numba import guvectorize
+
 from nzcvm.config.layers.coastline import CoastlineConfig
+from nzcvm.coordinates import Coordinate
 from nzcvm.grids.grid import Grid
 from nzcvm.layers.core import Layer
-import shapely
+from nzcvm.qualities import Qualities
+from nzcvm.query import ModelRange
 
 logger = logging.getLogger(__name__)
 

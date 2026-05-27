@@ -13,12 +13,12 @@ covered by cargo tests.  Here we test the Python-level contract:
 from __future__ import annotations
 
 import numpy as np
-import pyvista as pv
 import pytest
-from hypothesis import given, strategies as st
+import pyvista as pv
+from hypothesis import given
+from hypothesis import strategies as st
 
 from nzcvm.surface import Surface, build_surface_interpolator
-
 
 # ---------------------------------------------------------------------------
 # Fixture

@@ -36,7 +36,7 @@ from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.layers.functional import functional_layer
-from nzcvm.model import ModelRange
+from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities, QualitiesSchema
 
 
@@ -105,7 +105,9 @@ class CountingLayer(Layer[_NullConfig]):
         super().__init__(_NullConfig(), next_layer)
         self.call_count = 0
 
-    def __call__(self, grid: Grid, model_range: ModelRange = ModelRange.ALL) -> Qualities:
+    def __call__(
+        self, grid: Grid, model_range: ModelRange = ModelRange.ALL
+    ) -> Qualities:
         self.call_count += 1
         return self.next_layer(grid, model_range=model_range)
 
@@ -123,11 +125,12 @@ class RecordingLayer(Layer[_NullConfig]):
         super().__init__(_NullConfig(), next_layer)
         self.calls: list[tuple[Grid, ModelRange]] = []
 
-    def __call__(self, grid: Grid, model_range: ModelRange = ModelRange.ALL) -> Qualities:
+    def __call__(
+        self, grid: Grid, model_range: ModelRange = ModelRange.ALL
+    ) -> Qualities:
         self.calls.append((grid, model_range))
         return self.next_layer(grid, model_range=model_range)
 
 
 # Keep a class alias so code that was written with ConstantLayer still works.
 ConstantLayer = constant
-

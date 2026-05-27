@@ -6,7 +6,7 @@ from nzcvm.components import Component
 from nzcvm.config.layers.clamp import ClampLayerConfig
 from nzcvm.grids import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.model import ModelRange
+from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities
 
 logger = logging.getLogger(__name__)

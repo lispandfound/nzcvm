@@ -22,7 +22,7 @@ from nzcvm.grids import Grid
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.core import Layer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
-from nzcvm.model import ModelRange
+from nzcvm.query import ModelRange
 from nzcvm.qualities import QualitiesSchema
 from tests.conftest import make_grid
 

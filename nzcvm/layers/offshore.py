@@ -34,7 +34,7 @@ from nzcvm.config.layers.offshore import (
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids import Grid
 from nzcvm.layers.core import Layer
-from nzcvm.model import ModelRange
+from nzcvm.query import ModelRange
 from nzcvm.qualities import Qualities, QualitiesSchema
 
 logger = logging.getLogger(__name__)

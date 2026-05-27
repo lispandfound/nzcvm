@@ -14,6 +14,8 @@ nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
 nzcvm.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
+from nzcvm.query import ModelRange
+
 import logging
 from dataclasses import dataclass
 from enum import Enum
@@ -35,30 +37,6 @@ from .nzcvm import PyModelTree, QueryCoordinates, QueryParams  # ty: ignore[unre
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
-
-
-class ModelRange(Enum):
-    """Priority ranges for bounded velocity-model queries.
-
-    Priority values are ``u8`` ordered so that ``0`` is the highest priority
-    and ``255`` is the lowest.  The ranges below reflect the NZCVM convention:
-
-    * ``0–127``  — basin models (higher priority, evaluated first).
-    * ``129–255`` — tomography models (lower priority, blended in afterwards).
-
-    Priority 128 is intentionally excluded from both named ranges and may be
-    used as a separator value by model authors.
-
-    Parameters
-    ----------
-    value :
-        A ``(priority_lo, priority_hi)`` tuple (both inclusive) passed to
-        :meth:`~nzcvm.model.ModelTree.query_bounded`.
-    """
-
-    BASINS = (0, 127)
-    TOMOGRAPHY = (128, 255)
-    ALL = (0, 255)
 
 
 @dataclass
@@ -215,24 +193,6 @@ class Explanation(DataClassDictMixin):
             node.add(f"Quality: {contribution.quality}")
 
         return root
-
-
-class QueryableModel(Protocol):
-    """Protocol satisfied by both :class:`MeshModel` and :class:`ModelTree`.
-
-    Any object exposing a ``query`` method with this signature can be used
-    wherever a queryable velocity model is expected — for example, as the
-    argument to :class:`~nzcvm.layers.query.ModelLayer`.
-    """
-
-    def query(self, x: Any, y: Any, z: Any) -> Quality | None:
-        """Return the blended quality at ``(x, y, z)``, or ``None`` outside coverage."""
-        ...
-
-    @property
-    def aabb(self) -> tuple[np.ndarray, np.ndarray]:
-        """Axis-aligned bounding box as ``(min_xyz, max_xyz)`` float32 arrays."""
-        ...
 
 
 class MeshModel:
@@ -683,7 +643,9 @@ class ModelTree:
             m_id = m["id"]
             embedded_name = m.get("name") or ""
             name = embedded_name or (
-                self.model_map.get(m_id, f"Model {m_id}") if self.model_map is not None else f"Model {m_id}"
+                self.model_map.get(m_id, f"Model {m_id}")
+                if self.model_map is not None
+                else f"Model {m_id}"
             )
 
             branch = tree.add(f"{name} (ID: {m_id})")

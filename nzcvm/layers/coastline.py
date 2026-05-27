@@ -1,6 +1,6 @@
 from nzcvm.coordinates import Coordinate
 from nzcvm.qualities import Qualities
-from nzcvm.model import ModelRange
+from nzcvm.query import ModelRange
 from numba import guvectorize
 import shapely.ops
 

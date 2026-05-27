@@ -12,12 +12,6 @@ Layer types
     Applies the Ely et al. (2010) near-surface velocity taper.
 :class:`ClampLayer`
     Clamps seismic component values to per-component min/max bounds.
-:class:`AffineTransformLayer`
-    Applies a 4-D affine transform to the ``x``, ``y``, ``z`` coordinates.
-:class:`CrsTransformLayer`
-    Reprojects ``x`` and ``y`` between coordinate reference systems.
-:class:`DepthTransformLayer`
-    Converts depth-below-surface to absolute elevation via a surface mesh.
 """
 
 from nzcvm.layers import clamp, ely, offshore, query, coastline

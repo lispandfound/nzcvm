@@ -61,7 +61,7 @@ def construct_surface_mesh(
 
     # 3. Define Cell Types
     # pv.CellType.QUAD is integer 9
-    cell_types = np.full(p0.size, pv.CellType.QUAD, dtype=np.uint8)
+    cell_types = np.full(p0.size, pv.CellType.QUAD, type=np.uint8)
 
     # 4. Construct the UnstructuredGrid
     grid = pv.UnstructuredGrid(cells, cell_types, points)

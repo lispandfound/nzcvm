@@ -10,8 +10,9 @@ import numpy as np
 import pandas as pd
 import typer
 from pyproj import CRS, Transformer
+from scipy.spatial.transform import Rotation
 
-from nzcvm.coordinates import Affine, reflect_x, scale, translate
+from nzcvm.coordinates import Affine, affine, reflect_x, scale, translate
 from nzcvm.models.mesh import TetrahedralMesh, make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
@@ -38,21 +39,16 @@ def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
         forward = translate(ox, oy) @ scale(1000, 1000, 1000) @ reflect_x() @ rotate(140°)
         inverse = rotate(140°) @ reflect_x() @ scale(1/1000, 1/1000, 1/1000) @ translate(-ox, -oy)
 
-    Notes
-    -----
-    ``rotate(angle, ccw=False)`` is its own inverse (the matrix is symmetric and
-    involutory). ``reflect_x()`` is also self-inverse.
     """
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
 
     fwd = (
         translate(ox, oy, z=0.0) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x(dims=3)
-        # @ rotate(140.0, axis="z", ccw=False)
+        @ affine(Rotation.from_rotvec([0, 0, -140.0], degrees=True).as_matrix())
     )
     inv = (
-        # rotate(140.0, axis="z", ccw=False)
-        # @
-        reflect_x(dims=3)
+        affine(Rotation.from_rotvec([0, 0, 140.0], degrees=True).as_matrix())
+        @ reflect_x(dims=3)
         @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
         @ translate(-ox, -oy, z=0.0)
     )
@@ -67,13 +63,11 @@ EP2020_AFFINE: Affine = _EP2020_FWD
 _db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
 DB2025_AFFINE: Affine = (
     translate(_db2025_ox, _db2025_oy, z=0.0) @ scale(1000.0, 1000.0, 1000.0)
-    # @ sp.spatial.transform.
-    # rotate(35.0, axis="z", ccw=False)
+    @ affine(Rotation.from_rotvec([0, 0, 35.0], degrees=True).as_matrix())
 )
 DB2025_INV_AFFINE: Affine = (
-    # rotate(35.0, axis="z", ccw=False)
-    # @
-    scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
+    affine(Rotation.from_rotvec([0, 0, -35.0], degrees=True).as_matrix())
+    @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
     @ translate(-_db2025_ox, -_db2025_oy, z=0.0)
 )
 DB2025_CRS_TRANSFORMER = Transformer.from_crs(CRS_UTM60S, CRS_NZTM, always_xy=True)

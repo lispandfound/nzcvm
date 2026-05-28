@@ -41,15 +41,31 @@ class TetrahedralMesh:
 @dataclass
 class StructuredMesh:
     """A structured-grid surface mesh."""
-
     points: np.ndarray
-    """``(nx*ny*nz, 3)`` float32 point coordinates (i varies fastest)."""
-    dims: tuple[int, int, int]
-    """Logical grid dimensions ``(nx, ny, nz)``."""
 
+    def triangulate(self) -> np.ndarray:
+        nx, ny, _ = self.shape
+        # Triangulate the structured grid: two triangles per quad cell
+        # Point index: i + j*nx, where i in [0, nx), j in [0, ny)
+        ii, jj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
+        p00 = (ii + jj * nx).ravel()
+        p10 = ((ii + 1) + jj * nx).ravel()
+        p11 = ((ii + 1) + (jj + 1) * nx).ravel()
+        p01 = (ii + (jj + 1) * nx).ravel()
+        tri1 = np.stack((p00, p10, p11), axis=1)
+        tri2 = np.stack((p00, p11, p01), axis=1)
+        faces = np.vstack((tri1, tri2)).astype(np.uint64)
+        return faces
+
+    
+    @property
+    def shape(self) -> tuple[int, ...]:
+        return self.points.shape
+    
     def save(self, path: str | Path) -> None:
         """Write this mesh to *path* in VTKHDF format."""
         write_structured_vtkhdf(Path(path), self)
+
 
 
 def make_mesh(
@@ -75,7 +91,7 @@ def make_mesh(
     name:
         Optional human-readable name for the model.  Stored in
         ``field_data["name"]`` when provided so it survives VTKHDF
-        round-trips and is picked up by :func:`~nzcvm.models.model.MeshModel`.
+        round-trips and is picked up by :func:`~nzcvm.model.MeshModel`.
 
     Returns
     -------
@@ -116,8 +132,9 @@ def write_unstructured_vtkhdf(path: Path, mesh: TetrahedralMesh) -> None:
         vtk.create_dataset("NumberOfPoints", data=np.array([n_points], dtype=np.int64))
         vtk.create_dataset("NumberOfCells", data=np.array([n_cells], dtype=np.int64))
         vtk.create_dataset("Points", data=np.asarray(mesh.points, dtype=np.float32))
-        vtk.create_dataset("Connectivity", data=conn_flat)
-        vtk.create_dataset("Offsets", data=offsets)
+        vtk.create_dataset('NumberOfConnectivityIds', data=np.array([n_cells * 4], dtype=np.int64))
+        vtk.create_dataset("Connectivity", data=conn_flat, compression='gzip')
+        vtk.create_dataset("Offsets", data=offsets, compression='gzip')
         vtk.create_dataset("Types", data=np.full(n_cells, VTK_TETRA))
 
         cd = vtk.create_group("CellData")
@@ -136,7 +153,7 @@ def write_unstructured_vtkhdf(path: Path, mesh: TetrahedralMesh) -> None:
                 )
                 ds = fd.create_dataset(k, data=encoded, dtype=h5py.string_dtype())
             else:
-                ds = fd.create_dataset(k, data=arr)
+                ds = fd.create_dataset(k, data=arr, compression='gzip')
             ds.attrs["NumberOfTuples"] = np.int64(
                 len(arr) if arr.ndim == 1 else arr.shape[0]
             )
@@ -210,8 +227,8 @@ def read_unstructured_vtkhdf(path: Path) -> TetrahedralMesh:
     )
 
 
-def write_structured_vtkhdf(path: Path, mesh: StructuredMesh) -> None:
-    """Write a :class:`StructuredMesh` to *path* in VTKHDF StructuredGrid format.
+def write_structured_mesh(path: Path, mesh: StructuredMesh) -> None:
+    """Write a :class:`StructuredMesh` to *path* in StructuredGrid format.
 
     Parameters
     ----------
@@ -220,36 +237,26 @@ def write_structured_vtkhdf(path: Path, mesh: StructuredMesh) -> None:
     mesh:
         The structured surface mesh to write.
     """
-    nx, ny, nz = mesh.dims
-    whole_extent = np.array([0, nx - 1, 0, ny - 1, 0, nz - 1], dtype=np.int64)
 
     with h5py.File(path, "w") as f:
-        vtk = f.create_group("VTKHDF")
-        vtk.attrs["Type"] = np.bytes_("StructuredGrid")
-        vtk.attrs["Version"] = _VTK_HDF_VERSION
-        vtk.attrs["WholeExtent"] = whole_extent
-        vtk.create_dataset("Points", data=np.asarray(mesh.points, dtype=np.float32))
+        vtk = f.create_group("StructuredMesh")
+        vtk.create_dataset("Points", data=np.asarray(mesh.points, dtype=np.float32), compression='gzip')
 
 
-def read_structured_vtkhdf(path: Path) -> StructuredMesh:
-    """Read a VTKHDF StructuredGrid file and return a :class:`StructuredMesh`.
+def read_structured_mesh(path: Path) -> StructuredMesh:
+    """Read a Structured file and return a :class:`StructuredMesh`.
 
     Parameters
     ----------
     path:
-        Path to a VTKHDF file containing a ``StructuredGrid``.
+        Path to a file containing a ``StructuredMesh``.
 
     Returns
     -------
     StructuredMesh
     """
     with h5py.File(path, "r") as f:
-        vtk = f["VTKHDF"]
-        extent = np.array(vtk.attrs["WholeExtent"], dtype=np.int64)
-        points = np.array(vtk["Points"], dtype=np.float32)
+        mesh = f['StructuredMesh']
+        points = np.array(mesh["Points"], dtype=np.float32)
 
-    nx = int(extent[1]) + 1
-    ny = int(extent[3]) + 1
-    nz = int(extent[5]) + 1
-
-    return StructuredMesh(points=points, dims=(nx, ny, nz))
+    return StructuredMesh(points=points)

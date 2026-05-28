@@ -63,6 +63,13 @@ NZGD2000_EPSG = 4167
 # Affine factory functions
 # ---------------------------------------------------------------------------
 
+def affine(matrix: np.ndarray) -> np.ndarray:
+    n = matrix.shape[0]
+    aff = np.eye(n + 1, dtype=matrix.dtype)
+    aff[:n, :n] = matrix
+    return aff
+    
+
 
 def translate(x: float = 0.0, y: float = 0.0, z: float | None = None) -> Affine:
     """Return a translation matrix.

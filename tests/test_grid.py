@@ -23,15 +23,14 @@ from pathlib import Path
 import dask.array as da
 import numpy as np
 import pytest
-from pyproj import CRS
-
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.config.grids.model import Model
 from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
-from nzcvm.models.mesh import StructuredMesh, write_structured_vtkhdf
+from nzcvm.models.mesh import StructuredMesh, write_structured_mesh
+from pyproj import CRS
 
 # ---------------------------------------------------------------------------
 # Shared fixture: flat surface file
@@ -52,7 +51,7 @@ def _write_flat_surface(path: Path) -> None:
     zz = np.zeros_like(xx)
     pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
     mesh = StructuredMesh(points=pts, dims=(n, n, 1))
-    write_structured_vtkhdf(path, mesh)
+    write_structured_mesh(path, mesh)
 
 
 @pytest.fixture(scope="module")

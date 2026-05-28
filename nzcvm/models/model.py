@@ -28,7 +28,6 @@ from rich.tree import Tree
 
 from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
 from nzcvm.components import Component
-from nzcvm.mesh import TetrahedralMesh
 from nzcvm.models.mesh import TetrahedralMesh
 from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
     PyModelTree,

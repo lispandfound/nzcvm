@@ -1,4 +1,4 @@
-"""Pipeline layer that queries a :class:`~nzcvm.model.ModelTree`."""
+"""Pipeline layer that queries a :class:`~nzcvm.models.model.ModelTree`."""
 
 from __future__ import annotations
 import logging
@@ -9,7 +9,7 @@ import xarray as xr
 from nzcvm.components import Component
 from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.layers.core import Layer
-from nzcvm.model import ModelTree
+from nzcvm.models.model import ModelTree
 from nzcvm.qualities import QualitiesSchema
 from nzcvm.query import ModelRange
 
@@ -23,7 +23,11 @@ logger = logging.getLogger(__name__)
 class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
     def __init__(self, config: QueryLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
-        models = config.model_path.rglob(config.model_glob)
+        models = [
+            p
+            for glob in config.model_globs
+            for p in config.model_path.glob(glob)
+        ]
         self.model = ModelTree.load_models(*models)
 
     def __call__(

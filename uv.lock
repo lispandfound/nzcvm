@@ -1213,7 +1213,6 @@ dependencies = [
     { name = "platformdirs" },
     { name = "psutil" },
     { name = "pyproj" },
-    { name = "pyvista" },
     { name = "rich" },
     { name = "rioxarray" },
     { name = "scikit-learn" },
@@ -1225,6 +1224,11 @@ dependencies = [
     { name = "xarray-dataclasses" },
     { name = "zarr" },
     { name = "zfpy" },
+]
+
+[package.optional-dependencies]
+visualization = [
+    { name = "pyvista" },
 ]
 
 [package.dev-dependencies]
@@ -1251,7 +1255,7 @@ requires-dist = [
     { name = "platformdirs", specifier = ">=4.9.6" },
     { name = "psutil", specifier = ">=7.2.2" },
     { name = "pyproj", specifier = ">=3.7.2" },
-    { name = "pyvista", specifier = ">=0.47.2" },
+    { name = "pyvista", marker = "extra == 'visualization'", specifier = ">=0.47.2" },
     { name = "rich", specifier = ">=14.3.3" },
     { name = "rioxarray", specifier = ">=0.22.0" },
     { name = "scikit-learn", specifier = ">=1.8.0" },
@@ -1264,6 +1268,7 @@ requires-dist = [
     { name = "zarr", specifier = ">=3.1.6" },
     { name = "zfpy", specifier = ">=1.0.1" },
 ]
+provides-extras = ["visualization"]
 
 [package.metadata.requires-dev]
 dev = [

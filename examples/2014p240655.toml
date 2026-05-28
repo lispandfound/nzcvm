@@ -73,4 +73,4 @@ depth_t = 450.0
 # Query layer for complex tomography and 3D basin models.
 type = "query"
 model_path = "./basins"
-model_glob = "ep2020.vtkhdf"
+model_globs = ["ep2020.vtkhdf"]

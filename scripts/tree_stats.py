@@ -13,7 +13,7 @@ from rich.panel import Panel
 from rich.progress import Progress
 from rich.table import Table
 
-from nzcvm.model import Model
+from nzcvm.models.model import Model
 
 # Define a directory to store the cached data
 memory = Memory("/tmp/nz_cache", verbose=0)

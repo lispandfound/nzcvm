@@ -3,9 +3,9 @@
 The mathematical correctness of the underlying Rust interpolator is
 covered by cargo tests.  Here we test the Python-level contract:
 
-* :func:`~nzcvm.surface.build_surface_interpolator` produces a
-  :class:`~nzcvm.surface.Surface` with sensible metadata.
-* :meth:`~nzcvm.surface.Surface.transform` preserves the input shape
+* :func:`~nzcvm.models.surface.build_surface_interpolator` produces a
+  :class:`~nzcvm.models.surface.Surface` with sensible metadata.
+* :meth:`~nzcvm.models.surface.Surface.transform` preserves the input shape
   and returns float32 values.
 * The ``bounds`` array is ordered ``[xmin, ymin, zmin, xmax, ymax, zmax]``.
 """
@@ -17,8 +17,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nzcvm.mesh import StructuredMesh
-from nzcvm.surface import Surface, build_surface_interpolator
+from nzcvm.models.mesh import StructuredMesh
+from nzcvm.models.surface import Surface, build_surface_interpolator
 
 # ---------------------------------------------------------------------------
 # Fixture

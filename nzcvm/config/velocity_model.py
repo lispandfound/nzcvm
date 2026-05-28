@@ -23,7 +23,7 @@ velocity-model queries.  A minimal TOML example::
     [[layers]]
     type = "query"
     model_path = "path/to/models"
-    model_glob = "*.vtkhdf"
+    model_globs = ["*.vtkhdf"]
 
 See Also
 --------

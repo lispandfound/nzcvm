@@ -31,7 +31,7 @@ from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
-from nzcvm.mesh import StructuredMesh, write_structured_vtkhdf
+from nzcvm.models.mesh import StructuredMesh, write_structured_vtkhdf
 
 # ---------------------------------------------------------------------------
 # Shared fixture: flat surface file

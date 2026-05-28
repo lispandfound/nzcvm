@@ -18,7 +18,7 @@ import pyvista as pv
 import scipy as sp
 import shapely
 import shapely.ops
-from nzcvm.mesh import make_mesh
+from nzcvm.models.mesh import make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 

@@ -11,7 +11,7 @@ import pandas as pd
 import pyvista as pv
 from pyproj import CRS, Transformer
 
-from nzcvm.mesh import make_mesh
+from nzcvm.models.mesh import make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
 CRS_WGS = CRS.from_epsg(4326)

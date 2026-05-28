@@ -1,0 +1,735 @@
+"""High-level Python wrappers around the compiled Rust velocity-model backend.
+
+The primary public interfaces are :class:`MeshModel` (a single tetrahedral
+mesh) and :class:`ModelTree` (a priority-ordered collection of meshes with
+alpha-blended queries).  Both implement the :class:`QueryableModel` protocol,
+which requires a :meth:`~QueryableModel.query` method.
+
+:class:`Quality` and the other dataclasses mirror their Rust counterparts
+and are returned from query methods.
+
+See Also
+--------
+nzcvm.layers : Pipeline layers for coordinate transforms and model queries.
+nzcvm.models.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
+"""
+
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Self
+
+import numpy as np
+import rich
+import xarray as xr
+from mashumaro.mixins.dict import DataClassDictMixin
+from rich.console import Console, ConsoleOptions, RenderResult
+from rich.tree import Tree
+
+from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
+from nzcvm.components import Component
+from nzcvm.query import ModelRange
+
+from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
+    PyModelTree,
+    QueryCoordinates,
+    QueryParams,
+)
+
+MB = 1 / (1024 * 1024)
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class Quality(DataClassDictMixin):
+    """Seismic material properties at a single point in the velocity model.
+
+    Parameters
+    ----------
+    rho :
+        Density in kg m⁻³.
+    vp :
+        P-wave velocity in m s⁻¹.
+    vs :
+        S-wave velocity in m s⁻¹.
+    qp :
+        P-wave quality factor (attenuation).
+    qs :
+        S-wave quality factor (attenuation).
+    alpha :
+        Opacity weight in [0, 1] used for alpha blending when multiple
+        models overlap.  A value of 1.0 means the model is fully opaque
+        and no lower-priority models contribute.
+
+    Examples
+    --------
+    >>> q = Quality(rho=2700.0, vp=6000.0, vs=3500.0, qp=200.0, qs=100.0, alpha=1.0)
+    >>> str(q)
+    '(ρ=2700.00, Vp=6000.00, Vs=3500.00, Qp=200.00, Qs=100.00, ɑ=1.00)'
+    """
+
+    rho: float
+    vp: float
+    vs: float
+    qp: float
+    qs: float
+    alpha: float
+
+    def __str__(self):
+        """Return a compact string like ``(ρ=…, Vp=…, Vs=…, Qp=…, Qs=…, ɑ=…)``."""
+        return (
+            f"(ρ={self.rho:.2f}, Vp={self.vp:.2f}, Vs={self.vs:.2f},"
+            f" Qp={self.qp:.2f}, Qs={self.qs:.2f}, ɑ={self.alpha:.2f})"
+        )
+
+
+@dataclass
+class Point(DataClassDictMixin):
+    """A 3-D point returned by some query methods.
+
+    Examples
+    --------
+    >>> p = Point(x=1.5, y=2.5, z=-100.0)
+    >>> str(p)
+    '(1.5, 2.5, -100)'
+    """
+
+    x: float
+    y: float
+    z: float
+
+    def __str__(self) -> str:
+        """Return ``(x, y, z)`` formatted to six significant figures."""
+        return f"({self.x:.6g}, {self.y:.6g}, {self.z:.6g})"
+
+
+@dataclass
+class QueryStats(DataClassDictMixin):
+    """Diagnostic counters for a single model query.
+
+    Useful for profiling BVH traversal efficiency. Returned by
+    :meth:`ModelTree.query_stats`.
+
+    Parameters
+    ----------
+    aabb_tests :
+        Number of axis-aligned bounding-box intersection tests performed.
+    simplex_tests :
+        Number of simplex (tetrahedron) containment tests performed.
+    hit_count :
+        Number of simplices that contained the query point.
+    output :
+        Final blended quality, or ``None`` if the point is outside the model.
+    elapsed :
+        Wall-clock time for the query in nanoseconds.
+    """
+
+    aabb_tests: int
+    simplex_tests: int
+    hit_count: int
+    output: Quality | None
+    elapsed: int
+
+
+@dataclass
+class ModelContribution(DataClassDictMixin):
+    """A single model's contribution to a blended quality result.
+
+    Parameters
+    ----------
+    priority :
+        Integer priority of this model (lower number = higher priority).
+    quality :
+        Raw (un-blended) quality returned by this model for the query point.
+    """
+
+    priority: int
+    quality: Quality
+
+    def __str__(self) -> str:
+        """Return ``priority=<n>, quality=<Quality>``."""
+        return f"priority={self.priority}, quality={str(self.quality)}"
+
+
+@dataclass
+class Explanation(DataClassDictMixin):
+    """Full audit trail for how a query result was produced.
+
+    Returned by :meth:`ModelTree.get_explanation`. Each element in
+    ``contributions`` shows the raw quality from one model; ``output`` is
+    the final blended result.
+
+    Parameters
+    ----------
+    contributions :
+        Per-model contributions in priority order.
+    output :
+        Final blended quality, or ``None`` if no model covered the point.
+    termination :
+        Index into ``contributions`` at which alpha saturation was reached.
+        All contributions at or after this index were ignored.
+
+    Notes
+    -----
+    If ``termination`` is ``None`` all contributions were used.
+    """
+
+    contributions: list[ModelContribution]
+    output: Quality | None
+    termination: int | None
+
+    def __rich__(self) -> Tree:
+        """Return a :class:`rich.tree.Tree` showing per-model contributions."""
+        if not self.output:
+            return Tree("[red]No model coverage for query point.[/red]")
+
+        root = Tree(f"[bold white]{self.output}[/bold white]")
+
+        for i, contribution in enumerate(self.contributions):
+            is_active = self.termination is None or i < self.termination
+            colour = "green" if is_active else "red"
+            node = root.add(
+                f"[{colour}]Model {i} (priority = {contribution.priority})[/{colour}]"
+            )
+            node.add(f"Quality: {contribution.quality}")
+
+        return root
+
+
+class MeshModel:
+    """A single tetrahedral mesh velocity model.
+
+    Wraps a compiled Rust :class:`PyMeshModel` and exposes spatial quality
+    queries together with a rich display interface.
+
+    Notes
+    -----
+    A ``MeshModel`` becomes *consumed* once it has been passed to
+    :class:`ModelTree`.  Calling :meth:`query` or :attr:`aabb` on a consumed
+    instance raises :class:`ValueError`.
+
+    See Also
+    --------
+    ModelTree : Combines multiple ``MeshModel`` instances with priority blending.
+    nzcvm.models.mesh.make_mesh : Build a compatible ``UnstructuredGrid``.
+    """
+
+    def __init__(self, raw: Any) -> None:
+        """
+        Parameters
+        ----------
+        raw :
+            Compiled Rust ``PyMeshModel`` object returned by
+            :func:`nzcvm.nzcvm.mesh_model`.
+        """
+        self._raw = raw
+
+    @classmethod
+    def from_path(cls, path: Path) -> Self:
+        from nzcvm.models.mesh import read_unstructured_vtkhdf
+
+        return cls(_mesh_model_from_tetra(read_unstructured_vtkhdf(path)))
+
+    @classmethod
+    def from_mesh(
+        cls,
+        mesh: "nzcvm.models.mesh.TetrahedralMesh",
+        name: str | None = None,
+    ) -> Self:
+        """Build a :class:`MeshModel` from a :class:`~nzcvm.models.mesh.TetrahedralMesh`.
+
+        Parameters
+        ----------
+        mesh :
+            A :class:`~nzcvm.models.mesh.TetrahedralMesh` with the NZCVM cell and
+            field data layout (see :func:`nzcvm.models.mesh.make_mesh`).
+        name :
+            Optional human-readable name.  Takes precedence over any name
+            stored in ``mesh.field_data["name"]``.
+
+        Returns
+        -------
+        MeshModel
+
+        See Also
+        --------
+        nzcvm.models.mesh.make_mesh : Create a compatible :class:`~nzcvm.models.mesh.TetrahedralMesh`.
+        ModelTree : Combine multiple ``MeshModel`` instances for priority-blended queries.
+        """
+        return cls(_mesh_model_from_tetra(mesh, name=name))
+
+    @property
+    def name(self) -> str:
+        """Human-readable name assigned at construction time."""
+        return self._raw.name  # type: ignore[no-any-return]
+
+    @property
+    def priority(self) -> int:
+        """Model priority — lower number = higher priority in a :class:`ModelTree`."""
+        return self._raw.priority  # type: ignore[no-any-return]
+
+    @property
+    def aabb(self) -> tuple[np.ndarray, np.ndarray]:
+        """Axis-aligned bounding box of this mesh.
+
+        Returns
+        -------
+        tuple[numpy.ndarray, numpy.ndarray]
+            A pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays.
+        """
+        return self._raw.aabb()  # type: ignore[no-any-return]
+
+    def query(self, x: Any, y: Any, z: Any) -> Quality | None:
+        """Query material properties at a single point.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        Returns
+        -------
+        Quality or None
+            Quality at ``(x, y, z)``, or ``None`` if outside this mesh.
+
+        Raises
+        ------
+        ValueError
+            If this ``MeshModel`` has been consumed by a :class:`ModelTree`.
+        """
+        quality_dict = self._raw.query(x, y, z)
+        return Quality.from_dict(quality_dict) if quality_dict is not None else None
+
+    def view(self) -> Tree:
+        """Return a :class:`rich.tree.Tree` summary of this mesh model."""
+        data = self._raw.view()
+        label = data.get("name") or f"MeshModel {data['id']}"
+        tree = Tree(f"[bold]MeshModel[/bold] [cyan]{label!r}[/cyan]")
+        tree.add(f"Priority: {data['priority']}")
+        size_mb = round(data["size"] * MB)
+        if size_mb > 1024:
+            tree.add(f"[red]Size: {size_mb:,} MB[/red]")
+        else:
+            tree.add(f"Size: {size_mb:,} MB")
+        b = data["bounds"]
+        tree.add(
+            f"Bounds: [X: {b[0]:.0f}–{b[3]:.0f}, "
+            f"Y: {b[1]:.0f}–{b[4]:.0f}, "
+            f"Z: {b[2]:.0f}–{b[5]:.0f}]"
+        )
+        transform_str = "None" if data["transform"] is None else "Active"
+        tree.add(f"Transform: {transform_str}")
+        return tree
+
+    def __rich_console__(
+        self, _console: Console, _options: ConsoleOptions
+    ) -> RenderResult:
+        """Render this mesh model as a rich tree for ``rich.print``."""
+        yield self.view()
+
+
+@dataclass
+class ModelTree:
+    """A velocity model backed by a Rust BVH tree of tetrahedral meshes.
+
+    Wraps one or more :class:`MeshModel` instances (or VTKHDF mesh files)
+    into a priority-ordered spatial index.  Queries return blended
+    :class:`Quality` values at arbitrary 3-D coordinates.
+
+    Notes
+    -----
+    Lower priority numbers take precedence. When multiple models cover the
+    same point their qualities are alpha-composited until the cumulative
+    alpha reaches 1.0.
+
+    See Also
+    --------
+    ModelTree.load_models : Load from VTKHDF files or a directory.
+    ModelTree.from_mesh : Build from an in-memory :class:`~nzcvm.models.mesh.TetrahedralMesh`.
+    ModelTree.query : Single-point quality query.
+    ModelTree.query_many : Vectorised multi-point query returning an xarray Dataset.
+    """
+
+    inner: PyModelTree
+    model_map: dict[int, str] | None = None
+
+    @classmethod
+    def load_models(cls, *models: Path | str) -> Self:
+        """Load a velocity model from one or more VTKHDF files or a directory.
+
+        Parameters
+        ----------
+        *models :
+            Paths to individual ``.vtkhdf`` files, or a single directory
+            path.  When a directory is given every ``*.vtkhdf`` file it
+            contains is loaded.
+
+        Returns
+        -------
+        ModelTree
+
+        Examples
+        --------
+        Load all mesh files in a directory (requires data files to exist):
+
+        >>> from pathlib import Path
+        >>> ModelTree.load_models(Path("/path/to/models"))  # doctest: +SKIP
+        """
+        if len(models) == 1 and Path(models[0]).is_dir():
+            mesh_paths = list(Path(models[0]).glob("*.vtkhdf"))
+        else:
+            mesh_paths = [Path(p) for p in models]
+
+        mesh_models = []
+        for p in mesh_paths:
+            mesh_models.append(MeshModel.from_path(p)._raw)
+
+        raw = nzcvm.model_tree(mesh_models)
+        return cls(raw)
+
+    @classmethod
+    def from_mesh(
+        cls, mesh_model: "nzcvm.models.mesh.TetrahedralMesh", model_map: dict | None = None
+    ) -> Self:
+        """Build a :class:`ModelTree` from a single in-memory :class:`~nzcvm.models.mesh.TetrahedralMesh`.
+
+        Parameters
+        ----------
+        mesh_model :
+            A :class:`~nzcvm.models.mesh.TetrahedralMesh` with the NZCVM cell and
+            field data layout (see :func:`nzcvm.models.mesh.make_mesh`).
+        model_map :
+            Optional mapping from integer model ID to a display name.
+
+        Returns
+        -------
+        ModelTree
+
+        See Also
+        --------
+        ModelTree.load_models : Load from VTKHDF files on disk.
+        nzcvm.models.mesh.make_mesh : Create a compatible :class:`~nzcvm.models.mesh.TetrahedralMesh`.
+        """
+        raw_mesh_model = _mesh_model_from_tetra(mesh_model)
+        raw = nzcvm.model_tree([raw_mesh_model])
+        return cls(raw, model_map or {})
+
+    @property
+    def aabb(self) -> tuple[np.ndarray, np.ndarray]:
+        """Axis-aligned bounding box of all meshes in the model.
+
+        Returns
+        -------
+        tuple[numpy.ndarray, numpy.ndarray]
+            A pair ``(min_xyz, max_xyz)`` of shape-``(3,)`` float32 arrays
+            in the model's coordinate system.
+        """
+        return self.inner.aabb()
+
+    def query(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        model_range: ModelRange = ModelRange.ALL,
+    ) -> Quality | None:
+        """Query material properties at a single point.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+
+        Returns
+        -------
+        Quality or None
+            Blended quality, or ``None`` if the point lies outside all
+            mesh models in the requested priority range.
+
+        See Also
+        --------
+        ModelTree.query_many : Vectorised query for arrays of coordinates.
+        ModelTree.query_stats : Query with BVH traversal diagnostics.
+        ModelTree.get_explanation : Query with per-model contribution details.
+        """
+        lo, hi = model_range.value
+        quality_dict = self.inner.query(x, y, z, lo, hi)
+        return Quality.from_dict(quality_dict) if quality_dict is not None else None
+
+    def query_stats(self, x: Any, y: Any, z: Any) -> QueryStats:
+        """Query a single point and return traversal diagnostics.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        Returns
+        -------
+        QueryStats
+
+        See Also
+        --------
+        ModelTree.query : Query without diagnostics.
+        """
+        return QueryStats.from_dict(self.inner.query_stats(x, y, z))
+
+    def get_explanation(self, x: Any, y: Any, z: Any) -> Explanation:
+        """Return a full :class:`Explanation` for a single-point query.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        Returns
+        -------
+        Explanation
+
+        See Also
+        --------
+        ModelTree.explain : Pretty-print the explanation to the terminal.
+        """
+        return Explanation.from_dict(self.inner.explain(x, y, z))
+
+    def explain(self, x: float, y: float, z: float) -> None:
+        """Pretty-print the blending explanation for a query point.
+
+        Prints a rich-formatted tree to stdout showing each model's
+        contribution and whether it was included in the final blend.
+
+        Parameters
+        ----------
+        x, y, z :
+            Coordinates in the model's projected CRS (metres).
+
+        See Also
+        --------
+        ModelTree.get_explanation : Return the explanation as a Python object.
+        """
+        explanation = self.get_explanation(x, y, z)
+        rich.print(explanation)
+        if len(explanation.contributions) > 1:
+            rich.print(
+                "Qualities alpha-blended together until exhaustion "
+                "or combined quality alpha ~ 1.0"
+            )
+
+    def query_many_raw(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        model_range: ModelRange = ModelRange.ALL,
+        out: np.ndarray | None = None,
+        where: Any = None,
+    ) -> np.ndarray:
+        """Vectorised query returning a raw float32 array (ufunc style).
+
+        Parameters
+        ----------
+        x, y, z :
+            Arrays of coordinates.
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+        out :
+            Optional pre-allocated float32 array of shape ``(*x.shape, 6)``.
+            Python is responsible for allocation and zeroing.  When provided
+            the results are written into it in-place and it is returned.
+        where :
+            Optional boolean array broadcastable to ``x.shape``.  When
+            provided, only points where the mask is ``True`` are queried;
+            other rows in ``out`` are left unchanged.
+
+        Returns
+        -------
+        numpy.ndarray
+            Float32 array of shape ``(*x.shape, 6)`` with columns ordered as
+            ``[rho, vp, vs, qp, qs, alpha]``.  Rows for points outside all
+            matching models are left as zeros (or unchanged when *out* is
+            provided and *where* masks them out).
+
+        See Also
+        --------
+        ModelTree.query_many : Same query returning a labelled xarray Dataset.
+        """
+        x = np.asarray(x, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        z = np.asarray(z, dtype=np.float32)
+        if x.shape != y.shape or x.shape != z.shape:
+            raise ValueError(
+                f"x, y, z must have the same shape; "
+                f"got x={x.shape}, y={y.shape}, z={z.shape}"
+            )
+        orig_shape = x.shape
+        n = x.size
+        lo, hi = model_range.value
+        params = QueryParams(lo, hi)
+
+        if out is None:
+            out = np.zeros(orig_shape + (6,), dtype=np.float32)
+
+        # Rust expects a C-contiguous (N, 6) buffer with exclusive ownership.
+        out_flat = np.ascontiguousarray(out.reshape(n, 6), dtype=np.float32)
+
+        where_flat: np.ndarray | None = None
+        if where is not None:
+            where_np = np.broadcast_to(np.asarray(where, dtype=bool), orig_shape)
+            where_flat = np.ascontiguousarray(where_np.ravel())
+
+        logger.debug("Querying for chunk qualities for range: %s.", model_range)
+        coords = QueryCoordinates(x.ravel(), y.ravel(), z.ravel(), where_flat)
+        self.inner.query_many(out_flat, coords, params)
+        logger.debug("Query complete")
+        return out_flat.reshape(orig_shape + (6,))
+
+    def query_many(
+        self,
+        x: Any,
+        y: Any,
+        z: Any,
+        *,
+        model_range: ModelRange = ModelRange.ALL,
+    ) -> xr.Dataset:
+        """Vectorised query returning a labelled :class:`xarray.Dataset`.
+
+        Parameters
+        ----------
+        x, y, z :
+            Arrays of coordinates; broadcastable to a common shape.
+        model_range :
+            Restricts the query to models whose priority falls within this
+            range.  Defaults to :attr:`ModelRange.ALL`.
+
+        Returns
+        -------
+        xarray.Dataset
+            Dataset with a ``qualities`` variable of shape
+            ``(*x.shape, n_components)`` and a ``component`` coordinate
+            (``["rho", "vp", "vs", "qp", "qs", "alpha"]``), plus spatial
+            coordinates ``x``, ``y``, ``z``.
+
+        See Also
+        --------
+        ModelTree.query_many_raw : Same query as an unlabelled float32 array.
+        """
+        x, y, z = np.broadcast_arrays(x, y, z)
+        raw = self.query_many_raw(x, y, z, model_range=model_range)
+        dims = tuple(f"d{i}" for i in range(x.ndim))
+        component_names = list(Component)
+        return xr.Dataset(
+            data_vars={"qualities": (dims + ("component",), raw)},
+            coords={
+                "x": (dims, x),
+                "y": (dims, y),
+                "z": (dims, z),
+                "component": component_names,
+            },
+        )
+
+    def view(self) -> Tree:
+        """Return a :class:`rich.tree.Tree` representation of the model tree."""
+        data = self.inner.view()
+
+        total_size_mb = round(data["size"] * MB)
+        tree = Tree(f"Model Tree (Total Size: {total_size_mb:,} MB)")
+
+        for m in data["models"]:
+            m_id = m["id"]
+            embedded_name = m.get("name") or ""
+            name = embedded_name or (
+                self.model_map.get(m_id, f"Model {m_id}")
+                if self.model_map is not None
+                else f"Model {m_id}"
+            )
+
+            branch = tree.add(f"{name} (ID: {m_id})")
+            size_mb = round(m["size"] * MB)
+            branch.add(f"Priority: {m['priority']}")
+
+            if size_mb > 1024:
+                branch.add(f"[red]Size: {size_mb:,} MB[/red]")
+            else:
+                branch.add(f"Size: {size_mb:,} MB")
+
+            b = m["bounds"]
+            branch.add(
+                f"Bounds: [X: {b[0]:.0f}-{b[3]:.0f}, Y: {b[1]:.0f}-{b[4]:.0f}, Z: {b[2]:.0f}-{b[5]:.0f}]"
+            )
+
+            transform_str = "None" if m["transform"] is None else "Active"
+            branch.add(f"Transform: {transform_str}")
+
+        return tree
+
+    def __getstate__(self):
+        # When standard pickle hits this object, bypass pickling the Rust object
+        state = self.__dict__.copy()
+
+        state["inner"] = registry.pickle_pass(self.inner)
+        return state
+
+    def __setstate__(self, state):
+        # When unpickling, swap the key back for the live object reference
+        self.__dict__.update(state)
+        key = state["inner"]
+        self.inner = registry.REGISTRY[key]
+
+
+def _mesh_model_from_tetra(
+    mesh_model: "nzcvm.models.mesh.TetrahedralMesh", name: str | None = None
+) -> Any:
+    """Build a PyMeshModel from a :class:`~nzcvm.models.mesh.TetrahedralMesh`."""
+    connectivity = np.ascontiguousarray(
+        np.asarray(mesh_model.connectivity, dtype=np.uint64)
+    )
+
+    types = np.array(mesh_model.cell_data["model_type"]).copy(order="C")
+
+    model_idx = (
+        np.array(mesh_model.cell_data["models"]).flatten().astype(np.uint64, order="C")
+    )
+
+    rho = np.ascontiguousarray(mesh_model.field_data["rho"], dtype=np.float32)
+    vp = np.ascontiguousarray(mesh_model.field_data["vp"], dtype=np.float32)
+    vs = np.ascontiguousarray(mesh_model.field_data["vs"], dtype=np.float32)
+    qp = np.ascontiguousarray(mesh_model.field_data["qp"], dtype=np.float32)
+    qs = np.ascontiguousarray(mesh_model.field_data["qs"], dtype=np.float32)
+    alpha = np.ascontiguousarray(mesh_model.field_data["alpha"], dtype=np.float32)
+
+    qualities = np.c_[rho, vp, vs, qp, qs, alpha].copy(order="C")
+
+    if "priority" not in mesh_model.field_data:
+        priority = np.uint8(255)
+    else:
+        priority = np.uint8(np.array(mesh_model.field_data["priority"])[0])
+
+    if name is None:
+        if mesh_model.name is not None:
+            name = mesh_model.name
+        elif "name" in mesh_model.field_data:
+            raw_names = mesh_model.field_data["name"]
+            if len(raw_names) > 0:
+                name = str(raw_names[0])
+
+    transform = mesh_model.field_data.get("transform")
+    if transform is not None:
+        transform = np.array(transform, dtype=np.float32).copy(order="C")
+
+    points = np.array(mesh_model.points, dtype=np.float32).copy(order="C")
+
+    return nzcvm.mesh_model(
+        points,
+        connectivity,
+        types,
+        model_idx,
+        qualities,
+        priority,
+        transform,
+        name,
+    )

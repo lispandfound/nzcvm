@@ -25,7 +25,7 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.grids import helpers
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid, GridSchema
-from nzcvm.surface import read_surface_from_path
+from nzcvm.models.surface import read_surface_from_path
 
 
 def _logical_k_indices(nk: int, dtype: np.dtype, k_offset: int = 0) -> xr.DataArray:

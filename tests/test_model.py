@@ -3,10 +3,10 @@
 The Rust BVH tree and blending logic are verified by cargo tests.  These
 tests focus on the Python-level contracts:
 
-* :class:`~nzcvm.model.ModelRange` enumeration values.
-* :meth:`~nzcvm.model.ModelTree.query_many_raw` shape / dtype contract.
-* :meth:`~nzcvm.model.ModelTree.query_many` xarray Dataset contract.
-* :class:`~nzcvm.model.MeshModel` metadata accessors.
+* :class:`~nzcvm.models.model.ModelRange` enumeration values.
+* :meth:`~nzcvm.models.model.ModelTree.query_many_raw` shape / dtype contract.
+* :meth:`~nzcvm.models.model.ModelTree.query_many` xarray Dataset contract.
+* :class:`~nzcvm.models.model.MeshModel` metadata accessors.
 * Priority-range filtering observable from the outside.
 """
 
@@ -17,7 +17,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
-from nzcvm.model import MeshModel, ModelRange, ModelTree
+from nzcvm.models.model import MeshModel, ModelRange, ModelTree
 from tests.conftest import _mesh_model
 
 # ---------------------------------------------------------------------------

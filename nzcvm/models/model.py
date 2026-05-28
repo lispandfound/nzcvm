@@ -28,7 +28,7 @@ from rich.tree import Tree
 
 from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
 from nzcvm.components import Component
-from nzcvm.models.mesh import TetrahedralMesh
+from nzcvm.models.mesh import TetrahedralMesh, TetrahedralMeshSchema
 from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
     PyModelTree,
     QueryCoordinates,
@@ -226,7 +226,8 @@ class MeshModel:
 
     @classmethod
     def from_path(cls, path: Path) -> Self:
-        return cls(_mesh_model_from_tetra(TetrahedralMesh.load(path)))
+        mesh_dataset = TetrahedralMeshSchema.from_dataset(xr.load_dataset(path))
+        return cls(_mesh_model_from_tetra(mesh_dataset))
 
     @classmethod
     def from_mesh(
@@ -683,43 +684,23 @@ def _mesh_model_from_tetra(
     mesh_model: TetrahedralMesh, name: str | None = None
 ) -> Any:
     """Build a PyMeshModel from a :class:`~nzcvm.models.mesh.TetrahedralMesh`."""
-    connectivity = np.ascontiguousarray(
-        np.asarray(mesh_model.connectivity, dtype=np.uint64)
-    )
+    connectivity = mesh_model.connectivity.values
+    
+    types = np.array(mesh_model.cell_data["model_type"])
 
-    types = np.array(mesh_model.cell_data["model_type"]).copy(order="C")
+    model_idx = mesh_model.models.values
 
-    model_idx = (
-        np.array(mesh_model.cell_data["models"]).flatten().astype(np.uint64, order="C")
-    )
+    qualities = np.c_[mesh_model.rho.values, mesh_model.vp.values, mesh_model.vs.values, mesh_model.qp.values, mesh_model.qs.values, mesh_model.alpha.values]
 
-    rho = np.ascontiguousarray(mesh_model.field_data["rho"], dtype=np.float32)
-    vp = np.ascontiguousarray(mesh_model.field_data["vp"], dtype=np.float32)
-    vs = np.ascontiguousarray(mesh_model.field_data["vs"], dtype=np.float32)
-    qp = np.ascontiguousarray(mesh_model.field_data["qp"], dtype=np.float32)
-    qs = np.ascontiguousarray(mesh_model.field_data["qs"], dtype=np.float32)
-    alpha = np.ascontiguousarray(mesh_model.field_data["alpha"], dtype=np.float32)
-
-    qualities = np.c_[rho, vp, vs, qp, qs, alpha].copy(order="C")
-
-    if "priority" not in mesh_model.field_data:
-        priority = np.uint8(255)
-    else:
-        priority = np.uint8(np.array(mesh_model.field_data["priority"])[0])
-
-    if name is None:
-        if mesh_model.name is not None:
-            name = mesh_model.name
-        elif "name" in mesh_model.field_data:
-            raw_names = mesh_model.field_data["name"]
-            if len(raw_names) > 0:
-                name = str(raw_names[0])
-
-    transform = mesh_model.field_data.get("transform")
+    priority = mesh_model.isel(j=0).item()
+    name = mesh_model.name
+    
+    transform = mesh_model.get('transform')
+    
     if transform is not None:
-        transform = np.array(transform, dtype=np.float32).copy(order="C")
+        transform = transform.values
 
-    points = np.array(mesh_model.points, dtype=np.float32).copy(order="C")
+    points = mesh_model.points.values
 
     return nzcvm.mesh_model(
         points,

@@ -17,7 +17,7 @@ import shapely
 import shapely.ops
 import typer
 
-from nzcvm.models.mesh import TetrahedralMesh, make_mesh
+from nzcvm.models.mesh import DEFAULT_ENCODING_SETTINGS, TetrahedralMesh, make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -166,7 +166,6 @@ def construct_volumetric_mesh(
         connectivity=tetra,
         cell_data=dict(
             model_type=model_type,
-            models=tetra,
             priority=priority_data,
         ),
         field_data=dict(
@@ -395,12 +394,6 @@ def mask_surface(
     return surface_points[mask]
 
 
-def print_mesh_stats(mesh: TetrahedralMesh) -> None:
-    print('Mesh containing')
-    print(f'- {len(mesh.points)} points.')
-    print(f'- {len(mesh.connectivity)} tetra.')
-    print(f'- {len(mesh.field_data["rho"])} models.')
-
 
 def _read_compressed_shapely_wkb(path: Path) -> shapely.Geometry:
     with gzip.open(path) as handle:
@@ -583,17 +576,17 @@ def main(
     if smoothing > 0:
         print('Applying smoothing boundary')
         
-        points_2d = shapely.points(mesh.points[:, 0], mesh.points[:, 1])
+        points_2d = shapely.points(mesh.x, mesh.y)
         distances = shapely.distance(internal_poly, points_2d)
         alpha = np.interp(
             distances,
             np.array([0.0, smoothing], dtype=np.float32),
             np.array([1.0, 0.0], dtype=np.float32)
         )
-        mesh.field_data['alpha'] = alpha
+        mesh['alpha'].loc[:] = alpha
     
-    print_mesh_stats(mesh)
-    mesh.save(output)
+    print(mesh)
+    mesh.to_zarr(output, mode='w', encoding=DEFAULT_ENCODING_SETTINGS)
     nbytes = output.stat().st_size
     print(f'Saved model with size {nbytes / (1024 ** 2):.1f} MB')
 

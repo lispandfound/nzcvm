@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -13,11 +12,9 @@ from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
-
 from nzcvm.layers.core import Layer
-
+from nzcvm.models.surface import Surface
 from nzcvm.query import ModelRange
-from nzcvm.models.surface import read_surface_from_path
 
 if TYPE_CHECKING:
     from nzcvm.grids.grid import Grid
@@ -29,7 +26,7 @@ logger = logging.getLogger(__name__)
 class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
     def __init__(self, config: ElyLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
-        self.interpolator = read_surface_from_path(config.vs30)
+        self.interpolator = Surface.load(config.vs30)
 
     def __call__(
         self,

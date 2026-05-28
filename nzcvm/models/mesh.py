@@ -7,141 +7,112 @@ and structured grids (topographic surfaces).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Self
+from dataclasses import dataclass
+from typing import Literal
 
-import h5py
 import numpy as np
+import xarray as xr
+from xarray_dataclasses import AsDataset, Attr, Coord, Data
+from zarr.codecs import Blosc, Zstd
 
-#: VTK cell type identifier for tetrahedra.
-VTK_TETRA = np.uint8(10)
-_VTK_HDF_VERSION = np.array([2, 0], dtype=np.int64)
+I = Literal['i']
+J = Literal['j']
+K = Literal['k']
 
-class MeshError(Exception):
-    pass
+class TetrahedralMesh(xr.Dataset):
+    __slots__ = ()
 
-
-@dataclass
-class TetrahedralMesh:
-    """An unstructured tetrahedral mesh."""
-    name: str
-    """Optional human-readable identifier."""
-    points: np.ndarray
-    """``(N, 3)`` float32 vertex coordinates."""
-    connectivity: np.ndarray
-    """``(M, 4)`` integer tetrahedral cell vertex indices."""
-    cell_data: dict[str, np.ndarray] = field(default_factory=dict)
-    """Per-cell scalar arrays (e.g. ``model_type``, ``models``)."""
-    field_data: dict[str, np.ndarray] = field(default_factory=dict)
-    """Per-model arrays (e.g. ``rho``, ``vp``, ``vs``, ``qp``, ``qs``, ``alpha``)."""
-
-    @classmethod
-    def load(cls, path: str | Path) -> Self:
-        with h5py.File(path, "r") as f:
-            vtk = f["VTKHDF"]
-            if 'name' not in f.attrs:
-                raise MeshError('Mesh model must have root attribute name')
-
-            name = str(f.attrs['name'])
-
-            points = np.array(vtk["Points"], dtype=np.float32)
-            conn_flat = np.array(vtk["Connectivity"], dtype=np.int64)
-
-            n_cells = int(np.array(vtk["NumberOfCells"]).item())
-
-            connectivity = conn_flat.reshape(n_cells, 4)
-
-            cell_data: dict[str, np.ndarray] = {
-                k: np.array(v)
-                for k, v in vtk.get('CellData', dict()).items()
-            }
-
-            if 'FieldData' not in vtk:
-                raise MeshError('Mesh model must contain FieldData.')
-
-            field_data: dict[str, np.ndarray] = {
-                k: np.array(v)
-                for k, v in vtk['FieldData']
-            }
-
-        return cls(
-            name=name,
-            points=points,
-            connectivity=connectivity,
-            cell_data=cell_data,
-            field_data=field_data,
-        )
-
-
-    
-    def save(self, path: str | Path) -> None:
-        """Write this mesh to *path* in VTKHDF format."""
-        n_points = len(self.points)
-        connectivity = np.asarray(self.connectivity, dtype=np.int64)
-        n_cells = len(connectivity)
-        conn_flat = connectivity.ravel()
-        offsets = np.arange(0, 4 * (n_cells + 1), 4, dtype=np.int64)
-
-        with h5py.File(path, "w") as f:
-            f.attrs['name'] = self.name 
-            vtk = f.create_group("VTKHDF")
-            vtk.attrs["Type"] = np.bytes_("UnstructuredGrid")
-            vtk.attrs["Version"] = _VTK_HDF_VERSION
-
-            vtk.create_dataset("NumberOfPoints", data=np.array([n_points], dtype=np.int64))
-            vtk.create_dataset("NumberOfCells", data=np.array([n_cells], dtype=np.int64))
-            vtk.create_dataset("Points", data=np.asarray(self.points, dtype=np.float32))
-            vtk.create_dataset('NumberOfConnectivityIds', data=np.array([n_cells * 4], dtype=np.int64))
-            vtk.create_dataset("Connectivity", data=conn_flat, compression='gzip')
-            vtk.create_dataset("Offsets", data=offsets, compression='gzip')
-            vtk.create_dataset("Types", data=np.full(n_cells, VTK_TETRA))
-
-            cd = vtk.create_group("CellData")
-            for k, v in self.cell_data.items():
-                cd.create_dataset(k, data=np.asarray(v))
-
-            fd = vtk.create_group("FieldData")
-            for k, v in self.field_data.items():
-                fd.create_dataset(k, data=np.asarray(v))
-
-@dataclass
-class StructuredMesh:
-    """A structured-grid surface mesh."""
-    points: np.ndarray
-
-    def triangulate(self) -> np.ndarray:
-        nx, ny, _ = self.shape
-        # Triangulate the structured grid: two triangles per quad cell
-        # Point index: i + j*nx, where i in [0, nx), j in [0, ny)
-        ii, jj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
-        p00 = (ii + jj * nx).ravel()
-        p10 = ((ii + 1) + jj * nx).ravel()
-        p11 = ((ii + 1) + (jj + 1) * nx).ravel()
-        p01 = (ii + (jj + 1) * nx).ravel()
-        tri1 = np.stack((p00, p10, p11), axis=1)
-        tri2 = np.stack((p00, p11, p01), axis=1)
-        faces = np.vstack((tri1, tri2)).astype(np.uint64)
-        return faces
-
-    
     @property
-    def shape(self) -> tuple[int, ...]:
-        return self.points.shape
+    def models(self):
+        return self.connectivity
+    
+@dataclass
+class TetrahedralMeshSchema(AsDataset):
+    name: Attr[str]
+
+    x: Data[tuple[I,], np.float32]
+    y: Data[tuple[I,], np.float32]
+    z: Data[tuple[I,], np.float32]
+
+    connectivity: Data[tuple[J, K], np.uint64]
+    priority: Data[tuple[J,], np.uint8]
+    model_type: Data[tuple[J,], np.uint8]
+
+    rho: Data[tuple[I,], np.float32]
+    vp: Data[tuple[I,], np.float32]
+    vs: Data[tuple[I,], np.float32]
+    qp: Data[tuple[I,], np.float32]
+    qs: Data[tuple[I,], np.float32]
+    alpha: Data[tuple[I,], np.float32]
+    
+    i: Coord[I, np.uint64]
+    j: Coord[J, np.uint64]
+    k: Coord[K, np.uint64]
+    
+    
+    @classmethod
+    def from_dataset(cls, dataset: xr.Dataset) -> TetrahedralMesh:
+        """Parses, validates, and builds a Grid from a standard xr.Dataset."""
+        return cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
+
+MEDIUM_COMPRESSOR = [Blosc(cname="zstd", clevel=5, shuffle=True)]
+HIGH_COMPRESSOR =  [Blosc(cname="zstd", clevel=7, shuffle=True)]
+
+DEFAULT_ENCODING_SETTINGS = {
+    "x": {"compressors": MEDIUM_COMPRESSOR},
+    "y": {"compressors": MEDIUM_COMPRESSOR},
+    "z": {"compressors": MEDIUM_COMPRESSOR},
+    
+    "connectivity": {
+        "compressors": HIGH_COMPRESSOR
+    },
+    "priority": {
+        "compressors": MEDIUM_COMPRESSOR
+    },
+    "model_type": {
+        "compressors": MEDIUM_COMPRESSOR
+    },
+
+    "rho":   {"compressors": HIGH_COMPRESSOR},
+    "vp":    {"compressors": HIGH_COMPRESSOR},
+    "vs":    {"compressors": HIGH_COMPRESSOR},
+    "qp":    {"compressors": HIGH_COMPRESSOR},
+    "qs":    {"compressors": HIGH_COMPRESSOR},
+    "alpha": {"compressors": HIGH_COMPRESSOR},
+}
+
+class StructuredMesh(xr.Dataset):
+    __slots__ = ()
+
+@dataclass
+class StructuredMeshSchema(AsDataset):
+    """A structured-grid surface mesh."""
+    x: Data[tuple[I, J], np.float32]
+    y: Data[tuple[I, J], np.float32]
+    z: Data[tuple[I, J], np.float32]
+
+    name: Attr[str]
+
 
     @classmethod
-    def load(cls, path: Path | str) -> Self:
-        with h5py.File(path, "r") as f:
-            mesh = f['StructuredMesh']
-            points = np.array(mesh["Points"], dtype=np.float32)
-        return cls(points)
+    def from_dataset(cls, dataset: xr.Dataset) -> StructuredMesh:
+        """Parses, validates, and builds a Grid from a standard xr.Dataset."""
+        return cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
 
-    def save(self, path: Path | str) -> None:
-        with h5py.File(path, "w") as f:
-            vtk = f.create_group("StructuredMesh")
-            vtk.create_dataset("Points", data=np.asarray(self.points, dtype=np.float32), compression='gzip')
-
-        
+def triangulate(mesh: StructuredMesh) -> np.ndarray:
+    nx = mesh.sizes[I]
+    ny = mesh.sizes[J]
+    # Triangulate the structured grid: two triangles per quad cell
+    # Point index: i + j*nx, where i in [0, nx), j in [0, ny)
+    ii, jj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
+    p00 = (ii + jj * nx).ravel()
+    p10 = ((ii + 1) + jj * nx).ravel()
+    p11 = ((ii + 1) + (jj + 1) * nx).ravel()
+    p01 = (ii + (jj + 1) * nx).ravel()
+    tri1 = np.stack((p00, p10, p11), axis=1)
+    tri2 = np.stack((p00, p11, p01), axis=1)
+    faces = np.vstack((tri1, tri2)).astype(np.uint64)
+    return faces
 
 
 def make_mesh(
@@ -173,10 +144,20 @@ def make_mesh(
     -------
     TetrahedralMesh
     """
-    return TetrahedralMesh(
+    i = np.arange(len(points))
+    nj, nk = connectivity.shape
+    j = np.arange(nj)
+    k = np.arange(nk)
+    
+    return TetrahedralMeshSchema.new(
         name=name,
-        points=points,
+        x=points[..., 0],
+        y=points[..., 1],
+        z=points[..., 2],
         connectivity=connectivity,
-        cell_data=cell_data,
-        field_data=field_data,
+        i=i,
+        j=j,
+        k=k,
+        **cell_data,
+        **field_data
     )

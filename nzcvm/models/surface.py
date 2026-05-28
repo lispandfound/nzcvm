@@ -4,22 +4,19 @@ A :class:`Surface` wraps a surface mesh and provides point-query
 interpolation, used to convert depth-below-surface coordinates into
 absolute elevations.
 """
-
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Self
 
 import numpy as np
+import xarray as xr
 from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import registry
-from nzcvm.models.mesh import StructuredMesh
+from nzcvm.models.mesh import StructuredMeshSchema, triangulate
 from nzcvm.nzcvm import PySurfaceModel, surface_model  # ty: ignore[unresolved-import]
-
-if TYPE_CHECKING:
-    from nzcvm.models.mesh import StructuredMesh
 
 DEFAULT_TOLERANCE = 1e-4
 
@@ -43,6 +40,41 @@ class Surface:
     inner: PySurfaceModel
     bounds: np.ndarray
     n_points: int
+
+    @classmethod
+    def load(cls, path: Path) -> Self:
+        """Load a surface mesh from *surface_path* and return a :class:`Surface`.
+
+        Parameters
+        ----------
+        surface_path :
+
+
+        Returns
+        -------
+        Surface
+
+        """
+        mesh = StructuredMeshSchema.from_dataset(xr.open_dataset(path))
+        points = np.c_[mesh.x.values.ravel(), mesh.y.values.ravel()]
+        z = mesh.z.values.ravel()
+        faces = triangulate(mesh)
+        logger.debug("Constructing inner surface model")
+        inner = surface_model(points, faces, z)
+        logger.debug("Inner model constructed.")
+
+        bounds = np.array(
+            [
+                points[..., 0].min(),
+                points[..., 1].min(),
+                float(z.min()),
+                points[..., 0].max(),
+                points[..., 1].max(),
+                float(z.max()),
+            ]
+        )
+
+        return cls(inner, bounds=bounds, n_points=len(points))
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -89,56 +121,4 @@ class Surface:
         tree.add(f"Value Range: {self.bounds[2]:.0f}-{self.bounds[5]:.0f}")
         tree.add(f"Number of points in surface: {self.n_points:,}")
         yield tree
-
-
-def build_surface_interpolator(mesh: StructuredMesh) -> Surface:
-    """Build a :class:`Surface` interpolator from a :class:`~nzcvm.models.mesh.StructuredMesh`.
-
-    Parameters
-    ----------
-    mesh:
-        A structured surface mesh
-        
-
-    Returns
-    -------
-    Surface
-    """
-    points = np.asarray(mesh.points, dtype=np.float32)
-    z = points[..., -1]
-    vertices = points[..., :2]
-    faces = mesh.triangulate()
-    logger.debug("Constructing inner surface model")
-    inner = surface_model(vertices, faces, z)
-    logger.debug("Inner model constructed.")
-
-    bounds = np.array(
-        [
-            vertices[..., 0].min(),
-            vertices[..., 1].min(),
-            float(z.min()),
-            vertices[..., 0].max(),
-            vertices[..., 1].max(),
-            float(z.max()),
-        ]
-    )
-
-    return Surface(inner, bounds=bounds, n_points=len(points))
-
-
-def read_surface_from_path(surface_path: Path) -> Surface:
-    """Load a surface mesh from *surface_path* and return a :class:`Surface`.
-    
-    Parameters
-    ----------
-    surface_path :
-        Path to a VTKHDF or meshio-readable mesh file.
-
-    Returns
-    -------
-    Surface
-
-    """
-    mesh = StructuredMesh.load(surface_path)
-    return build_surface_interpolator(mesh)
 

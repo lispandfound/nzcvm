@@ -25,7 +25,7 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.grids import helpers
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid, GridSchema
-from nzcvm.models.surface import read_surface_from_path
+from nzcvm.models.surface import Surface
 
 
 def _logical_k_indices(nk: int, dtype: np.dtype, k_offset: int = 0) -> xr.DataArray:
@@ -151,7 +151,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
     min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
     min_lon, min_lat = orientation.to_wgs84.transform(min_x, min_y)
 
-    topographic_surface = read_surface_from_path(config.surface)
+    topographic_surface = Surface.load(config.surface)
     z_surface = helpers.compute_surface_elevation(
         topographic_surface,
         x_phys,

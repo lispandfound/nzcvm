@@ -28,6 +28,7 @@ from rich.tree import Tree
 
 from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
 from nzcvm.components import Component
+from nzcvm.mesh import TetrahedralMesh
 from nzcvm.models.mesh import TetrahedralMesh
 from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
     PyModelTree,
@@ -226,9 +227,7 @@ class MeshModel:
 
     @classmethod
     def from_path(cls, path: Path) -> Self:
-        from nzcvm.models.mesh import read_unstructured_vtkhdf
-
-        return cls(_mesh_model_from_tetra(read_unstructured_vtkhdf(path)))
+        return cls(_mesh_model_from_tetra(TetrahedralMesh.load(path)))
 
     @classmethod
     def from_mesh(

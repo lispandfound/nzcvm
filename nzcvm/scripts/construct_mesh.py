@@ -128,8 +128,9 @@ class Layer:
     qp: float = 100.0
     qs: float = 50.0
     alpha: float = 1.0
+    
 def construct_volumetric_mesh(
-    layers: list[Layer], priority: int
+        name: str, layers: list[Layer], priority: int
 ) -> TetrahedralMesh:
 
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
@@ -160,6 +161,7 @@ def construct_volumetric_mesh(
     priority_data = np.full((len(tetra),), np.uint8(priority))
     
     mesh = make_mesh(
+        name=name,
         points=mesh_vertices,
         connectivity=tetra,
         cell_data=dict(
@@ -575,7 +577,8 @@ def main(
         model,
         culling_volume,
     )
-    mesh = construct_volumetric_mesh(layers, priority)
+    name = output.stem
+    mesh = construct_volumetric_mesh(name, layers, priority)
     
     if smoothing > 0:
         print('Applying smoothing boundary')

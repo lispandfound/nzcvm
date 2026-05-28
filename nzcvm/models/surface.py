@@ -15,7 +15,7 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import registry
-from nzcvm.models.mesh import read_structured_mesh
+from nzcvm.models.mesh import StructuredMesh
 from nzcvm.nzcvm import PySurfaceModel, surface_model  # ty: ignore[unresolved-import]
 
 if TYPE_CHECKING:
@@ -97,8 +97,8 @@ def build_surface_interpolator(mesh: StructuredMesh) -> Surface:
     Parameters
     ----------
     mesh:
-        A structured surface mesh (e.g. a DEM read with
-        :func:`~nzcvm.models.mesh.read_structured_mesh`).
+        A structured surface mesh
+        
 
     Returns
     -------
@@ -139,6 +139,6 @@ def read_surface_from_path(surface_path: Path) -> Surface:
     Surface
 
     """
-    mesh = read_structured_mesh(surface_path)
+    mesh = StructuredMesh.load(surface_path)
     return build_surface_interpolator(mesh)
 

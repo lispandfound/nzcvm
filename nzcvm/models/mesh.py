@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Self
 
 import h5py
 import numpy as np
@@ -17,11 +18,15 @@ import numpy as np
 VTK_TETRA = np.uint8(10)
 _VTK_HDF_VERSION = np.array([2, 0], dtype=np.int64)
 
+class MeshError(Exception):
+    pass
+
 
 @dataclass
 class TetrahedralMesh:
     """An unstructured tetrahedral mesh."""
-
+    name: str
+    """Optional human-readable identifier."""
     points: np.ndarray
     """``(N, 3)`` float32 vertex coordinates."""
     connectivity: np.ndarray
@@ -30,13 +35,75 @@ class TetrahedralMesh:
     """Per-cell scalar arrays (e.g. ``model_type``, ``models``)."""
     field_data: dict[str, np.ndarray] = field(default_factory=dict)
     """Per-model arrays (e.g. ``rho``, ``vp``, ``vs``, ``qp``, ``qs``, ``alpha``)."""
-    name: str | None = None
-    """Optional human-readable identifier."""
 
+    @classmethod
+    def load(cls, path: str | Path) -> Self:
+        with h5py.File(path, "r") as f:
+            vtk = f["VTKHDF"]
+            if 'name' not in f.attrs:
+                raise MeshError('Mesh model must have root attribute name')
+
+            name = str(f.attrs['name'])
+
+            points = np.array(vtk["Points"], dtype=np.float32)
+            conn_flat = np.array(vtk["Connectivity"], dtype=np.int64)
+
+            n_cells = int(np.array(vtk["NumberOfCells"]).item())
+
+            connectivity = conn_flat.reshape(n_cells, 4)
+
+            cell_data: dict[str, np.ndarray] = {
+                k: np.array(v)
+                for k, v in vtk.get('CellData', dict()).items()
+            }
+
+            if 'FieldData' not in vtk:
+                raise MeshError('Mesh model must contain FieldData.')
+
+            field_data: dict[str, np.ndarray] = {
+                k: np.array(v)
+                for k, v in vtk['FieldData']
+            }
+
+        return cls(
+            name=name,
+            points=points,
+            connectivity=connectivity,
+            cell_data=cell_data,
+            field_data=field_data,
+        )
+
+
+    
     def save(self, path: str | Path) -> None:
         """Write this mesh to *path* in VTKHDF format."""
-        write_unstructured_vtkhdf(Path(path), self)
+        n_points = len(self.points)
+        connectivity = np.asarray(self.connectivity, dtype=np.int64)
+        n_cells = len(connectivity)
+        conn_flat = connectivity.ravel()
+        offsets = np.arange(0, 4 * (n_cells + 1), 4, dtype=np.int64)
 
+        with h5py.File(path, "w") as f:
+            f.attrs['name'] = self.name 
+            vtk = f.create_group("VTKHDF")
+            vtk.attrs["Type"] = np.bytes_("UnstructuredGrid")
+            vtk.attrs["Version"] = _VTK_HDF_VERSION
+
+            vtk.create_dataset("NumberOfPoints", data=np.array([n_points], dtype=np.int64))
+            vtk.create_dataset("NumberOfCells", data=np.array([n_cells], dtype=np.int64))
+            vtk.create_dataset("Points", data=np.asarray(self.points, dtype=np.float32))
+            vtk.create_dataset('NumberOfConnectivityIds', data=np.array([n_cells * 4], dtype=np.int64))
+            vtk.create_dataset("Connectivity", data=conn_flat, compression='gzip')
+            vtk.create_dataset("Offsets", data=offsets, compression='gzip')
+            vtk.create_dataset("Types", data=np.full(n_cells, VTK_TETRA))
+
+            cd = vtk.create_group("CellData")
+            for k, v in self.cell_data.items():
+                cd.create_dataset(k, data=np.asarray(v))
+
+            fd = vtk.create_group("FieldData")
+            for k, v in self.field_data.items():
+                fd.create_dataset(k, data=np.asarray(v))
 
 @dataclass
 class StructuredMesh:
@@ -61,19 +128,28 @@ class StructuredMesh:
     @property
     def shape(self) -> tuple[int, ...]:
         return self.points.shape
-    
-    def save(self, path: str | Path) -> None:
-        """Write this mesh to *path* in VTKHDF format."""
-        write_structured_mesh(Path(path), self)
 
+    @classmethod
+    def load(cls, path: Path | str) -> Self:
+        with h5py.File(path, "r") as f:
+            mesh = f['StructuredMesh']
+            points = np.array(mesh["Points"], dtype=np.float32)
+        return cls(points)
+
+    def save(self, path: Path | str) -> None:
+        with h5py.File(path, "w") as f:
+            vtk = f.create_group("StructuredMesh")
+            vtk.create_dataset("Points", data=np.asarray(self.points, dtype=np.float32), compression='gzip')
+
+        
 
 
 def make_mesh(
+    name: str,
     points: np.ndarray,
     connectivity: np.ndarray,
     cell_data: dict[str, np.ndarray],
     field_data: dict[str, np.ndarray],
-    name: str | None = None,
 ) -> TetrahedralMesh:
     """Create a :class:`TetrahedralMesh`.
 
@@ -97,166 +173,10 @@ def make_mesh(
     -------
     TetrahedralMesh
     """
-    if name is not None:
-        field_data = dict(field_data, name=np.array([name]))
     return TetrahedralMesh(
+        name=name,
         points=points,
         connectivity=connectivity,
         cell_data=cell_data,
         field_data=field_data,
-        name=name,
     )
-
-
-def write_unstructured_vtkhdf(path: Path, mesh: TetrahedralMesh) -> None:
-    """Write *mesh* to *path* in VTKHDF UnstructuredGrid format.
-
-    Parameters
-    ----------
-    path:
-        Output file path.  Should end in ``.vtkhdf``.
-    mesh:
-        The tetrahedral mesh to write.
-    """
-    n_points = len(mesh.points)
-    connectivity = np.asarray(mesh.connectivity, dtype=np.int64)
-    n_cells = len(connectivity)
-    conn_flat = connectivity.ravel()
-    offsets = np.arange(0, 4 * (n_cells + 1), 4, dtype=np.int64)
-
-    with h5py.File(path, "w") as f:
-        vtk = f.create_group("VTKHDF")
-        vtk.attrs["Type"] = np.bytes_("UnstructuredGrid")
-        vtk.attrs["Version"] = _VTK_HDF_VERSION
-
-        vtk.create_dataset("NumberOfPoints", data=np.array([n_points], dtype=np.int64))
-        vtk.create_dataset("NumberOfCells", data=np.array([n_cells], dtype=np.int64))
-        vtk.create_dataset("Points", data=np.asarray(mesh.points, dtype=np.float32))
-        vtk.create_dataset('NumberOfConnectivityIds', data=np.array([n_cells * 4], dtype=np.int64))
-        vtk.create_dataset("Connectivity", data=conn_flat, compression='gzip')
-        vtk.create_dataset("Offsets", data=offsets, compression='gzip')
-        vtk.create_dataset("Types", data=np.full(n_cells, VTK_TETRA))
-
-        cd = vtk.create_group("CellData")
-        for k, v in mesh.cell_data.items():
-            cd.create_dataset(k, data=np.asarray(v))
-
-        fd = vtk.create_group("FieldData")
-        for k, v in mesh.field_data.items():
-            arr = np.asarray(v)
-            if arr.dtype.kind in ("U", "S", "O"):
-                encoded = np.array(
-                    [
-                        s.encode("utf-8") if isinstance(s, str) else bytes(s)
-                        for s in arr.ravel()
-                    ]
-                )
-                ds = fd.create_dataset(k, data=encoded, dtype=h5py.string_dtype())
-            else:
-                ds = fd.create_dataset(k, data=arr, compression='gzip')
-            ds.attrs["NumberOfTuples"] = np.int64(
-                len(arr) if arr.ndim == 1 else arr.shape[0]
-            )
-
-
-def read_unstructured_vtkhdf(path: Path) -> TetrahedralMesh:
-    """Read a VTKHDF UnstructuredGrid file and return a :class:`TetrahedralMesh`.
-
-    Parameters
-    ----------
-    path:
-        Path to a VTKHDF file containing an ``UnstructuredGrid`` with
-        tetrahedral cells.
-
-    Returns
-    -------
-    TetrahedralMesh
-    """
-    with h5py.File(path, "r") as f:
-        vtk = f["VTKHDF"]
-
-        points = np.array(vtk["Points"], dtype=np.float32)
-        conn_flat = np.array(vtk["Connectivity"], dtype=np.int64)
-        offsets_ds = vtk.get("Offsets")
-
-        if "NumberOfCells" in vtk:
-            raw = vtk["NumberOfCells"]
-            n_cells = int(raw[()] if raw.shape == () else raw[0])
-        elif offsets_ds is not None:
-            n_cells = len(offsets_ds) - 1
-        else:
-            n_cells = len(conn_flat) // 4
-
-        connectivity = conn_flat.reshape(n_cells, 4)
-
-        cell_data: dict[str, np.ndarray] = {}
-        if "CellData" in vtk:
-            for k in vtk["CellData"]:
-                cell_data[k] = np.array(vtk["CellData"][k])
-
-        field_data: dict[str, np.ndarray] = {}
-        name: str | None = None
-        if "FieldData" in vtk:
-            for k in vtk["FieldData"]:
-                raw_arr = np.array(vtk["FieldData"][k])
-                if raw_arr.dtype.kind in ("S", "O") or (
-                    hasattr(raw_arr.dtype, "metadata")
-                    and raw_arr.dtype.metadata is not None
-                    and raw_arr.dtype.metadata.get("h5py_encoding")
-                ):
-                    decoded = np.array(
-                        [
-                            v.decode("utf-8")
-                            if isinstance(v, (bytes, np.bytes_))
-                            else str(v)
-                            for v in raw_arr.ravel()
-                        ]
-                    )
-                    field_data[k] = decoded
-                    if k == "name" and len(decoded):
-                        name = decoded[0]
-                else:
-                    field_data[k] = raw_arr
-
-    return TetrahedralMesh(
-        points=points,
-        connectivity=connectivity,
-        cell_data=cell_data,
-        field_data=field_data,
-        name=name,
-    )
-
-
-def write_structured_mesh(path: Path, mesh: StructuredMesh) -> None:
-    """Write a :class:`StructuredMesh` to *path* in StructuredGrid format.
-
-    Parameters
-    ----------
-    path:
-        Output file path.  Should end in ``.vtkhdf``.
-    mesh:
-        The structured surface mesh to write.
-    """
-
-    with h5py.File(path, "w") as f:
-        vtk = f.create_group("StructuredMesh")
-        vtk.create_dataset("Points", data=np.asarray(mesh.points, dtype=np.float32), compression='gzip')
-
-
-def read_structured_mesh(path: Path) -> StructuredMesh:
-    """Read a Structured file and return a :class:`StructuredMesh`.
-
-    Parameters
-    ----------
-    path:
-        Path to a file containing a ``StructuredMesh``.
-
-    Returns
-    -------
-    StructuredMesh
-    """
-    with h5py.File(path, "r") as f:
-        mesh = f['StructuredMesh']
-        points = np.array(mesh["Points"], dtype=np.float32)
-
-    return StructuredMesh(points=points)

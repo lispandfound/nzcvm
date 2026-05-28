@@ -64,7 +64,7 @@ class StructuredMesh:
     
     def save(self, path: str | Path) -> None:
         """Write this mesh to *path* in VTKHDF format."""
-        write_structured_vtkhdf(Path(path), self)
+        write_structured_mesh(Path(path), self)
 
 
 

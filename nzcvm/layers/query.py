@@ -26,7 +26,7 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
         models = [
             p
             for glob in config.model_globs
-            for p in config.model_path.glob(glob)
+            for p in config.model_path.rglob(glob)
         ]
         self.model = ModelTree.load_models(*models)
 

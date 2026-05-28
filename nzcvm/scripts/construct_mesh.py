@@ -404,6 +404,19 @@ def _read_compressed_shapely_wkb(path: Path) -> shapely.Geometry:
     with gzip.open(path) as handle:
         return shapely.from_wkb(handle.read())
 
+def retain_connected(poly: shapely.Geometry, internal_poly: shapely.Polygon) -> shapely.Polygon:
+    if isinstance(poly, shapely.Polygon):
+        return poly
+    elif isinstance(poly, shapely.MultiPolygon):
+        return shapely.union_all([
+            geom for geom in poly.geoms if shapely.intersects(internal_poly, geom)    
+        ])
+    else:
+        raise ValueError(f'Invalid geometry: {poly!r}')
+        
+            
+    
+
 @app.command()
 def main(
     bounds: Annotated[
@@ -528,9 +541,10 @@ def main(
         buffer = shapely.buffer(shapely.difference(internal_poly, coastline_poly), smoothing)
         offshore_smoothing = shapely.difference(buffer, coastline_poly)
         poly = shapely.union(internal_poly, offshore_smoothing)
+        poly = retain_connected(poly, internal_poly)
     else:
         poly = internal_poly
-
+    
     shapely.prepare(poly)
 
     triangulation = triangulate_polygon(poly, triangulation_radius)

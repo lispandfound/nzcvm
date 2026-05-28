@@ -28,13 +28,13 @@ from rich.tree import Tree
 
 from nzcvm import nzcvm, registry  # ty: ignore[unresolved-import]
 from nzcvm.components import Component
-from nzcvm.query import ModelRange
-
+from nzcvm.models.mesh import TetrahedralMesh
 from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
     PyModelTree,
     QueryCoordinates,
     QueryParams,
 )
+from nzcvm.query import ModelRange
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
@@ -233,7 +233,7 @@ class MeshModel:
     @classmethod
     def from_mesh(
         cls,
-        mesh: "nzcvm.models.mesh.TetrahedralMesh",
+        mesh: TetrahedralMesh,
         name: str | None = None,
     ) -> Self:
         """Build a :class:`MeshModel` from a :class:`~nzcvm.models.mesh.TetrahedralMesh`.
@@ -389,7 +389,7 @@ class ModelTree:
 
     @classmethod
     def from_mesh(
-        cls, mesh_model: "nzcvm.models.mesh.TetrahedralMesh", model_map: dict | None = None
+        cls, mesh_model: TetrahedralMesh, model_map: dict | None = None
     ) -> Self:
         """Build a :class:`ModelTree` from a single in-memory :class:`~nzcvm.models.mesh.TetrahedralMesh`.
 
@@ -411,8 +411,8 @@ class ModelTree:
         nzcvm.models.mesh.make_mesh : Create a compatible :class:`~nzcvm.models.mesh.TetrahedralMesh`.
         """
         raw_mesh_model = _mesh_model_from_tetra(mesh_model)
-        raw = nzcvm.model_tree([raw_mesh_model])
-        return cls(raw, model_map or {})
+        raw_model_tree = nzcvm.model_tree([raw_mesh_model])
+        return cls(raw_model_tree, model_map or {})
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
@@ -682,7 +682,7 @@ class ModelTree:
 
 
 def _mesh_model_from_tetra(
-    mesh_model: "nzcvm.models.mesh.TetrahedralMesh", name: str | None = None
+    mesh_model: TetrahedralMesh, name: str | None = None
 ) -> Any:
     """Build a PyMeshModel from a :class:`~nzcvm.models.mesh.TetrahedralMesh`."""
     connectivity = np.ascontiguousarray(

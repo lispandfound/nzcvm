@@ -66,7 +66,7 @@ impl Simplex {
         c2: Point3<Real>,
         c3: Point3<Real>,
         id: usize,
-    ) -> Self {
+    ) -> Option<Self> {
         let pts = [c0, c1, c2, c3];
         let min_p = pts
             .iter()
@@ -82,17 +82,15 @@ impl Simplex {
         let aabb = Aabb::with_bounds(min_p, max_p);
 
         let m = Matrix3::from_columns(&[c0 - c3, c1 - c3, c2 - c3]);
-        let inv_matrix = m
-            .try_inverse()
-            .expect("Degenerate simplex encountered during build");
+        let inv_matrix = m.try_inverse()?;
 
-        Self {
+        Some(Self {
             c3,
             inv_matrix,
             aabb,
             id,
             node_index: 0,
-        }
+        })
     }
 
     /// Return the barycentric coordinates of `p` with respect to this simplex.

@@ -2,7 +2,7 @@ use crate::model::*;
 use crate::quality::Quality;
 use crate::real::Real;
 use crate::simplex::Simplex;
-use crate::tree_query::{Contains, contains_point_iterator};
+use crate::tree_query::{contains_point_iterator, Contains};
 use deepsize::{Context, DeepSizeOf};
 
 use bvh::aabb::{Aabb, Bounded};
@@ -54,6 +54,10 @@ pub struct MeshModel {
     node_index: usize,
 }
 
+pub enum MeshModelError {
+    DegenerateSimplex,
+}
+
 impl DeepSizeOf for MeshModel {
     fn deep_size_of_children(&self, context: &mut Context) -> usize {
         self.simplices.deep_size_of_children(context)
@@ -82,7 +86,7 @@ impl MeshModel {
         qualities: Vec<Quality>,
         dimensions: (usize, usize, usize),
         chart: F,
-    ) -> Self
+    ) -> Result<Self, MeshModelError>
     where
         F: Fn(usize, usize, usize) -> usize,
     {
@@ -151,7 +155,7 @@ impl MeshModel {
         priority: u8,
         transform: Option<Affine3<Real>>,
         name: String,
-    ) -> Self {
+    ) -> Result<Self, MeshModelError> {
         let local_to_global_map = |p| transform.map_or(p, |aff| aff.inverse_transform_point(&p));
         let min_point =
             vertices
@@ -178,7 +182,7 @@ impl MeshModel {
                 });
         let aabb = Aabb::with_bounds(min_point, max_point);
 
-        let mut simplices: Vec<Simplex> = faces
+        let simplices_result: Option<Vec<Simplex>> = faces
             .iter()
             .enumerate()
             .map(|(i, f)| {
@@ -191,19 +195,24 @@ impl MeshModel {
                 )
             })
             .collect();
-        let bvh_tree = Bvh::build_par(&mut simplices);
 
-        Self {
-            bvh_tree,
-            simplices,
-            qualities,
-            aabb,
-            model_map: models,
-            priority,
-            name,
-            id: 0,
-            node_index: 0,
-            transform,
+        if let Some(mut simplices) = simplices_result {
+            let bvh_tree = Bvh::build_par(&mut simplices);
+
+            Ok(Self {
+                bvh_tree,
+                simplices,
+                qualities,
+                aabb,
+                model_map: models,
+                priority,
+                name,
+                id: 0,
+                node_index: 0,
+                transform,
+            })
+        } else {
+            Err(MeshModelError::DegenerateSimplex)
         }
     }
 
@@ -377,7 +386,7 @@ mod tests {
     #[test]
     fn test_simplex_barycentric_properties() {
         let v = unit_tetrahedron_universe();
-        let simplex = Simplex::new(v[0], v[1], v[2], v[3], 0);
+        let simplex = Simplex::new(v[0], v[1], v[2], v[3], 0).unwrap();
 
         let points_to_test = [Point3::new(0.25, 0.25, 0.25), Point3::new(10.0, -5.0, 2.0)];
 
@@ -405,7 +414,7 @@ mod tests {
         let v2 = Point3::new(0.0, 0.0, 5.0);
         let v3 = Point3::new(1.0, 1.0, 1.0);
 
-        let simplex = Simplex::new(v0, v1, v2, v3, 0);
+        let simplex = Simplex::new(v0, v1, v2, v3, 0).unwrap();
         let aabb = simplex.aabb();
 
         assert_relative_eq!(aabb.min.x, -1.0);

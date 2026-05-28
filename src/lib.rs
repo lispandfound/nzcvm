@@ -13,13 +13,14 @@ use pyo3::prelude::*;
 
 #[pymodule]
 mod nzcvm {
-    use crate::mesh::MeshModel;
+    use crate::mesh::{MeshModel, MeshModelError};
     use crate::model::{ConstantModel, InterpolateModel, Model};
     use crate::model_tree::ModelTree;
     use crate::quality::Quality;
     use crate::query::Query;
     use crate::real::Real;
     use crate::surface::SurfaceModel;
+
     use nalgebra::{Affine3, Matrix4, Point2, Point3, Point4};
     use ndarray::{array, azip, Array1, Array2, Axis};
     use numpy::{
@@ -198,18 +199,24 @@ mod nzcvm {
         let transform = transform_py.map(|arr| {
             Affine3::from_matrix_unchecked(Matrix4::from_iterator(arr.as_array().iter().cloned()))
         });
-
-        Ok(PyMeshModel {
-            inner: Some(MeshModel::new(
-                vertices,
-                faces,
-                models_vec,
-                qualities,
-                priority,
-                transform,
-                name.unwrap_or_default(),
-            )),
-        })
+        let mesh_model = MeshModel::new(
+            vertices,
+            faces,
+            models_vec,
+            qualities,
+            priority,
+            transform,
+            name.clone().unwrap_or_default(),
+        );
+        match mesh_model {
+            Ok(mesh_model) => Ok(PyMeshModel {
+                inner: Some(mesh_model),
+            }),
+            Err(MeshModelError::DegenerateSimplex) => Err(PyValueError::new_err(format!(
+                "Degenerate simplex encountered in model: {}",
+                name.clone().unwrap_or_default()
+            ))),
+        }
     }
 
     /// Combine one or more [`PyMeshModel`]s into a queryable [`PyModelTree`].

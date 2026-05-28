@@ -12,7 +12,7 @@ import typer
 from pyproj import CRS, Transformer
 
 from nzcvm.coordinates import Affine, reflect_x, scale, translate
-from nzcvm.mesh import TetrahedralMesh, make_mesh
+from nzcvm.models.mesh import TetrahedralMesh, make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
 CRS_WGS = CRS.from_epsg(4326)

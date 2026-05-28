@@ -3,7 +3,7 @@ import numpy as np
 import xarray as xr
 
 from nzcvm.coordinates import Coordinate
-from nzcvm.surface import Surface
+from nzcvm.models.surface import Surface
 
 
 def compute_surface_elevation(

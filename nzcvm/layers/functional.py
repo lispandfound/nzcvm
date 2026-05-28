@@ -14,7 +14,7 @@ generates:
 The decorated function must accept the following positional arguments:
 
 * ``grid`` — the current :class:`~nzcvm.grids.Grid` chunk
-* ``model_range`` — the active :class:`~nzcvm.model.ModelRange`
+* ``model_range`` — the active :class:`~nzcvm.query.ModelRange`
 
 and the following keyword argument:
 
@@ -30,7 +30,7 @@ Example
 
     from nzcvm.layers.functional import functional_layer
     from nzcvm.grids.grid import Grid
-    from nzcvm.model import ModelRange
+    from nzcvm.query import ModelRange
 
     @functional_layer
     def scale(

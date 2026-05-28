@@ -4,7 +4,7 @@ import numpy as np
 import typer
 import xarray as xr
 
-from nzcvm.mesh import StructuredMesh, write_structured_vtkhdf
+from nzcvm.models.mesh import StructuredMesh, write_structured_vtkhdf
 
 app = typer.Typer()
 

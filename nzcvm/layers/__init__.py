@@ -7,7 +7,7 @@ Layers are composed into a pipeline using :func:`~nzcvm.layers.pipeline.build_pi
 Available layers
 ----------------
 :class:`~nzcvm.layers.query.QueryLayer`
-    Queries a :class:`~nzcvm.model.ModelTree` and fills each grid point
+    Queries a :class:`~nzcvm.models.model.ModelTree` and fills each grid point
     with seismic material properties.
 :class:`~nzcvm.layers.ely.ElyLayer`
     Applies the Ely et al. (2010) near-surface velocity taper.

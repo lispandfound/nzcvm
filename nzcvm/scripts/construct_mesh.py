@@ -17,7 +17,7 @@ import shapely
 import shapely.ops
 import typer
 
-from nzcvm.mesh import TetrahedralMesh, make_mesh
+from nzcvm.models.mesh import TetrahedralMesh, make_mesh
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 

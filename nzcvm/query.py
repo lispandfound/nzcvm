@@ -14,7 +14,7 @@ class ModelRange(Enum):
     ----------
     value :
         A ``(priority_lo, priority_hi)`` tuple (both inclusive) passed to
-        :meth:`~nzcvm.model.ModelTree.query_bounded`.
+        :meth:`~nzcvm.models.model.ModelTree.query_bounded`.
 
     Examples
     --------

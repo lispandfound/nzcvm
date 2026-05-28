@@ -14,7 +14,7 @@ from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
 from nzcvm.layers.pipeline import build_pipeline
-from nzcvm.model import ModelRange
+from nzcvm.models.model import ModelRange
 from tests.conftest import make_grid
 
 # ---------------------------------------------------------------------------

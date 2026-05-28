@@ -17,7 +17,7 @@ from nzcvm.ely_taper import ely_vs_profile
 from nzcvm.layers.core import Layer
 
 from nzcvm.query import ModelRange
-from nzcvm.surface import read_surface_from_path
+from nzcvm.models.surface import read_surface_from_path
 
 if TYPE_CHECKING:
     from nzcvm.grids.grid import Grid

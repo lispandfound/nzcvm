@@ -17,7 +17,7 @@ from rich.panel import Panel
 from rich.progress import Progress
 from rich.table import Table
 
-from nzcvm.model import ModelTree
+from nzcvm.models.model import ModelTree
 
 memory = Memory(platformdirs.user_cache_dir("nzcvm"), verbose=0)
 

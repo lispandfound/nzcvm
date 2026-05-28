@@ -144,7 +144,7 @@ depth_t = 450.0
 [[layers]]
 type = "query"
 model_path = "./models"
-model_glob = "ep2020.vtkhdf"
+model_globs = ["ep2020.vtkhdf"]
 ```
 
 ---

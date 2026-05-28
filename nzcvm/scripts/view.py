@@ -234,7 +234,8 @@ def basin(
     """Entry point for the ``nzcvm view-basin`` command."""
     pv = _require_pyvista()
     pl, mesh_data = pv.Plotter(), pv.read(mesh)
-
+    # This is required to ensure opacity is rendered correctly
+    pl.enable_depth_peeling(number_of_peels=10, occlusion_ratio=0.0)
     if topography:
         pl.add_mesh(
             pv.read(topography),
@@ -243,17 +244,13 @@ def basin(
             opacity=0.3,
             label="Surface",
         )
-
-    if scalar in mesh_data.field_data:
-        target_dict = (
-            mesh_data.cell_data if mesh_data.n_cells > 0 else mesh_data.point_data
-        )
-        target_dict[scalar] = mesh_data.field_data[scalar][0]
-    elif scalar not in mesh_data.point_data and scalar not in mesh_data.cell_data:
-        raise typer.BadParameter(f"Scalar '{scalar}' not found in mesh data.")
-
-    mesh_data.set_active_scalars(scalar)
-    pl.add_mesh(mesh_data)
+    
+    mesh_data.point_data[scalar] = np.array(mesh_data.field_data[scalar], dtype=np.float32)
+    mesh_data.point_data['alpha'] = np.array(mesh_data.field_data['alpha'], dtype=np.float32)
+    
+    mesh_data.point_data.active_scalars_name = scalar
+    pl.add_mesh(mesh_data, cmap='hot', opacity='alpha', show_scalar_bar=False)
+    pl.add_mesh(mesh_data, cmap='hot', opacity=0.0, show_scalar_bar=True)
 
     if coastline:
         add_coastline_underlay(pl, mesh_data.bounds, coastline)

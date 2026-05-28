@@ -1,5 +1,5 @@
 """Construct a tetrahedral volumetric mesh for a basin model."""
-
+import gzip
 import shutil
 import subprocess
 import tempfile
@@ -128,41 +128,57 @@ class Layer:
     qp: float = 100.0
     qs: float = 50.0
     alpha: float = 1.0
-
-
 def construct_volumetric_mesh(
     layers: list[Layer], priority: int
 ) -> TetrahedralMesh:
+
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
-    rho = np.array([layer.rho for layer in layers])
-    vp = np.array([layer.vp for layer in layers])
-    vs = np.array([layer.vs for layer in layers])
-    qp = np.array([layer.qp for layer in layers])
-    qs = np.array([layer.qs for layer in layers])
-    alpha = np.array([layer.alpha for layer in layers])
+    
     tetra_offset = 0
     vertex_offset = 0
+    
+    # CHANGED: Map properties to points by using len(layer.vertices) instead of len(layer.tetra)
+    rho = np.concatenate([np.full((len(layer.vertices),), layer.rho, dtype=np.float32) for layer in layers])
+    vp = np.concatenate([np.full((len(layer.vertices),), layer.vp, dtype=np.float32) for layer in layers])
+    vs = np.concatenate([np.full((len(layer.vertices),), layer.vs, dtype=np.float32) for layer in layers])
+    qp = np.concatenate([np.full((len(layer.vertices),), layer.qp, dtype=np.float32) for layer in layers])
+    qs = np.concatenate([np.full((len(layer.vertices),), layer.qs, dtype=np.float32) for layer in layers])
+    alpha = np.concatenate([np.full((len(layer.vertices),), layer.alpha, dtype=np.float32) for layer in layers])
+
+    # model_type and priority dictate topology, keep them as cell data
     model_type = np.concatenate(
         [np.full((len(layer.tetra),), 0, dtype=np.uint8) for layer in layers]
     )
-    models = np.concatenate(
-        [
-            np.full((len(layer.tetra),), i, dtype=np.int64)
-            for i, layer in enumerate(layers)
-        ]
-    )
+    
+    
     for layer in layers:
         tetra[tetra_offset : tetra_offset + len(layer.tetra)] += vertex_offset
         vertex_offset += len(layer.vertices)
         tetra_offset += len(layer.tetra)
+        
     priority_data = np.full((len(tetra),), np.uint8(priority))
-    return make_mesh(
+    
+    mesh = make_mesh(
         points=mesh_vertices,
         connectivity=tetra,
-        cell_data=dict(model_type=model_type, models=models, priority=priority_data),
-        field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
+        cell_data=dict(
+            model_type=model_type,
+            models=tetra,
+            priority=priority_data,
+        ),
+        field_data=dict(
+            rho=rho,
+            vp=vp,
+            vs=vs,
+            qp=qp,
+            qs=qs,
+            alpha=alpha
+        ),  
     )
+    
+    return mesh
+
 
 
 def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
@@ -203,7 +219,7 @@ class LinearNDInterpolatorExt(object):
 
 
 def interpolate_surface(
-    surface: np.ndarray, vertices: np.ndarray, neighbours: int
+    surface: np.ndarray, vertices: np.ndarray, 
 ) -> np.ndarray:
     interp = LinearNDInterpolatorExt(surface[:, :-1], surface[:, -1])
     return interp(np.c_[vertices["x"], vertices["y"]])
@@ -311,7 +327,18 @@ def slice_with_model(
     culling_volume: float,
 ) -> list[Layer]:
     layers = []
-    tetra = construct_mesh_tetra(triangulation.triangles)
+    tri_verts = np.stack([triangulation.triangles["i"], 
+                          triangulation.triangles["j"], 
+                          triangulation.triangles["k"]], axis=1)
+    tri_verts.sort(axis=1)
+    
+    # Reconstruct a temporary structured array for the sorted triangles
+    sorted_triangles = np.empty(len(tri_verts), dtype=triangulation.triangles.dtype)
+    sorted_triangles["i"] = tri_verts[:, 0]
+    sorted_triangles["j"] = tri_verts[:, 1]
+    sorted_triangles["k"] = tri_verts[:, 2]
+    
+    tetra = construct_mesh_tetra(sorted_triangles)
     for _, row in model.iterrows():
         z = row["z"]
         print(f"Layer starting at z={z:3f}m")
@@ -352,6 +379,7 @@ def slice_with_model(
             )
         else:
             print("Skipping as no vertices met culling criteria")
+            break
         top_surface = bottom_of_layer
     return layers
 
@@ -364,6 +392,17 @@ def mask_surface(
     )
     return surface_points[mask]
 
+
+def print_mesh_stats(mesh: TetrahedralMesh) -> None:
+    print('Mesh containing')
+    print(f'- {len(mesh.points)} points.')
+    print(f'- {len(mesh.connectivity)} tetra.')
+    print(f'- {len(mesh.field_data["rho"])} models.')
+
+
+def _read_compressed_shapely_wkb(path: Path) -> shapely.Geometry:
+    with gzip.open(path) as handle:
+        return shapely.from_wkb(handle.read())
 
 @app.command()
 def main(
@@ -435,24 +474,22 @@ def main(
             min=0.0,
         ),
     ] = 1000.0,
-    neighbours: Annotated[
-        int,
-        typer.Option(
-            "-n",
-            "--neighbours",
-            help="Nearest neighbours for RBF surface interpolation.",
-            min=1,
-        ),
-    ] = 5,
     smoothing: Annotated[
         float,
         typer.Option(
             "-S",
             "--smoothing",
-            help="RBF smoothing parameter (0 = exact interpolation).",
+            help="Smoothing boundary distance for model.",
             min=0.0,
         ),
     ] = 0.0,
+    coastline: Annotated[
+        Path | None,
+        typer.Option(
+            '--coastline',
+            help='Coastline to clip smoothing boundary',
+        )
+    ] = None,
     vm_1d: Annotated[
         Path | None,
         typer.Option(
@@ -480,8 +517,21 @@ def main(
     ] = 0,
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
+    
     collection = shapely.from_geojson(bounds.read_text())
-    poly = preprocess_polygon(collection.geoms[0]).simplify(simplification)
+    internal_poly = preprocess_polygon(collection.geoms[0]).simplify(simplification)
+    shapely.prepare(internal_poly)
+    
+    
+    if smoothing > 0 and coastline:
+        coastline_poly = _read_compressed_shapely_wkb(coastline)
+        buffer = shapely.buffer(shapely.difference(internal_poly, coastline_poly), smoothing)
+        offshore_smoothing = shapely.difference(buffer, coastline_poly)
+        poly = shapely.union(internal_poly, offshore_smoothing)
+    else:
+        poly = internal_poly
+
+    shapely.prepare(poly)
 
     triangulation = triangulate_polygon(poly, triangulation_radius)
     top_surface_data = read_surface_file(top_surface)
@@ -493,14 +543,10 @@ def main(
     topography_data = read_surface_file(topography)
     topography_data = mask_surface(poly, topography_data, buffer=10000)
 
-    mesh_top = interpolate_surface(top_surface_data, triangulation.vertices, neighbours)
-    mesh_bottom = interpolate_surface(
-        bottom_surface_data, triangulation.vertices, neighbours
-    )
+    mesh_top = interpolate_surface(top_surface_data, triangulation.vertices)
+    mesh_bottom = interpolate_surface(bottom_surface_data, triangulation.vertices)
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
-    mesh_topography = interpolate_surface(
-        topography_data, triangulation.vertices, neighbours
-    )
+    mesh_topography = interpolate_surface(topography_data, triangulation.vertices)
 
     if vm_1d is None and (rho and vp and vs):
         model = uniform_model(rho, vp, vs)
@@ -515,7 +561,22 @@ def main(
         model,
         culling_volume,
     )
-    mesh_data = construct_volumetric_mesh(layers, priority)
-    print("Constructed mesh:")
-    print(mesh_data)
-    mesh_data.save(str(output))
+    mesh = construct_volumetric_mesh(layers, priority)
+    
+    if smoothing > 0:
+        print('Applying smoothing boundary')
+        
+        points_2d = shapely.points(mesh.points[:, 0], mesh.points[:, 1])
+        distances = shapely.distance(internal_poly, points_2d)
+        alpha = np.interp(
+            distances,
+            np.array([0.0, smoothing], dtype=np.float32),
+            np.array([1.0, 0.0], dtype=np.float32)
+        )
+        mesh.field_data['alpha'] = alpha
+    
+    print_mesh_stats(mesh)
+    mesh.save(output)
+    nbytes = output.stat().st_size
+    print(f'Saved model with size {nbytes / (1024 ** 2):.1f} MB')
+

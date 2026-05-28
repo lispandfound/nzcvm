@@ -116,8 +116,9 @@ def write_unstructured_vtkhdf(path: Path, mesh: TetrahedralMesh) -> None:
         vtk.create_dataset("NumberOfPoints", data=np.array([n_points], dtype=np.int64))
         vtk.create_dataset("NumberOfCells", data=np.array([n_cells], dtype=np.int64))
         vtk.create_dataset("Points", data=np.asarray(mesh.points, dtype=np.float32))
-        vtk.create_dataset("Connectivity", data=conn_flat)
-        vtk.create_dataset("Offsets", data=offsets)
+        vtk.create_dataset('NumberOfConnectivityIds', data=np.array([n_cells * 4], dtype=np.int64))
+        vtk.create_dataset("Connectivity", data=conn_flat, compression='gzip')
+        vtk.create_dataset("Offsets", data=offsets, compression='gzip')
         vtk.create_dataset("Types", data=np.full(n_cells, VTK_TETRA))
 
         cd = vtk.create_group("CellData")
@@ -136,7 +137,7 @@ def write_unstructured_vtkhdf(path: Path, mesh: TetrahedralMesh) -> None:
                 )
                 ds = fd.create_dataset(k, data=encoded, dtype=h5py.string_dtype())
             else:
-                ds = fd.create_dataset(k, data=arr)
+                ds = fd.create_dataset(k, data=arr, compression='gzip')
             ds.attrs["NumberOfTuples"] = np.int64(
                 len(arr) if arr.ndim == 1 else arr.shape[0]
             )

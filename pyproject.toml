@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-visualization = ["pyvista>=0.47.2"]
+vis = ["pyvista>=0.47.2"]
 
 [project.scripts]
 nzcvm = "nzcvm.scripts.nzcvm:app"

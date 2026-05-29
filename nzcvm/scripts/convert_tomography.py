@@ -13,7 +13,7 @@ from pyproj import CRS, Transformer
 from scipy.spatial.transform import Rotation
 
 from nzcvm.coordinates import Affine, affine, reflect_x, scale, translate
-from nzcvm.models.mesh import TetrahedralMesh, make_mesh
+from nzcvm.models.mesh import DEFAULT_ENCODING_SETTINGS, TetrahedralMesh, make_mesh
 
 CRS_NZTM = CRS.from_epsg(2193)
 CRS_WGS = CRS.from_epsg(4326)
@@ -31,40 +31,21 @@ def _project_origin(
 
 
 def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
-    """Build the EP2010/EP2020 forward affine and its explicit inverse (local km → NZTM m).
-
-    The inverse is constructed analytically from the component inverses to avoid
-    numerical errors from matrix inversion::
-
-        forward = translate(ox, oy) @ scale(1000, 1000, 1000) @ reflect_x() @ rotate(140°)
-        inverse = rotate(140°) @ reflect_x() @ scale(1/1000, 1/1000, 1/1000) @ translate(-ox, -oy)
-
-    """
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
 
-    fwd = (
-        translate(ox, oy, z=0.0) @ scale(1000.0, 1000.0, 1000.0) @ reflect_x(dims=3)
-        @ affine(Rotation.from_rotvec([0, 0, -140.0], degrees=True).as_matrix())
-    )
     inv = (
         affine(Rotation.from_rotvec([0, 0, 140.0], degrees=True).as_matrix())
         @ reflect_x(dims=3)
         @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
         @ translate(-ox, -oy, z=0.0)
     )
-    return fwd, inv
+    return inv
 
 
-_EP2010_FWD, _EP2010_INV = _ep_affine(CRS_NZGD49)
-_EP2020_FWD, _EP2020_INV = _ep_affine(CRS_NZGD2000)
-EP2010_AFFINE: Affine = _EP2010_FWD
-EP2020_AFFINE: Affine = _EP2020_FWD
+_EP2010_INV = _ep_affine(CRS_NZGD49)
+_EP2020_INV = _ep_affine(CRS_NZGD2000)
 
 _db2025_ox, _db2025_oy = _project_origin(177.0, -39.7499, CRS_WGS, CRS_UTM60S)
-DB2025_AFFINE: Affine = (
-    translate(_db2025_ox, _db2025_oy, z=0.0) @ scale(1000.0, 1000.0, 1000.0)
-    @ affine(Rotation.from_rotvec([0, 0, 35.0], degrees=True).as_matrix())
-)
 DB2025_INV_AFFINE: Affine = (
     affine(Rotation.from_rotvec([0, 0, -35.0], degrees=True).as_matrix())
     @ scale(1 / 1000.0, 1 / 1000.0, 1 / 1000.0)
@@ -83,7 +64,6 @@ class TomographyModel:
     rho: str
     vp: str
     vs: str
-    affine: Affine
     #: Explicit analytical inverse of ``affine``; avoids numerical errors from
     #: ``np.linalg.inv``.  Used to populate the ``transform`` field of the mesh.
     affine_inverse: Affine
@@ -149,7 +129,7 @@ def tet_connectivity(ni: int, nj: int, nk: int):
 
 
 def data_frame_to_mesh(
-    df: pd.DataFrame, tomography_model: TomographyModel
+        name: str, df: pd.DataFrame, tomography_model: TomographyModel
 ) -> TetrahedralMesh:
     rho = df[tomography_model.rho] * 1000
     vp = df[tomography_model.vp] * 1000
@@ -196,7 +176,7 @@ def data_frame_to_mesh(
 
     points = points[morton_sorter]
     connectivity = inverse_map[naive_idx]
-    transform = tomography_model.affine_inverse.T.astype(np.float32)
+    transform = tomography_model.affine_inverse.astype(np.float32).T
 
     field_data = {
         "rho": rho[morton_sorter].values.astype(np.float32),
@@ -210,13 +190,13 @@ def data_frame_to_mesh(
     num_cells = len(connectivity)
     model_type = np.full(num_cells, 1, dtype=np.uint8)
     priority = np.full(num_cells, np.iinfo(np.uint8).max, dtype=np.uint8)
-
+    
     return make_mesh(
+        name=name,
         points=points,
         connectivity=connectivity,
         cell_data=dict(
             model_type=model_type,
-            models=connectivity.astype(np.uint64),
             priority=priority,
         ),
         field_data=field_data,
@@ -241,7 +221,6 @@ MODEL_COLUMNS = {
         rho="Density",
         vp="Vp",
         vs="Vs",
-        affine=EP2020_AFFINE,
         affine_inverse=_EP2020_INV,
     )
 }
@@ -281,5 +260,5 @@ def convert(
     if column_keys.qs not in df:
         df[column_keys.qs] = 50.0
 
-    mesh = data_frame_to_mesh(df, column_keys)
-    mesh.save(str(output))
+    mesh = data_frame_to_mesh(model.stem, df, column_keys)
+    mesh.to_zarr(output, mode='w', encoding=DEFAULT_ENCODING_SETTINGS)

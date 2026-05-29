@@ -9,7 +9,6 @@ python visualise_grid.py model.nc --scalar depth
 # Show absolute difference between two models for the Vs scalar
 python visualise_grid.py model.nc --scalar vs --compare-to model2.nc --diff-mode abs
 """
-
 import gzip
 from enum import StrEnum, auto
 from pathlib import Path
@@ -23,6 +22,7 @@ import xarray as xr
 # Adjust these imports according to your local package structure
 from nzcvm.components import Component
 from nzcvm.grids.grid import Grid
+from nzcvm.models.mesh import StructuredMeshSchema, TetrahedralMeshSchema
 from nzcvm.qualities import Qualities
 from nzcvm.velocity_model import VelocityModel
 
@@ -197,7 +197,7 @@ def _build_structured_grid(
             ds1[var] = ops[diff_mode](ds1[var], ds2[var])
 
     if stride > 1:
-        ds1 = ds1.coarsen(i=stride, j=stride, k=stride, boundary="trim").mean()
+        ds1 = ds1.coarsen(i=stride, j=stride, boundary="trim").mean()
 
     mesh = pv.StructuredGrid(ds1.x.values, ds1.y.values, ds1.z.values)
 
@@ -232,8 +232,24 @@ def basin(
     ] = None,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
+    
     pv = _require_pyvista()
-    pl, mesh_data = pv.Plotter(), pv.read(mesh)
+    mesh_dset = TetrahedralMeshSchema.from_dataset(xr.open_dataset(mesh))
+    
+    points = np.c_[mesh_dset.x.values, mesh_dset.y.values, mesh_dset.z.values]
+    connectivity = mesh_dset.connectivity.values
+    cell_length = connectivity.shape[1]
+    lengths = np.full((connectivity.shape[0], 1), cell_length, dtype=connectivity.dtype)
+    cell_type = np.full(len(lengths), pv.CellType.TETRA)
+    cells = np.hstack((lengths, connectivity)).ravel()
+    mesh_data = pv.UnstructuredGrid(
+        cells,
+        cell_type,
+        points
+    )
+    mesh_data.point_data[scalar] = mesh_dset[scalar].values
+    mesh_data.point_data['alpha'] = mesh_dset['alpha'].values
+    pl = pv.Plotter()
     # This is required to ensure opacity is rendered correctly
     pl.enable_depth_peeling(number_of_peels=10, occlusion_ratio=0.0)
     if topography:
@@ -245,8 +261,8 @@ def basin(
             label="Surface",
         )
     
-    mesh_data.point_data[scalar] = np.array(mesh_data.field_data[scalar], dtype=np.float32)
-    mesh_data.point_data['alpha'] = np.array(mesh_data.field_data['alpha'], dtype=np.float32)
+
+    
     
     mesh_data.point_data.active_scalars_name = scalar
     pl.add_mesh(mesh_data, cmap='hot', opacity='alpha', show_scalar_bar=False)

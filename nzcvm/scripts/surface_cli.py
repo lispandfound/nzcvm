@@ -1,5 +1,4 @@
 """Convert an HDF5 topography file to a VTK UnstructuredGrid (VTKHDF compatible)."""
-
 from pathlib import Path
 from typing import Annotated
 
@@ -8,12 +7,7 @@ import numpy as np
 import pyproj
 import typer
 
-try:
-    import pyvista as pv
-
-    _PYVISTA_AVAILABLE = True
-except ImportError:
-    _PYVISTA_AVAILABLE = False
+from nzcvm.models.mesh import DEFAULT_STRUCTURED_ENCODING_SETTINGS, StructuredMeshSchema
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -38,51 +32,6 @@ def read_surface_file(
     return x, y, scalars
 
 
-def construct_surface_mesh(
-    x: np.ndarray, y: np.ndarray, scalars: np.ndarray
-) -> "pv.UnstructuredGrid":
-    if not _PYVISTA_AVAILABLE:
-        raise ImportError(
-            "pyvista is required for surface_cli. "
-            "Install it with: pip install nzcvm[visualization]"
-        )
-    rows, cols = x.shape
-
-    # 1. Create the points array (N x 3)
-    # We flatten the 2D arrays into 1D columns
-    points = np.column_stack((x.ravel(), y.ravel(), scalars.ravel()))
-
-    # 2. Create the connectivity (Cells)
-    # For a grid, each cell (i, j) connects four points:
-    # [i, j], [i+1, j], [i+1, j+1], [i, j+1]
-    # We convert these 2D indices to flat 1D indices
-    i, j = np.meshgrid(np.arange(rows - 1), np.arange(cols - 1), indexing="ij")
-
-    # Calculate indices of the 4 corners for every quad in the grid
-    p0 = i * cols + j
-    p1 = (i + 1) * cols + j
-    p2 = (i + 1) * cols + (j + 1)
-    p3 = i * cols + (j + 1)
-
-    # PyVista/VTK format: [padding, p0, p1, p2, p3, padding, p0, p1...]
-    # where padding is the number of points per cell (4 for quads)
-    cells = np.column_stack(
-        [np.full(p0.size, 4), p0.ravel(), p1.ravel(), p2.ravel(), p3.ravel()]
-    )
-
-    # 3. Define Cell Types
-    # VTK QUAD cell type = 9
-    cell_types = np.full(p0.size, 9, dtype=np.uint8)
-
-    # 4. Construct the UnstructuredGrid
-    grid = pv.UnstructuredGrid(cells, cell_types, points)
-
-    # Add the elevation as point data
-    grid.point_data["Elevation"] = scalars.ravel()
-
-    return grid
-
-
 @app.command()
 def convert(
     surface: Annotated[
@@ -103,11 +52,17 @@ def convert(
 ) -> None:
     """Entry point for the conversion."""
     x, y, scalars = read_surface_file(surface, scalar_key, flip)
-    surface_mesh = construct_surface_mesh(x, y, scalars)
-
-    # Ensure output has .vtkhdf extension for the driver to trigger correctly
-    surface_mesh.save(str(output))
-
+    ni, nj = x.shape
+    surface_mesh = StructuredMeshSchema.new(
+        x=x,
+        y=y,
+        z=scalars,
+        i=np.arange(ni),
+        j=np.arange(nj),
+        name=surface.stem
+    )
+    surface_mesh.to_zarr(output, encoding=DEFAULT_STRUCTURED_ENCODING_SETTINGS, mode='w')
+    
 
 if __name__ == "__main__":
     app()

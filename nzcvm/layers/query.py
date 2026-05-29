@@ -1,6 +1,7 @@
 """Pipeline layer that queries a :class:`~nzcvm.models.model.ModelTree`."""
 
 from __future__ import annotations
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -29,7 +30,8 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
             for p in config.model_path.rglob(glob)
         ]
         self.model = ModelTree.load_models(*models)
-
+        breakpoint()
+        
     def __call__(
         self,
         grid: Grid,

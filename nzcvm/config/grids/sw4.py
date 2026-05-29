@@ -3,7 +3,7 @@ from typing import Literal
 
 from nzcvm.config.core import ConfigObject
 from nzcvm.config.grids.model import Model
-from nzcvm.config.validation import ExistingFile, PositiveFloat
+from nzcvm.config.validation import ExistingFile, ExistingPath, PositiveFloat
 from nzcvm.coordinates import Coordinate
 
 from .core import GridConfig
@@ -70,7 +70,7 @@ class SW4GridConfig(GridConfig):
     """
 
     # Topographic surface path.
-    surface: ExistingFile
+    surface: ExistingPath
     # Extents in x and y.
     extent_x: PositiveFloat
     extent_y: PositiveFloat

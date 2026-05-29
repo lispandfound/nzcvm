@@ -5,7 +5,7 @@ from typing import Literal
 from nzcvm.config.grids import GridConfig
 from nzcvm.config.grids.model import Model
 from nzcvm.config.validation import (
-    ExistingFile,
+    ExistingPath,
     PositiveFloat,
     PositiveInt,
 )
@@ -22,7 +22,7 @@ class TopographyType(StrEnum):
 @dataclass
 class EMOD3DGrid(GridConfig):
     # Topographic surface path.
-    surface: ExistingFile
+    surface: ExistingPath
 
     nx: PositiveInt
     ny: PositiveInt

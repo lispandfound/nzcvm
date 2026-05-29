@@ -1,17 +1,5 @@
 """Tests for EMOD3D and SW4 grid builders.
 
-Invariants tested:
-  1. All coordinate arrays are dask-backed (lazy)
-  2. Chunking matches the configured chunk sizes
-  3. Output shapes match configured nx/ny/nz (EMOD3D) or extent/resolution (SW4)
-  4. Coordinate variable order is (i, j, k)
-  5. Model rotation is applied — a non-zero azimuth produces rotated x/y
-  6. Resolution is respected — grid spacing matches config resolution
-  7. CRS origin is placed correctly (origin_lon/lat round-trips)
-  8. (EMOD3D) Points are centre-registered (first depth > 0, first x/y inside boundary)
-  9. (SW4) Points are corner-registered (first point at boundary)
- 10. (SW4) No gaps between refinement layers — bottom of layer n == top of layer n+1
-
 All tests use a synthetic flat surface (z=0 everywhere) so no real data files
 are needed.
 """
@@ -29,7 +17,7 @@ from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
-from nzcvm.models.mesh import StructuredMesh, write_structured_mesh
+from nzcvm.models.mesh import StructuredMesh, StructuredMeshSchema
 from pyproj import CRS
 
 # ---------------------------------------------------------------------------
@@ -50,8 +38,8 @@ def _write_flat_surface(path: Path) -> None:
     xx, yy = np.meshgrid(xs, ys, indexing="ij")
     zz = np.zeros_like(xx)
     pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
-    mesh = StructuredMesh(points=pts, dims=(n, n, 1))
-    write_structured_mesh(path, mesh)
+    mesh = StructuredMeshSchema.new(x=xx, y=yy, z=zz)
+    mesh.save(path)
 
 
 @pytest.fixture(scope="module")

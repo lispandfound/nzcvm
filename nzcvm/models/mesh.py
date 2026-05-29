@@ -12,7 +12,7 @@ from typing import Literal
 
 import numpy as np
 import xarray as xr
-from xarray_dataclasses import AsDataset, Attr, Coord, Data
+from xarray_dataclasses import AsDataset, Attr, Coord, Data, DataOptions
 from zarr.codecs import Blosc, Zstd
 
 I = Literal['i']
@@ -48,12 +48,15 @@ class TetrahedralMeshSchema(AsDataset):
     i: Coord[I, np.uint64]
     j: Coord[J, np.uint64]
     k: Coord[K, np.uint64]
-    
+
+    transform: Attr[np.ndarray | None] = None
+
+    __dataoptions__ = DataOptions(TetrahedralMesh)
     
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> TetrahedralMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
-        return cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
+        return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
 
 MEDIUM_COMPRESSOR = [Blosc(cname="zstd", clevel=5, shuffle=True)]
 HIGH_COMPRESSOR =  [Blosc(cname="zstd", clevel=7, shuffle=True)]
@@ -90,30 +93,43 @@ class StructuredMeshSchema(AsDataset):
     x: Data[tuple[I, J], np.float32]
     y: Data[tuple[I, J], np.float32]
     z: Data[tuple[I, J], np.float32]
-
+    
+    i: Coord[I, np.uint64]
+    j: Coord[J, np.uint64]
+    
     name: Attr[str]
 
-
+    __dataoptions__ = DataOptions(StructuredMesh)
+    
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> StructuredMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
-        return cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
+        return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
 
+DEFAULT_STRUCTURED_ENCODING_SETTINGS = {
+    "x":   {"compressors": MEDIUM_COMPRESSOR},
+    "y":    {"compressors": MEDIUM_COMPRESSOR},
+    "z":    {"compressors": MEDIUM_COMPRESSOR},
+}
+    
 def triangulate(mesh: StructuredMesh) -> np.ndarray:
-    nx = mesh.sizes[I]
-    ny = mesh.sizes[J]
-    # Triangulate the structured grid: two triangles per quad cell
-    # Point index: i + j*nx, where i in [0, nx), j in [0, ny)
+    nx = mesh.sizes['i']
+    ny = mesh.sizes['j']  # This is the stride multiplier for row-major layout
+    
+    # Generate the 2D grids
     ii, jj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
-    p00 = (ii + jj * nx).ravel()
-    p10 = ((ii + 1) + jj * nx).ravel()
-    p11 = ((ii + 1) + (jj + 1) * nx).ravel()
-    p01 = (ii + (jj + 1) * nx).ravel()
+    
+    # Use ny (the size of j) instead of nx
+    p00 = (ii * ny + jj).ravel()
+    p10 = ((ii + 1) * ny + jj).ravel()
+    p11 = ((ii + 1) * ny + (jj + 1)).ravel()
+    p01 = (ii * ny + (jj + 1)).ravel()
+    
     tri1 = np.stack((p00, p10, p11), axis=1)
     tri2 = np.stack((p00, p11, p01), axis=1)
+    
     faces = np.vstack((tri1, tri2)).astype(np.uint64)
     return faces
-
 
 def make_mesh(
     name: str,

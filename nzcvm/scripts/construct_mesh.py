@@ -2,6 +2,7 @@
 import gzip
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,8 +17,14 @@ import scipy as sp
 import shapely
 import shapely.ops
 import typer
+import xarray as xr
 
-from nzcvm.models.mesh import DEFAULT_ENCODING_SETTINGS, TetrahedralMesh, make_mesh
+from nzcvm.models.mesh import (
+    DEFAULT_ENCODING_SETTINGS,
+    TetrahedralMesh,
+    TetrahedralMeshSchema,
+    make_mesh,
+)
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
@@ -100,7 +107,7 @@ def construct_mesh_tetra(triangles: np.ndarray) -> np.ndarray:
 
 
 def interleave_top_and_bottom(top: np.ndarray, bottom: np.ndarray) -> np.ndarray:
-    interleaved = np.zeros((2 * len(top), 3))
+    interleaved = np.zeros((2 * len(top), 3), dtype=np.float32)
     interleaved[::2] = top
     interleaved[1::2] = bottom
     return interleaved
@@ -132,7 +139,7 @@ class Layer:
 def construct_volumetric_mesh(
         name: str, layers: list[Layer], priority: int
 ) -> TetrahedralMesh:
-
+    
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
     
@@ -177,7 +184,6 @@ def construct_volumetric_mesh(
             alpha=alpha
         ),  
     )
-    
     return mesh
 
 
@@ -284,39 +290,31 @@ def tetra_volume(vertices: np.ndarray, tetra: np.ndarray) -> np.ndarray:
         volumes[i] = np.abs(f * np.linalg.det(mat))
     return volumes
 
+@numba.njit
+def count_mask(n: int, idx: np.ndarray) -> np.ndarray:
+    mask = np.zeros(n, dtype=np.uint8)
+    for i in idx:
+        mask[i] = 1
+    return mask
 
-@numba.njit(cache=True)
-def cull_mesh(
-    vertices: np.ndarray, tetra: np.ndarray, culling_volume: float
-) -> tuple[np.ndarray, np.ndarray, int, int]:
-    mat = np.ones((4, 4), dtype=np.float64)
-    f = 1 / 6
-    has_vertex_neighbours = np.zeros(len(vertices), dtype=np.bool_)
-    has_non_zero_volume = np.zeros(len(tetra), dtype=np.bool_)
-    for i, tet in enumerate(tetra):
-        for j in range(4):
-            mat[j, :3] = vertices[tet[j]]
-        volume = np.abs(f * np.linalg.det(mat))
-        if volume > culling_volume:
-            has_non_zero_volume[i] = True
-            for j in range(4):
-                has_vertex_neighbours[tet[j]] = True
-    culled_tetra = tetra[has_non_zero_volume]
-    vertex_map = np.zeros(len(vertices))
-    idx = np.int64(0)
-    for i in range(len(vertices)):
-        vertex_map[i] = idx
-        if has_vertex_neighbours[i]:
-            idx += 1
-    for i in range(len(culled_tetra)):
-        for j in range(4):
-            culled_tetra[i][j] = vertex_map[culled_tetra[i][j]]
-    return (
-        vertices[has_vertex_neighbours],
-        culled_tetra,
-        len(vertices) - np.sum(has_vertex_neighbours),
-        len(tetra) - np.sum(has_non_zero_volume),
-    )
+def volumes(vertices: np.ndarray, tetra: np.ndarray) -> np.ndarray:
+    v0 = vertices[tetra[:, 0]]
+    v = vertices[tetra[:, 1:]]
+    return 1/6 * np.abs(np.linalg.det(v - v0[:, np.newaxis, :]))
+
+
+def cull_mesh(vertices: np.ndarray, tetra: np.ndarray, culling_volume: float) -> tuple[np.ndarray, np.ndarray, int, int]:
+    volume = volumes(vertices, tetra)
+    has_non_zero_volume = volume > culling_volume
+    non_zero_tetra = tetra[has_non_zero_volume]
+    has_vertex_neighbours = np.zeros(vertices.shape[0], dtype=np.bool_)
+    has_vertex_neighbours[non_zero_tetra.ravel()] = 1
+    vertex_map = np.cumulative_sum(has_vertex_neighbours.astype(np.uint64), include_initial=True)
+    culled_vertices = vertices[has_vertex_neighbours]
+    culled_tetra = vertex_map[non_zero_tetra]
+    assert len(culled_vertices) == 0 or volumes(culled_vertices, culled_tetra).min() >= culling_volume
+    return culled_vertices, culled_tetra, len(vertices) - np.sum(has_vertex_neighbours), len(tetra) - np.sum(has_non_zero_volume)
+    
 
 
 def slice_with_model(
@@ -410,6 +408,23 @@ def retain_connected(poly: shapely.Geometry, internal_poly: shapely.Polygon) -> 
         raise ValueError(f'Invalid geometry: {poly!r}')
         
             
+@app.command()
+def validate(mesh_paths: list[Path]) -> None:
+    total_size = 0
+    for mesh_path in mesh_paths:
+        with xr.open_dataset(mesh_path) as dset:
+            mesh = TetrahedralMeshSchema.from_dataset(dset)
+            points = np.c_[mesh.x, mesh.y, mesh.z]
+            connectivity = mesh.connectivity.values
+            tetra_volumes = volumes(points, connectivity)
+            print(f'{mesh_path.stem} Minimum tetra volume: {tetra_volumes.min()}')
+            dset_size = dset.nbytes
+            total_size += dset_size
+            print(f'dataset size = {dset_size / (1024 ** 2) :.1f}M')
+            if (tetra_volumes < 1e-6).any():
+                sys.exit(-1)
+    print(f'Total dataset in-memory requirements: {total_size / (1024 ** 3):.1f}G')
+    
     
 
 @app.command()

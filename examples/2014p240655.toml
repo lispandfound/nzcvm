@@ -12,7 +12,7 @@ repository_doi = "TBD"
 [grid]
 type = "sw4"
 # DEM surface 
-surface = "./resources/dem.vtk"
+surface = "./resources/dem.zarr"
 
 # Extent of the model, in km
 extent_x = 210000.0
@@ -29,7 +29,7 @@ origin_lat = -39.65225
 # Mesh resolution in the layer (m)
 resolution = 400.0
 # Bottom elevation (+z down). 
-bottom = 3500.0
+bottom = 10000.0
 
 # Chunks for internal calculations.
 [grid.chunks]
@@ -106,16 +106,14 @@ basin_depth = [
     {distance = 50000.0, bottom_depth = 3000.0}
 ]
 
-
-
 [[layers]]
 # Geotechnical weathering layer.
 type = "ely"
-vs30 = "./resources/vs30.vtk"
+vs30 = "./resources/vs30.zarr"
 depth_t = 450.0
 
 [[layers]]
 # Query layer for complex tomography and 3D basin models.
 type = "query"
 model_path = "./models"
-model_globs = ["ep2020.vtkhdf"]
+model_globs = ["*.zarr"]

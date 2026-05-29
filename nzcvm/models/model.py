@@ -227,6 +227,7 @@ class MeshModel:
     @classmethod
     def from_path(cls, path: Path) -> Self:
         mesh_dataset = TetrahedralMeshSchema.from_dataset(xr.load_dataset(path))
+        
         return cls(_mesh_model_from_tetra(mesh_dataset))
 
     @classmethod
@@ -353,7 +354,7 @@ class ModelTree:
     model_map: dict[int, str] | None = None
 
     @classmethod
-    def load_models(cls, *models: Path | str) -> Self:
+    def load_models(cls, *models: Path) -> Self:
         """Load a velocity model from one or more VTKHDF files or a directory.
 
         Parameters
@@ -374,13 +375,9 @@ class ModelTree:
         >>> from pathlib import Path
         >>> ModelTree.load_models(Path("/path/to/models"))  # doctest: +SKIP
         """
-        if len(models) == 1 and Path(models[0]).is_dir():
-            mesh_paths = list(Path(models[0]).glob("*.vtkhdf"))
-        else:
-            mesh_paths = [Path(p) for p in models]
 
         mesh_models = []
-        for p in mesh_paths:
+        for p in models:
             mesh_models.append(MeshModel.from_path(p)._raw)
 
         raw = nzcvm.model_tree(mesh_models)
@@ -681,26 +678,26 @@ class ModelTree:
 
 
 def _mesh_model_from_tetra(
-    mesh_model: TetrahedralMesh, name: str | None = None
+    mesh_model: TetrahedralMesh,
 ) -> Any:
     """Build a PyMeshModel from a :class:`~nzcvm.models.mesh.TetrahedralMesh`."""
     connectivity = mesh_model.connectivity.values
     
-    types = np.array(mesh_model.cell_data["model_type"])
-
-    model_idx = mesh_model.models.values
+    types = mesh_model.model_type.values
+    
+    model_idx = mesh_model.models.values.ravel()
 
     qualities = np.c_[mesh_model.rho.values, mesh_model.vp.values, mesh_model.vs.values, mesh_model.qp.values, mesh_model.qs.values, mesh_model.alpha.values]
 
-    priority = mesh_model.isel(j=0).item()
+    priority = mesh_model.priority.isel(j=0).item()
     name = mesh_model.name
     
-    transform = mesh_model.get('transform')
+    transform = mesh_model.attrs.get('transform')
     
     if transform is not None:
-        transform = transform.values
+        transform = np.array(transform, dtype=np.float32)
 
-    points = mesh_model.points.values
+    points = np.c_[mesh_model.x.values, mesh_model.y.values, mesh_model.z.values]
 
     return nzcvm.mesh_model(
         points,

@@ -4,29 +4,34 @@ import numpy as np
 import typer
 import xarray as xr
 
-from nzcvm.models.mesh import StructuredMesh, write_structured_mesh
+from nzcvm.models.mesh import (
+    DEFAULT_STRUCTURED_ENCODING_SETTINGS,
+    StructuredMesh,
+    StructuredMeshSchema,
+)
 
 app = typer.Typer()
 
 
-def convert_tiff(tiff_model: xr.DataArray) -> StructuredMesh:
+def convert_tiff(name: str, tiff_model: xr.DataArray, downsample: int) -> StructuredMesh:
     clipped = tiff_model.dropna("x", how="all").dropna("y", how="all")
-    clipped = clipped.coarsen(x=3, y=3, boundary="pad").mean()
+    if downsample > 1:
+        clipped = clipped.coarsen(x=downsample, y=downsample, boundary="pad").mean()
 
     xi = clipped.x.astype(np.float32).values
     yi = clipped.y.astype(np.float32).values
     z = clipped.astype(np.float32).values
 
     x, y = np.meshgrid(xi, yi)
-    points = np.stack((x, y, z), axis=-1)
-    return StructuredMesh(points=points)
+    ni, nj = x.shape
+    return StructuredMeshSchema.new(x=x, y=y, z=z, i=np.arange(ni), j=np.arange(nj), name=name)
 
 
 @app.command()
-def main(tiff_path: Path, band: int, output_path: Path) -> None:
+def main(tiff_path: Path, band: int, output_path: Path, downsample: int = 1) -> None:
     dset = xr.open_dataset(tiff_path, engine="rasterio")
-    surface = convert_tiff(dset["band_data"].sel(band=band))
-    write_structured_mesh(output_path, surface)
+    surface = convert_tiff(output_path.stem, dset["band_data"].sel(band=band), downsample)
+    surface.to_zarr(output_path, encoding=DEFAULT_STRUCTURED_ENCODING_SETTINGS)
 
 
 if __name__ == "__main__":

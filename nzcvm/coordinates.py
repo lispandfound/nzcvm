@@ -67,6 +67,7 @@ def affine(matrix: np.ndarray) -> np.ndarray:
     n = matrix.shape[0]
     aff = np.eye(n + 1, dtype=matrix.dtype)
     aff[:n, :n] = matrix
+    
     return aff
     
 

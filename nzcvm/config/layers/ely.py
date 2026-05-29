@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from nzcvm.config.validation import ExistingFile, PositiveFloat
+from nzcvm.config.validation import ExistingFile, ExistingPath, PositiveFloat
 
 from .core import LayerConfig
 
@@ -26,7 +26,7 @@ class ElyLayerConfig(LayerConfig):
         depth_t = 450.0
     """
 
-    vs30: ExistingFile
+    vs30: ExistingPath
     depth_t: PositiveFloat = 450.0
     type: str = "ely"
     requires: list[str] = field(default_factory=lambda: ["coastline"], init=False)

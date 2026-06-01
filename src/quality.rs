@@ -48,8 +48,8 @@ impl Quality {
             rho: a0 * self.rho + a1 * rhs.rho,
             vp: a0 * self.vp + a1 * rhs.vp,
             vs: a0 * self.vs + a1 * rhs.vs,
-            qp: qp,
-            qs: qs,
+            qp,
+            qs,
             alpha,
         }
     }
@@ -110,8 +110,8 @@ impl Add for Quality {
             rho: self.rho + rhs.rho,
             vp: self.vp + rhs.vp,
             vs: self.vs + rhs.vs,
-            qp: qp,
-            qs: qs,
+            qp,
+            qs,
             alpha: self.alpha + rhs.alpha,
         }
     }

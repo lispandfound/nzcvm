@@ -41,6 +41,47 @@ collingwood:
         test -d models/Collingwood${i}.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Collingwood/Collingwood_outline_WGS84_${i}.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Collingwood/Collingwood_basement_WGS84.h5 models/Collingwood${i}.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400; \
     done
 
+hawkes_bay:
+    @for i in 1 2 3 4; do \
+        test -d models/HawkesBay${i}.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/HawkesBay/HawkesBay_outline_WGS84_${i}.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/HawkesBay/HawkesBay_basement_WGS84.h5 models/HawkesBay${i}.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400 --smoothing {{ smoothing }} --coastline {{ coastline }}; \
+    done
+
+southern_hawkes_bay:
+    @test -d models/SouthernHawkesBay.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/SouthernHawkesBay/SouthernHawkesBay_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/SouthernHawkesBay/SouthernHawkesBay_basement_WGS84.h5 models/SouthernHawkesBay.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400
+
+
+te_araroa:
+    @test -d models/TeAraroa.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/TeAraroa/TeAraroa_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/TeAraroa/TeAraroa_basement_WGS84.h5 models/TeAraroa.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400
+
+whangaparoa:
+    @test -d models/Whangaparoa.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Whangaparoa/Whangaparoa_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Whangaparoa/Whangaparoa_basement_WGS84.h5 models/Whangaparoa.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400
+
+whakatane:
+    @test -d models/Whakatane.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Whakatane/Whakatane_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Whakatane/Whakatane_basement_WGS84_v25p8.h5 models/Whakatane.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400
+
+napier:
+    @for i in 1 2 3 4 5 6; do \
+        test -d models/Napier${i}.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Napier/Napier_outline_WGS84_${i}.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Napier/Napier_basement_WGS84.h5 models/Napier${i}.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400 --smoothing {{ smoothing }} --coastline {{ coastline }}; \
+    done
+
+porirua:
+    @for i in 1 2; do \
+        test -d models/Porirua${i}.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Porirua/Porirua_outline_WGS84_${i}.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Porirua/Porirua_basement_WGS84.h5 models/Porirua${i}.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400 --smoothing {{ smoothing }} --coastline {{ coastline }}; \
+    done
+
+queen_charlotte:
+    @test -d models/QueenCharlotte.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/QueenCharlotte/QueenCharlotte_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/QueenCharlotte/QueenCharlotte_basement_WGS84_v25p8.h5 models/QueenCharlotte.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400
+    
+greater_wellington:
+    @for i in 1 2 3 4 5 6; do \
+        test -d models/GreaterWellington${i}.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/GreaterWellington/GreaterWellington_outline_WGS84_${i}.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/GreaterWellington/GreaterWellington_basement_WGS84.h5 models/GreaterWellington${i}.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400 --smoothing {{ smoothing }} --coastline {{ coastline }}; \
+    done
+
+ne_otago:
+    @for i in 1 2 3 4 5; do \
+        test -d models/NE_Otago${i}.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/NE_Otago/NE_Otago_outline_WGS84_${i}.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/NE_Otago/NE_Otago_basement_WGS84.h5 models/NE_Otago${i}.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400; \
+    done
+
 dunedin:
     @test -d models/Dunedin.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Dunedin/Dunedin_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Dunedin/Dunedin_basement_WGS84.h5 models/Dunedin.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400
 
@@ -118,7 +159,7 @@ nelson:
 kaikoura:
     @test -d models/Kaikoura.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Kaikoura/Kaikoura_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Kaikoura/Kaikoura_basement_WGS84.h5 models/Kaikoura.zarr --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile -r 400 --smoothing {{ smoothing }} --coastline {{ coastline }}
 
-basins: canterbury hanmer mackenzie southland west_coast te_anau balclutha castle_hill cheviot collingwood dunedin alexandra gisborne hakataramea karamea marlborough mosgiel murchison ranfurly rarakau springs_junction tolaga_bay waiapu waikato_hauraki wairarapa waitaki wakatipu wanaka westport north_canterbury wellington palmerston_north omaio_bay nelson kaikoura
+basins: hanmer mackenzie southland west_coast te_anau balclutha castle_hill cheviot collingwood hawkes_bay southern_hawkes_bay te_araroa whangaparoa whakatane napier porirua queen_charlotte greater_wellington ne_otago dunedin alexandra gisborne hakataramea karamea marlborough mosgiel murchison ranfurly rarakau springs_junction tolaga_bay waiapu waikato_hauraki wairarapa waitaki wakatipu wanaka westport north_canterbury wellington palmerston_north omaio_bay nelson kaikoura 
 
 tomography := "uv run nzcvm tomography convert"
 surface := "uv run nzcvm convert-tiff main"

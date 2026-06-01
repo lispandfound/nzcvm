@@ -1,4 +1,5 @@
 """Construct a tetrahedral volumetric mesh for a basin model."""
+
 import gzip
 import shutil
 import subprocess
@@ -135,38 +136,68 @@ class Layer:
     qp: float = 100.0
     qs: float = 50.0
     alpha: float = 1.0
-    
+
+
 def construct_volumetric_mesh(
-        name: str, layers: list[Layer], priority: int
+    name: str, layers: list[Layer], priority: int
 ) -> TetrahedralMesh:
-    
+
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
     tetra = np.concatenate([layer.tetra for layer in layers])
-    
+
     tetra_offset = 0
     vertex_offset = 0
-    
+
     # CHANGED: Map properties to points by using len(layer.vertices) instead of len(layer.tetra)
-    rho = np.concatenate([np.full((len(layer.vertices),), layer.rho, dtype=np.float32) for layer in layers])
-    vp = np.concatenate([np.full((len(layer.vertices),), layer.vp, dtype=np.float32) for layer in layers])
-    vs = np.concatenate([np.full((len(layer.vertices),), layer.vs, dtype=np.float32) for layer in layers])
-    qp = np.concatenate([np.full((len(layer.vertices),), layer.qp, dtype=np.float32) for layer in layers])
-    qs = np.concatenate([np.full((len(layer.vertices),), layer.qs, dtype=np.float32) for layer in layers])
-    alpha = np.concatenate([np.full((len(layer.vertices),), layer.alpha, dtype=np.float32) for layer in layers])
+    rho = np.concatenate(
+        [
+            np.full((len(layer.vertices),), layer.rho, dtype=np.float32)
+            for layer in layers
+        ]
+    )
+    vp = np.concatenate(
+        [
+            np.full((len(layer.vertices),), layer.vp, dtype=np.float32)
+            for layer in layers
+        ]
+    )
+    vs = np.concatenate(
+        [
+            np.full((len(layer.vertices),), layer.vs, dtype=np.float32)
+            for layer in layers
+        ]
+    )
+    qp = np.concatenate(
+        [
+            np.full((len(layer.vertices),), layer.qp, dtype=np.float32)
+            for layer in layers
+        ]
+    )
+    qs = np.concatenate(
+        [
+            np.full((len(layer.vertices),), layer.qs, dtype=np.float32)
+            for layer in layers
+        ]
+    )
+    alpha = np.concatenate(
+        [
+            np.full((len(layer.vertices),), layer.alpha, dtype=np.float32)
+            for layer in layers
+        ]
+    )
 
     # model_type and priority dictate topology, keep them as cell data
     model_type = np.concatenate(
-        [np.full((len(layer.tetra),), 0, dtype=np.uint8) for layer in layers]
+        [np.full((len(layer.tetra),), 1, dtype=np.uint8) for layer in layers]
     )
-    
-    
+
     for layer in layers:
         tetra[tetra_offset : tetra_offset + len(layer.tetra)] += vertex_offset
         vertex_offset += len(layer.vertices)
         tetra_offset += len(layer.tetra)
-        
+
     priority_data = np.full((len(tetra),), np.uint8(priority))
-    
+
     mesh = make_mesh(
         name=name,
         points=mesh_vertices,
@@ -175,17 +206,9 @@ def construct_volumetric_mesh(
             model_type=model_type,
             priority=priority_data,
         ),
-        field_data=dict(
-            rho=rho,
-            vp=vp,
-            vs=vs,
-            qp=qp,
-            qs=qs,
-            alpha=alpha
-        ),  
+        field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
     )
     return mesh
-
 
 
 def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
@@ -226,7 +249,8 @@ class LinearNDInterpolatorExt(object):
 
 
 def interpolate_surface(
-    surface: np.ndarray, vertices: np.ndarray, 
+    surface: np.ndarray,
+    vertices: np.ndarray,
 ) -> np.ndarray:
     interp = LinearNDInterpolatorExt(surface[:, :-1], surface[:, -1])
     return interp(np.c_[vertices["x"], vertices["y"]])
@@ -255,6 +279,8 @@ def enforce_mesh_constraints(mesh_top, mesh_bottom):
     if overlap_mask.any():
         print("Warning: bottom surface clips top surface")
         mesh_bottom[overlap_mask] = mesh_top[overlap_mask]
+    mesh_top -= 50.0
+    mesh_bottom += 50.0
     return mesh_top, mesh_bottom
 
 
@@ -290,6 +316,7 @@ def tetra_volume(vertices: np.ndarray, tetra: np.ndarray) -> np.ndarray:
         volumes[i] = np.abs(f * np.linalg.det(mat))
     return volumes
 
+
 @numba.njit
 def count_mask(n: int, idx: np.ndarray) -> np.ndarray:
     mask = np.zeros(n, dtype=np.uint8)
@@ -297,24 +324,36 @@ def count_mask(n: int, idx: np.ndarray) -> np.ndarray:
         mask[i] = 1
     return mask
 
+
 def volumes(vertices: np.ndarray, tetra: np.ndarray) -> np.ndarray:
     v0 = vertices[tetra[:, 0]]
     v = vertices[tetra[:, 1:]]
-    return 1/6 * np.abs(np.linalg.det(v - v0[:, np.newaxis, :]))
+    return 1 / 6 * np.abs(np.linalg.det(v - v0[:, np.newaxis, :]))
 
 
-def cull_mesh(vertices: np.ndarray, tetra: np.ndarray, culling_volume: float) -> tuple[np.ndarray, np.ndarray, int, int]:
+def cull_mesh(
+    vertices: np.ndarray, tetra: np.ndarray, culling_volume: float
+) -> tuple[np.ndarray, np.ndarray, int, int]:
     volume = volumes(vertices, tetra)
     has_non_zero_volume = volume > culling_volume
     non_zero_tetra = tetra[has_non_zero_volume]
     has_vertex_neighbours = np.zeros(vertices.shape[0], dtype=np.bool_)
     has_vertex_neighbours[non_zero_tetra.ravel()] = 1
-    vertex_map = np.cumulative_sum(has_vertex_neighbours.astype(np.uint64), include_initial=True)
+    vertex_map = np.cumulative_sum(
+        has_vertex_neighbours.astype(np.uint64), include_initial=True
+    )
     culled_vertices = vertices[has_vertex_neighbours]
     culled_tetra = vertex_map[non_zero_tetra]
-    assert len(culled_vertices) == 0 or volumes(culled_vertices, culled_tetra).min() >= culling_volume
-    return culled_vertices, culled_tetra, len(vertices) - np.sum(has_vertex_neighbours), len(tetra) - np.sum(has_non_zero_volume)
-    
+    assert (
+        len(culled_vertices) == 0
+        or volumes(culled_vertices, culled_tetra).min() >= culling_volume
+    )
+    return (
+        culled_vertices,
+        culled_tetra,
+        len(vertices) - np.sum(has_vertex_neighbours),
+        len(tetra) - np.sum(has_non_zero_volume),
+    )
 
 
 def slice_with_model(
@@ -326,17 +365,22 @@ def slice_with_model(
     culling_volume: float,
 ) -> list[Layer]:
     layers = []
-    tri_verts = np.stack([triangulation.triangles["i"], 
-                          triangulation.triangles["j"], 
-                          triangulation.triangles["k"]], axis=1)
+    tri_verts = np.stack(
+        [
+            triangulation.triangles["i"],
+            triangulation.triangles["j"],
+            triangulation.triangles["k"],
+        ],
+        axis=1,
+    )
     tri_verts.sort(axis=1)
-    
+
     # Reconstruct a temporary structured array for the sorted triangles
     sorted_triangles = np.empty(len(tri_verts), dtype=triangulation.triangles.dtype)
     sorted_triangles["i"] = tri_verts[:, 0]
     sorted_triangles["j"] = tri_verts[:, 1]
     sorted_triangles["k"] = tri_verts[:, 2]
-    
+
     tetra = construct_mesh_tetra(sorted_triangles)
     for _, row in model.iterrows():
         z = row["z"]
@@ -392,22 +436,24 @@ def mask_surface(
     return surface_points[mask]
 
 
-
 def _read_compressed_shapely_wkb(path: Path) -> shapely.Geometry:
     with gzip.open(path) as handle:
         return shapely.from_wkb(handle.read())
 
-def retain_connected(poly: shapely.Geometry, internal_poly: shapely.Polygon) -> shapely.Polygon:
+
+def retain_connected(
+    poly: shapely.Geometry, internal_poly: shapely.Polygon
+) -> shapely.Polygon:
     if isinstance(poly, shapely.Polygon):
         return poly
     elif isinstance(poly, shapely.MultiPolygon):
-        return shapely.union_all([
-            geom for geom in poly.geoms if shapely.intersects(internal_poly, geom)    
-        ])
+        return shapely.union_all(
+            [geom for geom in poly.geoms if shapely.intersects(internal_poly, geom)]
+        )
     else:
-        raise ValueError(f'Invalid geometry: {poly!r}')
-        
-            
+        raise ValueError(f"Invalid geometry: {poly!r}")
+
+
 @app.command()
 def validate(mesh_paths: list[Path]) -> None:
     total_size = 0
@@ -417,15 +463,14 @@ def validate(mesh_paths: list[Path]) -> None:
             points = np.c_[mesh.x, mesh.y, mesh.z]
             connectivity = mesh.connectivity.values
             tetra_volumes = volumes(points, connectivity)
-            print(f'{mesh_path.stem} Minimum tetra volume: {tetra_volumes.min()}')
+            print(f"{mesh_path.stem} Minimum tetra volume: {tetra_volumes.min()}")
             dset_size = dset.nbytes
             total_size += dset_size
-            print(f'dataset size = {dset_size / (1024 ** 2) :.1f}M')
+            print(f"dataset size = {dset_size / (1024**2):.1f}M")
             if (tetra_volumes < 1e-6).any():
                 sys.exit(-1)
-    print(f'Total dataset in-memory requirements: {total_size / (1024 ** 3):.1f}G')
-    
-    
+    print(f"Total dataset in-memory requirements: {total_size / (1024**3):.1f}G")
+
 
 @app.command()
 def main(
@@ -509,9 +554,9 @@ def main(
     coastline: Annotated[
         Path | None,
         typer.Option(
-            '--coastline',
-            help='Coastline to clip smoothing boundary',
-        )
+            "--coastline",
+            help="Coastline to clip smoothing boundary",
+        ),
     ] = None,
     vm_1d: Annotated[
         Path | None,
@@ -540,21 +585,22 @@ def main(
     ] = 0,
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
-    
+
     collection = shapely.from_geojson(bounds.read_text())
     internal_poly = preprocess_polygon(collection.geoms[0]).simplify(simplification)
     shapely.prepare(internal_poly)
-    
-    
+
     if smoothing > 0 and coastline:
         coastline_poly = _read_compressed_shapely_wkb(coastline)
-        buffer = shapely.buffer(shapely.difference(internal_poly, coastline_poly), smoothing)
+        buffer = shapely.buffer(
+            shapely.difference(internal_poly, coastline_poly), smoothing
+        )
         offshore_smoothing = shapely.difference(buffer, coastline_poly)
         poly = shapely.union(internal_poly, offshore_smoothing)
         poly = retain_connected(poly, internal_poly)
     else:
         poly = internal_poly
-    
+
     shapely.prepare(poly)
 
     triangulation = triangulate_polygon(poly, triangulation_radius)
@@ -587,21 +633,20 @@ def main(
     )
     name = output.stem
     mesh = construct_volumetric_mesh(name, layers, priority)
-    
+
     if smoothing > 0:
-        print('Applying smoothing boundary')
-        
+        print("Applying smoothing boundary")
+
         points_2d = shapely.points(mesh.x, mesh.y)
         distances = shapely.distance(internal_poly, points_2d)
         alpha = np.interp(
             distances,
             np.array([0.0, smoothing], dtype=np.float32),
-            np.array([1.0, 0.0], dtype=np.float32)
+            np.array([1.0, 0.0], dtype=np.float32),
         )
-        mesh['alpha'].loc[:] = alpha
-    
-    print(mesh)
-    mesh.to_zarr(output, mode='w', encoding=DEFAULT_ENCODING_SETTINGS)
-    nbytes = output.stat().st_size
-    print(f'Saved model with size {nbytes / (1024 ** 2):.1f} MB')
+        mesh["alpha"].loc[:] = alpha
 
+    print(mesh)
+    mesh.to_zarr(output, mode="w", encoding=DEFAULT_ENCODING_SETTINGS)
+    nbytes = output.stat().st_size
+    print(f"Saved model with size {nbytes / (1024**2):.1f} MB")

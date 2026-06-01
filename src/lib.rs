@@ -195,8 +195,8 @@ mod nzcvm {
                 }
             }
         }
-        if idx != types.len() {
-            return Err(PyValueError::new_err("Invalid model types detected (did not read all models from model array using types given)."));
+        if idx != model_idx.len() {
+            return Err(PyValueError::new_err(format!("Invalid model types detected (did not read all models from model array using types given). idx = {}, models len = {}", idx, model_idx.len())));
         }
 
         let transform = transform_py.map(|arr| {

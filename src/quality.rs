@@ -26,15 +26,6 @@ impl Quality {
     /// The resulting `alpha` is `self.alpha + rhs.alpha * (1 - self.alpha)`.
     /// Material properties are blended proportionally.
     ///
-    /// # TODO (Scientific Review)
-    ///
-    /// This formula applies the same linear Porter-Duff blend to all six
-    /// components including `qp` and `qs` (seismic attenuation quality
-    /// factors).  For velocities (`rho`, `vp`, `vs`) a linear blend is the
-    /// standard Voigt/Reuss approximation; for attenuation quality factors the
-    /// harmonic mean (i.e. `1/Q` is additive) is more theoretically justified.
-    /// Verify with a domain expert that this approximation is acceptable.
-    ///
     /// # Examples
     ///
     /// A fully-opaque quality blended with anything stays unchanged:
@@ -51,12 +42,14 @@ impl Quality {
         let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
         let a0 = self.alpha / alpha;
         let a1 = rhs.alpha * (1.0 - self.alpha) / alpha;
+        let qp = (a0 * self.qp.recip() + a1 * rhs.qp.recip()).recip();
+        let qs = (a0 * self.qs.recip() + a1 * rhs.qs.recip()).recip();
         Self {
             rho: a0 * self.rho + a1 * rhs.rho,
             vp: a0 * self.vp + a1 * rhs.vp,
             vs: a0 * self.vs + a1 * rhs.vs,
-            qp: a0 * self.qp + a1 * rhs.qp,
-            qs: a0 * self.qs + a1 * rhs.qs,
+            qp: qp,
+            qs: qs,
             alpha,
         }
     }
@@ -111,12 +104,14 @@ impl Add for Quality {
     type Output = Self;
 
     fn add(self, rhs: Self) -> Self::Output {
+        let qp = (self.qp.recip() + rhs.qp.recip()).recip();
+        let qs = (self.qs.recip() + rhs.qs.recip()).recip();
         Self {
             rho: self.rho + rhs.rho,
             vp: self.vp + rhs.vp,
             vs: self.vs + rhs.vs,
-            qp: self.qp + rhs.qp,
-            qs: self.qs + rhs.qs,
+            qp: qp,
+            qs: qs,
             alpha: self.alpha + rhs.alpha,
         }
     }
@@ -151,7 +146,14 @@ mod tests {
     use approx::assert_relative_eq;
 
     fn q(v: Real) -> Quality {
-        Quality { rho: v, vp: v, vs: v, qp: v, qs: v, alpha: v }
+        Quality {
+            rho: v,
+            vp: v,
+            vs: v,
+            qp: v,
+            qs: v,
+            alpha: v,
+        }
     }
 
     #[test]
@@ -181,8 +183,22 @@ mod tests {
 
     #[test]
     fn test_blend_identity_alpha_one() {
-        let a = Quality { rho: 10.0, vp: 20.0, vs: 30.0, qp: 40.0, qs: 50.0, alpha: 1.0 };
-        let b = Quality { rho: 99.0, vp: 99.0, vs: 99.0, qp: 99.0, qs: 99.0, alpha: 0.5 };
+        let a = Quality {
+            rho: 10.0,
+            vp: 20.0,
+            vs: 30.0,
+            qp: 40.0,
+            qs: 50.0,
+            alpha: 1.0,
+        };
+        let b = Quality {
+            rho: 99.0,
+            vp: 99.0,
+            vs: 99.0,
+            qp: 99.0,
+            qs: 99.0,
+            alpha: 0.5,
+        };
         let blended = a.blend(&b);
         assert_relative_eq!(blended.rho, a.rho, epsilon = 1e-5);
         assert_relative_eq!(blended.alpha, 1.0, epsilon = 1e-5);
@@ -190,8 +206,22 @@ mod tests {
 
     #[test]
     fn test_blend_commutative_alpha() {
-        let a = Quality { rho: 1.0, vp: 1.0, vs: 1.0, qp: 1.0, qs: 1.0, alpha: 0.6 };
-        let b = Quality { rho: 2.0, vp: 2.0, vs: 2.0, qp: 2.0, qs: 2.0, alpha: 0.4 };
+        let a = Quality {
+            rho: 1.0,
+            vp: 1.0,
+            vs: 1.0,
+            qp: 1.0,
+            qs: 1.0,
+            alpha: 0.6,
+        };
+        let b = Quality {
+            rho: 2.0,
+            vp: 2.0,
+            vs: 2.0,
+            qp: 2.0,
+            qs: 2.0,
+            alpha: 0.4,
+        };
         let ab = a.blend(&b);
         let ba = b.blend(&a);
         let expected_alpha_ab = 0.6 + 0.4 * (1.0 - 0.6);
@@ -202,8 +232,22 @@ mod tests {
 
     #[test]
     fn test_blend_two_equal_half_alpha() {
-        let q1 = Quality { rho: 10.0, vp: 20.0, vs: 30.0, qp: 40.0, qs: 50.0, alpha: 0.5 };
-        let q2 = Quality { rho: 10.0, vp: 20.0, vs: 30.0, qp: 40.0, qs: 50.0, alpha: 0.5 };
+        let q1 = Quality {
+            rho: 10.0,
+            vp: 20.0,
+            vs: 30.0,
+            qp: 40.0,
+            qs: 50.0,
+            alpha: 0.5,
+        };
+        let q2 = Quality {
+            rho: 10.0,
+            vp: 20.0,
+            vs: 30.0,
+            qp: 40.0,
+            qs: 50.0,
+            alpha: 0.5,
+        };
         let blended = q1.blend(&q2);
         assert_relative_eq!(blended.rho, 10.0, epsilon = 1e-5);
         assert_relative_eq!(blended.vp, 20.0, epsilon = 1e-5);
@@ -224,7 +268,14 @@ mod tests {
 
     #[test]
     fn test_into_array1() {
-        let quality = Quality { rho: 1.0, vp: 2.0, vs: 3.0, qp: 4.0, qs: 5.0, alpha: 0.0 };
+        let quality = Quality {
+            rho: 1.0,
+            vp: 2.0,
+            vs: 3.0,
+            qp: 4.0,
+            qs: 5.0,
+            alpha: 0.0,
+        };
         let arr: ndarray::Array1<Real> = quality.into();
         assert_eq!(arr.len(), 5);
         assert_relative_eq!(arr[0], 1.0);

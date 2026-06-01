@@ -9,6 +9,7 @@ python visualise_grid.py model.nc --scalar depth
 # Show absolute difference between two models for the Vs scalar
 python visualise_grid.py model.nc --scalar vs --compare-to model2.nc --diff-mode abs
 """
+
 import gzip
 from enum import StrEnum, auto
 from pathlib import Path
@@ -31,12 +32,14 @@ def _require_pyvista():  # type: ignore[return]
     """Import pyvista or raise a helpful error."""
     try:
         import pyvista as pv
+
         return pv
     except ImportError as err:
         raise ImportError(
             "pyvista is required for the view command. "
             "Install it with: pip install nzcvm[visualization]"
         ) from err
+
 
 # ---------------------------------------------------------------------------
 # Types & Constants
@@ -65,9 +68,7 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def add_logical_axes(
-    pl: object, grid: xr.Dataset, bounds: tuple[float, ...]
-) -> None:
+def add_logical_axes(pl: object, grid: xr.Dataset, bounds: tuple[float, ...]) -> None:
     """Draws i, j, k logical direction vectors starting from the logical origin."""
     pv = _require_pyvista()
     w, e, s, n, z_min, z_max = bounds
@@ -90,12 +91,12 @@ def add_logical_axes(
 
     for p_axis, label, color in axes_config:
         vec = p_axis - p0
-        if label != 'k':
+        if label != "k":
             vec[-1] = 0.0
-            
+
         if not (norm := np.linalg.norm(vec)):
             continue
-        
+
         direction = vec / norm
         pl.add_mesh(
             pv.Arrow(
@@ -232,23 +233,19 @@ def basin(
     ] = None,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
-    
+
     pv = _require_pyvista()
     mesh_dset = TetrahedralMeshSchema.from_dataset(xr.open_dataset(mesh))
-    
+
     points = np.c_[mesh_dset.x.values, mesh_dset.y.values, mesh_dset.z.values]
     connectivity = mesh_dset.connectivity.values
     cell_length = connectivity.shape[1]
     lengths = np.full((connectivity.shape[0], 1), cell_length, dtype=connectivity.dtype)
     cell_type = np.full(len(lengths), pv.CellType.TETRA)
     cells = np.hstack((lengths, connectivity)).ravel()
-    mesh_data = pv.UnstructuredGrid(
-        cells,
-        cell_type,
-        points
-    )
+    mesh_data = pv.UnstructuredGrid(cells, cell_type, points)
     mesh_data.point_data[scalar] = mesh_dset[scalar].values
-    mesh_data.point_data['alpha'] = mesh_dset['alpha'].values
+    mesh_data.point_data["alpha"] = mesh_dset["alpha"].values
     pl = pv.Plotter()
     # This is required to ensure opacity is rendered correctly
     pl.enable_depth_peeling(number_of_peels=10, occlusion_ratio=0.0)
@@ -260,13 +257,10 @@ def basin(
             opacity=0.3,
             label="Surface",
         )
-    
 
-    
-    
     mesh_data.point_data.active_scalars_name = scalar
-    pl.add_mesh(mesh_data, cmap='hot', opacity='alpha', show_scalar_bar=False)
-    pl.add_mesh(mesh_data, cmap='hot', opacity=0.0, show_scalar_bar=True)
+    pl.add_mesh(mesh_data, cmap="hot", opacity="alpha", show_scalar_bar=False)
+    pl.add_mesh(mesh_data, cmap="hot", opacity=0.0, show_scalar_bar=True)
 
     if coastline:
         add_coastline_underlay(pl, mesh_data.bounds, coastline)
@@ -317,9 +311,6 @@ def model(
     slice_axis: Annotated[
         str | None, typer.Option(help="Axis to static slice ('x', 'y', 'z').")
     ] = None,
-    slice_pos: Annotated[
-        float, typer.Option(help="Fractional position [0, 1] along --slice-axis.")
-    ] = 0.5,
     cmap: Annotated[
         str, typer.Option(help="Matplotlib / PyVista colormap name.")
     ] = "viridis",

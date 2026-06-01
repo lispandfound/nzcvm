@@ -35,7 +35,7 @@ from nzcvm.query import ModelRange
 if TYPE_CHECKING:
     from nzcvm.grids.grid import Grid
     from nzcvm.qualities import Qualities
-    
+
 logger = logging.getLogger(__name__)
 
 
@@ -195,6 +195,7 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
             "Assigning basin qualities using offshore basin model (to %d points)",
             mask.sum(),
         )
+        logger.debug("Mean basin alpha = %f", basins.alpha.mean())
         qualities.blend(basins, offshore_qualities, out=background, where=mask)
 
         return background

@@ -25,13 +25,10 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
     def __init__(self, config: QueryLayerConfig, next_layer: Layer) -> None:
         super().__init__(config, next_layer)
         models = [
-            p
-            for glob in config.model_globs
-            for p in config.model_path.rglob(glob)
+            p for glob in config.model_globs for p in config.model_path.rglob(glob)
         ]
         self.model = ModelTree.load_models(*models)
-        breakpoint()
-        
+
     def __call__(
         self,
         grid: Grid,

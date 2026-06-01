@@ -8,7 +8,7 @@ use deepsize::{Context, DeepSizeOf};
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::{BHShape, BoundingHierarchy};
 use bvh::bvh::{Bvh, BvhNode};
-use nalgebra::{Affine3, Point, Point3, Point4};
+use nalgebra::{Affine3, Point, Point3, Point4, Vector3};
 use serde::Serialize;
 
 /// Default priority for models that do not specify one explicitly.
@@ -180,12 +180,13 @@ impl MeshModel {
                         acc.z.max(transformed.z),
                     )
                 });
-        let aabb = Aabb::with_bounds(min_point, max_point);
+        let spatial_padding = Vector3::repeat(0.01);
+        let aabb = Aabb::with_bounds(min_point - spatial_padding, max_point + spatial_padding);
 
-        let simplices_result: Option<Vec<Simplex>> = faces
+        let mut simplices: Vec<Simplex> = faces
             .iter()
             .enumerate()
-            .map(|(i, f)| {
+            .filter_map(|(i, f)| {
                 Simplex::new(
                     vertices[f.x],
                     vertices[f.y],
@@ -196,24 +197,20 @@ impl MeshModel {
             })
             .collect();
 
-        if let Some(mut simplices) = simplices_result {
-            let bvh_tree = Bvh::build_par(&mut simplices);
+        let bvh_tree = Bvh::build_par(&mut simplices);
 
-            Ok(Self {
-                bvh_tree,
-                simplices,
-                qualities,
-                aabb,
-                model_map: models,
-                priority,
-                name,
-                id: 0,
-                node_index: 0,
-                transform,
-            })
-        } else {
-            Err(MeshModelError::DegenerateSimplex)
-        }
+        Ok(Self {
+            bvh_tree,
+            simplices,
+            qualities,
+            aabb,
+            model_map: models,
+            priority,
+            name,
+            id: 0,
+            node_index: 0,
+            transform,
+        })
     }
 
     /// Number of vertex-quality entries in this mesh.

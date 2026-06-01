@@ -82,9 +82,6 @@ impl Simplex {
         let aabb = Aabb::with_bounds(min_p, max_p);
 
         let m = Matrix3::from_columns(&[c0 - c3, c1 - c3, c2 - c3]);
-        if m.try_inverse().is_none() {
-            println!("Inverse not found for {:?}", m);
-        }
         let inv_matrix = m.try_inverse()?;
 
         Some(Self {

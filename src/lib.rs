@@ -195,6 +195,9 @@ mod nzcvm {
                 }
             }
         }
+        if idx != types.len() {
+            return Err(PyValueError::new_err("Invalid model types detected (did not read all models from model array using types given)."));
+        }
 
         let transform = transform_py.map(|arr| {
             Affine3::from_matrix_unchecked(Matrix4::from_iterator(arr.as_array().iter().cloned()))

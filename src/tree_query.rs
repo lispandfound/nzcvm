@@ -272,15 +272,11 @@ where
                         (Some(_), None) => self.stack.push(child_l_index),
                         (None, Some(_)) => self.stack.push(child_r_index),
                         (Some(lt), Some(rt)) => {
-                            // Push higher-t_min child first so that the lower-t_min
-                            // child (= higher-priority subtree) is popped first.
-                            if lt <= rt {
-                                self.stack.push(child_r_index);
-                                self.stack.push(child_l_index);
-                            } else {
-                                self.stack.push(child_l_index);
-                                self.stack.push(child_r_index);
+                            let mut pushing = [child_l_index, child_r_index];
+                            if lt > rt {
+                                pushing.swap(0, 1);
                             }
+                            self.stack.extend(pushing);
                         }
                     }
                 }

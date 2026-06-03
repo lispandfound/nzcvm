@@ -1,14 +1,11 @@
 """Construct a tetrahedral volumetric mesh for a basin model."""
 import gzip
-import shutil
-import subprocess
 import sys
-import tempfile
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, TextIO
 
+import gmsh
 import h5py
 import numba
 import numpy as np
@@ -213,29 +210,81 @@ def construct_volumetric_mesh(
 
 
 def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
-    max_area = (np.sqrt(3) / 4) * np.square(r)
-    poly_data = extract_poly_data(poly)
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp_path = Path(tmp)
-        input_path = tmp_path / "input.poly"
-        with open(input_path, "w") as f:
-            write_poly_file(poly_data, f)
-        triangle = shutil.which("triangle")
-        if triangle is None:
-            raise RuntimeError(
-                "The 'triangle' binary was not found on PATH. "
-                "Install it (e.g. `apt install triangle-bin`) and try again."
-            )
-        opts = f"-qa{max_area:.5f}"
-        cmd = [triangle, opts, str(input_path)]
-        print("Calling triangle like so: ", " ".join(cmd))
-        subprocess.check_call(cmd)
-        output_triangles = input_path.with_suffix(".1.ele")
-        output_nodes = input_path.with_suffix(".1.node")
-        vertices = read_vertices(output_nodes)
-        triangles = read_triangles(output_triangles)
-    return Triangulation(vertices, triangles)
+    gmsh.initialize()
+    gmsh.option.setNumber("General.Terminal", 0)
+    gmsh.model.add("surface_triangulation")
 
+    # Extract exterior coordinates (ignoring duplicate closing point)
+    coords = np.array(poly.exterior.coords)[:-1]
+    
+    # Add boundary points
+    point_tags = []
+    for x, y in coords:
+        tag = gmsh.model.geo.addPoint(x, y, 0.0, meshSize=r)
+        point_tags.append(tag)
+        
+    # Connect points with line segments
+    line_tags = []
+    num_points = len(point_tags)
+    for i in range(num_points):
+        p1 = point_tags[i]
+        p2 = point_tags[(i + 1) % num_points]
+        tag = gmsh.model.geo.addLine(p1, p2)
+        line_tags.append(tag)
+        
+    cl = gmsh.model.geo.addCurveLoop(line_tags)
+    surface_tag = gmsh.model.geo.addPlaneSurface([cl])
+    
+    gmsh.model.geo.synchronize()
+    
+    gmsh.option.setNumber("Mesh.MeshSizeMax", r)
+    gmsh.option.setNumber("Mesh.Algorithm", 5) 
+    
+    gmsh.model.mesh.generate(2)
+    
+    node_tags, node_coords, _ = gmsh.model.mesh.getNodes(2, surface_tag, includeBoundary=True)
+    node_coords = node_coords.reshape(-1, 3)
+    
+    elem_types, elem_tags, elem_node_tags = gmsh.model.mesh.getElements(2, surface_tag)
+    
+    tri_type_idx = list(elem_types).index(2)
+    tri_node_tags = elem_node_tags[tri_type_idx].reshape(-1, 3)
+    tri_tags = elem_tags[tri_type_idx]
+    
+    gmsh.finalize()
+    
+    num_nodes = len(node_tags)
+    sort_idx = np.argsort(node_tags)
+    sorted_tags = node_tags[sort_idx]
+    sorted_coords = node_coords[sort_idx]
+    
+    vertices = np.empty(num_nodes, dtype=[
+        ("vertex", np.int64),
+        ("x", np.float64),
+        ("y", np.float64),
+        ("boundary", np.int64),
+    ])
+    vertices["vertex"] = np.arange(1, num_nodes + 1)
+    vertices["x"] = sorted_coords[:, 0]
+    vertices["y"] = sorted_coords[:, 1]
+    vertices["boundary"] = 0  # Replicates neutral boundary column
+    
+    # Re-index triangle connectivity matrices matching the new sequential vertex mapping
+    local_tri_nodes = np.searchsorted(sorted_tags, tri_node_tags) + 1
+    
+    num_triangles = len(tri_tags)
+    triangles = np.empty(num_triangles, dtype=[
+        ("vertex", np.int64),
+        ("i", np.int64),
+        ("j", np.int64),
+        ("k", np.int64),
+    ])
+    triangles["vertex"] = np.arange(1, num_triangles + 1)
+    triangles["i"] = local_tri_nodes[:, 0]
+    triangles["j"] = local_tri_nodes[:, 1]
+    triangles["k"] = local_tri_nodes[:, 2]
+    
+    return Triangulation(vertices, triangles)
 
 class LinearNDInterpolatorExt(object):
     def __init__(self, points, values):

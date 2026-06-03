@@ -1,10 +1,10 @@
 """Construct a tetrahedral volumetric mesh for a basin model."""
-
 import gzip
 import shutil
 import subprocess
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, TextIO
@@ -19,6 +19,7 @@ import shapely
 import shapely.ops
 import typer
 import xarray as xr
+from shapely.geometry import Polygon
 
 from nzcvm.models.mesh import (
     DEFAULT_ENCODING_SETTINGS,
@@ -279,8 +280,8 @@ def enforce_mesh_constraints(mesh_top, mesh_bottom):
     if overlap_mask.any():
         print("Warning: bottom surface clips top surface")
         mesh_bottom[overlap_mask] = mesh_top[overlap_mask]
-    mesh_top -= 50.0
-    mesh_bottom += 50.0
+    # mesh_top -= 50.0
+    # mesh_bottom += 50.0
     return mesh_top, mesh_bottom
 
 
@@ -298,8 +299,10 @@ def read_layered_model(layered_model_path: Path) -> pd.DataFrame:
         sep=r"\s+",
         names=["vp", "vs", "rho", "qp", "qs", "thickness"],
     )
-    df["thickness"] *= 1000.0
+    for col in ['vp', 'vs', 'rho', 'thickness']:
+        df[col] *= 1000.0
     df["z"] = np.cumulative_sum(df["thickness"], include_initial=True)[:-1]
+    
     return df
 
 
@@ -472,6 +475,7 @@ def validate(mesh_paths: list[Path]) -> None:
     print(f"Total dataset in-memory requirements: {total_size / (1024**3):.1f}G")
 
 
+    
 @app.command()
 def main(
     bounds: Annotated[
@@ -617,7 +621,6 @@ def main(
     mesh_bottom = interpolate_surface(bottom_surface_data, triangulation.vertices)
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
     mesh_topography = interpolate_surface(topography_data, triangulation.vertices)
-
     if vm_1d is None and (rho and vp and vs):
         model = uniform_model(rho, vp, vs)
     elif vm_1d is not None:

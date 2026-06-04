@@ -1,4 +1,4 @@
-"""Construct a tetrahedral volumetric mesh for a basin model."""
+"""Construct a tetrahedral volumetric mesh for a basin model using adaptive topography gradient logic."""
 import gzip
 import sys
 from dataclasses import dataclass
@@ -16,7 +16,6 @@ import shapely
 import shapely.ops
 import typer
 import xarray as xr
-from shapely.geometry import Polygon
 
 from nzcvm.models.mesh import (
     DEFAULT_ENCODING_SETTINGS,
@@ -29,6 +28,12 @@ TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
 app = typer.Typer(help="Construct a volumetric tetrahedral mesh for a basin model.")
 
+def get_surface_wgs_bounds(surface_path: Path) -> tuple[float, float, float, float]:
+    """Return the WGS84 coordinate bounds (min_lat, max_lat, min_lon, max_lon) of a surface."""
+    with h5py.File(surface_path, "r") as f:
+        lat = f["latitude"][:]
+        lon = f["longitude"][:]
+    return float(lat.min()), float(lat.max()), float(lon.min()), float(lon.max())
 
 def preprocess_polygon(poly: shapely.Polygon) -> shapely.Polygon:
     poly_nztm = shapely.ops.transform(TRANSFORMER.transform, poly)
@@ -111,18 +116,111 @@ def interleave_top_and_bottom(top: np.ndarray, bottom: np.ndarray) -> np.ndarray
     interleaved[1::2] = bottom
     return interleaved
 
-
-def read_surface_file(surface_path: Path) -> np.ndarray:
+def read_surface_file(surface_path: Path, bbox: tuple[float, float, float, float] | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     with h5py.File(surface_path, "r") as f:
-        latitude = np.array(f["latitude"])
-        longitude = np.array(f["longitude"])
-        elevation = np.array(f["elevation"])
+        latitude = f["latitude"][:]
+        longitude = f["longitude"][:]
+        
+        if bbox is not None:
+            min_lat, max_lat, min_lon, max_lon = bbox
+            lat_idxs = np.where((latitude >= min_lat) & (latitude <= max_lat))[0]
+            lon_idxs = np.where((longitude >= min_lon) & (longitude <= max_lon))[0]
+            
+            if len(lat_idxs) > 0 and len(lon_idxs) > 0:
+                lat_slice = slice(lat_idxs.min(), lat_idxs.max() + 1)
+                lon_slice = slice(lon_idxs.min(), lon_idxs.max() + 1)
+                latitude = latitude[lat_slice]
+                longitude = longitude[lon_slice]
+                elevation = f["elevation"][lat_slice, lon_slice]
+            else:
+                elevation = f["elevation"][:]
+        else:
+            elevation = f["elevation"][:]
+            
     elevation *= -1
     x_lon, x_lat = np.meshgrid(longitude, latitude)
     x, y = TRANSFORMER.transform(x_lon, x_lat)
-    points = np.stack((x.ravel(), y.ravel(), elevation.ravel()), axis=1)
-    return points
+    return x, y, elevation
 
+
+
+
+class LinearNDInterpolatorExt(object):
+    def __init__(self, points, values):
+        self.funcinterp = sp.interpolate.LinearNDInterpolator(points, values)
+        self.funcnearest = sp.interpolate.NearestNDInterpolator(points, values)
+
+    def __call__(self, *args):
+        t = self.funcinterp(*args)
+        t_n = self.funcnearest(*args)
+        t[np.isnan(t)] = t_n[np.isnan(t)]
+        return t
+
+def gradient_field(x: np.ndarray, y: np.ndarray, z: np.ndarray, error_target: float, max_h: float) -> np.ndarray:
+    """Compute an unstructured mesh sizing field from topography spatial gradients."""
+    del_y, del_x = np.gradient(z)
+
+    dx = np.gradient(x, axis=1)
+    dy = np.gradient(y, axis=0)
+    dx[dx == 0] = 1.0
+    dy[dy == 0] = 1.0
+
+    grad_x = del_x / dx
+    grad_y = del_y / dy
+    grad_mag = np.hypot(grad_x, grad_y)
+
+    # Characteristic local grid spacing (metres)
+    cell_size = np.sqrt(np.abs(dx * dy))  # geometric mean of dx, dy
+
+    # h = error_target * cell_size / grad_mag
+    # → coarsen on flat terrain, refine on steep terrain
+    # → stays in metres and scales with your grid resolution
+    with np.errstate(divide="ignore", invalid="ignore"):
+        h_field = (error_target * cell_size) / (grad_mag + 1e-8)
+
+    min_size = cell_size
+    return np.clip(h_field, min_size, max_h)
+
+def compute_topography_sizing_field(
+    *fields: tuple[np.ndarray, np.ndarray, np.ndarray],
+    bin_size: float = 100.0,
+) -> LinearNDInterpolatorExt:
+    """Build a sizing field interpolator from one or more gradient fields.
+
+    Where fields overlap, the minimum h (finest resolution) wins.
+    Points are binned at `bin_size` metres resolution before reduction
+    to identify near-coincident points across grids.
+
+    Example:
+        coarse = gradient_field(x1, y1, z1, error_target=0.01, max_h=50000)
+        fine   = gradient_field(x2, y2, z2, error_target=0.01, max_h=1000)
+        interp = compute_topography_sizing_field(coarse, fine, bin_size=250.0)
+    """
+    all_x = np.concatenate([f[0] for f in fields])
+    all_y = np.concatenate([f[1] for f in fields])
+    all_h = np.concatenate([f[2] for f in fields])
+
+    # Bin coordinates to identify near-coincident points across grids
+    binned_x = np.round(all_x / bin_size).astype(np.int64)
+    binned_y = np.round(all_y / bin_size).astype(np.int64)
+
+    # Take minimum h per bin using a dict reduction
+    bin_map: dict[tuple[int, int], float] = {}
+    for bx, by, h in zip(binned_x, binned_y, all_h):
+        key = (bx, by)
+        if key not in bin_map or h < bin_map[key]:
+            bin_map[key] = h
+
+    # Reconstruct arrays from reduced bins (convert keys back to metres)
+    keys = np.array(list(bin_map.keys()), dtype=np.float64)
+    reduced_x = keys[:, 0] * bin_size
+    reduced_y = keys[:, 1] * bin_size
+    reduced_h = np.array(list(bin_map.values()))
+
+    points = np.stack((reduced_x, reduced_y), axis=1)
+    q0, q50, q100 = np.quantile(reduced_h, [0, 0.5, 1.0])
+    print(f"Refinement field (min, median, max) = ({q0:.1f}, {q50:.1f}, {q100:.1f})")
+    return LinearNDInterpolatorExt(points, reduced_h)
 
 @dataclass
 class Layer:
@@ -146,7 +244,6 @@ def construct_volumetric_mesh(
     tetra_offset = 0
     vertex_offset = 0
 
-    # CHANGED: Map properties to points by using len(layer.vertices) instead of len(layer.tetra)
     rho = np.concatenate(
         [
             np.full((len(layer.vertices),), layer.rho, dtype=np.float32)
@@ -184,7 +281,6 @@ def construct_volumetric_mesh(
         ]
     )
 
-    # model_type and priority dictate topology, keep them as cell data
     model_type = np.concatenate(
         [np.full((len(layer.tetra),), 1, dtype=np.uint8) for layer in layers]
     )
@@ -209,21 +305,22 @@ def construct_volumetric_mesh(
     return mesh
 
 
-def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
+def triangulate_polygon(
+    poly: shapely.Polygon, sizing_field: LinearNDInterpolatorExt
+) -> Triangulation:
     gmsh.initialize()
-    gmsh.option.setNumber("General.Terminal", 0)
+    # gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add("surface_triangulation")
 
-    # Extract exterior coordinates (ignoring duplicate closing point)
     coords = np.array(poly.exterior.coords)[:-1]
     
-    # Add boundary points
+    # Map adaptive local sizing to boundary vertices
     point_tags = []
     for x, y in coords:
-        tag = gmsh.model.geo.addPoint(x, y, 0.0, meshSize=r)
+        r_local = float(sizing_field([[x, y]])[0])
+        tag = gmsh.model.geo.addPoint(x, y, 0.0, meshSize=r_local)
         point_tags.append(tag)
         
-    # Connect points with line segments
     line_tags = []
     num_points = len(point_tags)
     for i in range(num_points):
@@ -237,7 +334,11 @@ def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
     
     gmsh.model.geo.synchronize()
     
-    gmsh.option.setNumber("Mesh.MeshSizeMax", r)
+    # Callback evaluation loop providing Gmsh with local terrain constraints during triangulation
+    def mesh_size_callback(dim, tag, x, y, z, lc):
+        return float(sizing_field([[x, y]])[0])
+        
+    gmsh.model.mesh.setSizeCallback(mesh_size_callback)
     gmsh.option.setNumber("Mesh.Algorithm", 5) 
     
     gmsh.model.mesh.generate(2)
@@ -267,9 +368,8 @@ def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
     vertices["vertex"] = np.arange(1, num_nodes + 1)
     vertices["x"] = sorted_coords[:, 0]
     vertices["y"] = sorted_coords[:, 1]
-    vertices["boundary"] = 0  # Replicates neutral boundary column
+    vertices["boundary"] = 0
     
-    # Re-index triangle connectivity matrices matching the new sequential vertex mapping
     local_tri_nodes = np.searchsorted(sorted_tags, tri_node_tags) + 1
     
     num_triangles = len(tri_tags)
@@ -285,17 +385,6 @@ def triangulate_polygon(poly: shapely.Polygon, r: float) -> Triangulation:
     triangles["k"] = local_tri_nodes[:, 2]
     
     return Triangulation(vertices, triangles)
-
-class LinearNDInterpolatorExt(object):
-    def __init__(self, points, values):
-        self.funcinterp = sp.interpolate.LinearNDInterpolator(points, values)
-        self.funcnearest = sp.interpolate.NearestNDInterpolator(points, values)
-
-    def __call__(self, *args):
-        t = self.funcinterp(*args)
-        t_n = self.funcnearest(*args)
-        t[np.isnan(t)] = t_n[np.isnan(t)]
-        return t
 
 
 def interpolate_surface(
@@ -329,8 +418,6 @@ def enforce_mesh_constraints(mesh_top, mesh_bottom):
     if overlap_mask.any():
         print("Warning: bottom surface clips top surface")
         mesh_bottom[overlap_mask] = mesh_top[overlap_mask]
-    # mesh_top -= 50.0
-    # mesh_bottom += 50.0
     return mesh_top, mesh_bottom
 
 
@@ -427,7 +514,6 @@ def slice_with_model(
     )
     tri_verts.sort(axis=1)
 
-    # Reconstruct a temporary structured array for the sorted triangles
     sorted_triangles = np.empty(len(tri_verts), dtype=triangulation.triangles.dtype)
     sorted_triangles["i"] = tri_verts[:, 0]
     sorted_triangles["j"] = tri_verts[:, 1]
@@ -524,7 +610,6 @@ def validate(mesh_paths: list[Path]) -> None:
     print(f"Total dataset in-memory requirements: {total_size / (1024**3):.1f}G")
 
 
-    
 @app.command()
 def main(
     bounds: Annotated[
@@ -586,15 +671,15 @@ def main(
             min=0.0,
         ),
     ] = 1e-3,
-    triangulation_radius: Annotated[
+    error_target: Annotated[
         float,
         typer.Option(
-            "-r",
-            "--triangulation-radius",
-            help="Max triangulation radius in metres.",
+            "-e",
+            "--error-target",
+            help="Geometric error target for adaptive topography triangulation (e.g. 0.01 for 1%).",
             min=0.0,
         ),
-    ] = 1000.0,
+    ] = 0.01,
     smoothing: Annotated[
         float,
         typer.Option(
@@ -642,8 +727,8 @@ def main(
     collection = shapely.from_geojson(bounds.read_text())
     internal_poly = preprocess_polygon(collection.geoms[0]).simplify(simplification)
     shapely.prepare(internal_poly)
-
-    if smoothing > 0 and coastline:
+    will_smooth = smoothing > 0 and coastline
+    if will_smooth:
         coastline_poly = _read_compressed_shapely_wkb(coastline)
         buffer = shapely.buffer(
             shapely.difference(internal_poly, coastline_poly), smoothing
@@ -656,24 +741,53 @@ def main(
 
     shapely.prepare(poly)
 
-    triangulation = triangulate_polygon(poly, triangulation_radius)
-    top_surface_data = read_surface_file(top_surface)
-    if top_surface_data.size > 1e6:
-        print("Massive top surface detected, trimming to bounds")
-        top_surface_data = mask_surface(poly, top_surface_data, buffer=10000)
+    top_bbox = get_surface_wgs_bounds(top_surface)
+    bottom_bbox = get_surface_wgs_bounds(bottom_surface)
+    
+    area_top = (top_bbox[1] - top_bbox[0]) * (top_bbox[3] - top_bbox[2])
+    area_bottom = (bottom_bbox[1] - bottom_bbox[0]) * (bottom_bbox[3] - bottom_bbox[2])
+    
+    smallest_bbox = top_bbox if area_top < area_bottom else bottom_bbox
+    lat_buf = (smallest_bbox[1] - smallest_bbox[0]) * 0.05
+    lon_buf = (smallest_bbox[3] - smallest_bbox[2]) * 0.05
+    buffered_bbox = (
+        smallest_bbox[0] - lat_buf,
+        smallest_bbox[1] + lat_buf,
+        smallest_bbox[2] - lon_buf,
+        smallest_bbox[3] + lon_buf
+    )
+    topo_x, topo_y, topo_z = read_surface_file(topography, bbox=buffered_bbox)
+    top_x, top_y, top_z = read_surface_file(top_surface, bbox=buffered_bbox)
+    bot_x, bot_y, bot_z = read_surface_file(bottom_surface, bbox=buffered_bbox)
+    print("Computing topography gradient adaptive sizing field...")
+    # If we are smoothing then we cap the cell size to 1000.0 km to ensure decent smoothing resolution.
+    # Otherwise, the only limit is geometry.
+    max_h = 1000.0 if will_smooth else 50000.0
+    fields = []
+    h_topo = gradient_field(topo_x, topo_y, topo_z, max_h=max_h, error_target=error_target)
+    fields.append((topo_x.ravel(), topo_y.ravel(), h_topo.ravel()))
+    if topography != top_surface:
+        h_top = gradient_field(top_x, top_y, top_z, max_h=max_h, error_target=error_target)
+        fields.append((top_x.ravel(), top_y.ravel(), h_top.ravel()))
+    h_bot = gradient_field(bot_x, bot_y, bot_z, max_h=max_h, error_target=error_target)
+    fields.append((bot_x.ravel(), bot_y.ravel(), h_bot.ravel()))
+    sizing_field = compute_topography_sizing_field(*fields)
 
-    bottom_surface_data = read_surface_file(bottom_surface)
-    topography_data = read_surface_file(topography)
-    topography_data = mask_surface(poly, topography_data, buffer=10000)
-
+    triangulation = triangulate_polygon(poly, sizing_field)
+    top_surface_data = np.c_[top_x.ravel(), top_y.ravel(), top_z.ravel()]
+    bottom_surface_data = np.c_[bot_x.ravel(), bot_y.ravel(), bot_z.ravel()]
+    topography_data = np.c_[topo_x.ravel(), topo_y.ravel(), topo_z.ravel()]
+    
     mesh_top = interpolate_surface(top_surface_data, triangulation.vertices)
     mesh_bottom = interpolate_surface(bottom_surface_data, triangulation.vertices)
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
     mesh_topography = interpolate_surface(topography_data, triangulation.vertices)
+    
     if vm_1d is None and (rho and vp and vs):
         model = uniform_model(rho, vp, vs)
     elif vm_1d is not None:
         model = read_layered_model(vm_1d)
+        
     print("Slicing model into volumetric mesh")
     layers = slice_with_model(
         triangulation,

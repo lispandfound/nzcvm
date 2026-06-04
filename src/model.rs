@@ -1,4 +1,4 @@
-use crate::quality::Quality;
+use crate::quality::{barycentric_interpolate, Quality};
 use crate::real::Real;
 use crate::simplex::Simplex;
 use deepsize::{Context, DeepSizeOf};
@@ -18,12 +18,8 @@ pub enum ModelExplanation {
 pub trait Queryable {
     /// Return the quality at `point` inside `simplex`, looking up vertex
     /// properties from the qualities slice.
-    fn quality_at(
-        &self,
-        qualities: &[Quality],
-        simplex: &Simplex,
-        point: &Point3<Real>,
-    ) -> Quality;
+    fn quality_at(&self, qualities: &[Quality], simplex: &Simplex, point: &Point3<Real>)
+        -> Quality;
     /// Return a diagnostic description of this model's contribution.
     fn explanation(&self, qualities: &[Quality]) -> ModelExplanation;
 }
@@ -84,7 +80,7 @@ impl Queryable for InterpolateModel<usize> {
         let q1 = qualities[self.qualities.x];
         let q2 = qualities[self.qualities.y];
         let q3 = qualities[self.qualities.z];
-        q0 * bary.w + q1 * bary.x + q2 * bary.y + q3 * bary.z
+        barycentric_interpolate([q0, q1, q2, q3], [bary.x, bary.w, bary.y, bary.z])
     }
 
     fn explanation(&self, qualities: &[Quality]) -> ModelExplanation {

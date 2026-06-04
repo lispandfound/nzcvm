@@ -2,7 +2,6 @@ use crate::real::Real;
 use deepsize::DeepSizeOf;
 use ndarray::{Array1, Array2, ArrayView1};
 use serde::Serialize;
-use std::ops::{Add, Mul};
 
 /// Seismic material properties at a single point.
 ///
@@ -39,11 +38,19 @@ impl Quality {
     /// assert!((blended.alpha - 1.0).abs() < 1e-3);
     /// ```
     pub fn blend(&self, rhs: &Quality) -> Quality {
+        // These shortcuts are required to ensure correct behaviour when
+        // interpolating Qp/Qs.
+        if self.alpha < f32::EPSILON {
+            return *rhs;
+        } else if rhs.alpha < f32::EPSILON {
+            return *self;
+        }
         let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
         let a0 = self.alpha / alpha;
         let a1 = rhs.alpha * (1.0 - self.alpha) / alpha;
         let qp = (a0 * self.qp.recip() + a1 * rhs.qp.recip()).recip();
         let qs = (a0 * self.qs.recip() + a1 * rhs.qs.recip()).recip();
+
         Self {
             rho: a0 * self.rho + a1 * rhs.rho,
             vp: a0 * self.vp + a1 * rhs.vp,
@@ -52,6 +59,31 @@ impl Quality {
             qs,
             alpha,
         }
+    }
+}
+/// Interpolates a tetrahedral cell's vertex properties.
+pub fn barycentric_interpolate(q: [Quality; 4], w: [Real; 4]) -> Quality {
+    let [q0, q1, q2, q3] = q;
+    let [w0, w1, w2, w3] = w;
+
+    let rho = w0 * q0.rho + w1 * q1.rho + w2 * q2.rho + w3 * q3.rho;
+    let vp = w0 * q0.vp + w1 * q1.vp + w2 * q2.vp + w3 * q3.vp;
+    let vs = w0 * q0.vs + w1 * q1.vs + w2 * q2.vs + w3 * q3.vs;
+
+    let qp =
+        (w0 * q0.qp.recip() + w1 * q1.qp.recip() + w2 * q2.qp.recip() + w3 * q3.qp.recip()).recip();
+    let qs =
+        (w0 * q0.qs.recip() + w1 * q1.qs.recip() + w2 * q2.qs.recip() + w3 * q3.qs.recip()).recip();
+
+    let alpha = w0 * q0.alpha + w1 * q1.alpha + w2 * q2.alpha + w3 * q3.alpha;
+
+    Quality {
+        rho,
+        vp,
+        vs,
+        qp,
+        qs,
+        alpha,
     }
 }
 
@@ -92,51 +124,6 @@ impl From<ArrayView1<'_, Real>> for Quality {
             qs: arr[4],
             alpha: arr[5],
         }
-    }
-}
-
-// TODO (Scientific Review): qp and qs are dimensionless seismic quality factors
-// (attenuation); simple scalar addition and multiplication may not be physically
-// meaningful for these components (e.g. the harmonic mean is more appropriate for
-// averaging attenuation).  Confirm the intended usage before this impl is called
-// in production blending paths.
-impl Add for Quality {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self::Output {
-        let qp = (self.qp.recip() + rhs.qp.recip()).recip();
-        let qs = (self.qs.recip() + rhs.qs.recip()).recip();
-        Self {
-            rho: self.rho + rhs.rho,
-            vp: self.vp + rhs.vp,
-            vs: self.vs + rhs.vs,
-            qp,
-            qs,
-            alpha: self.alpha + rhs.alpha,
-        }
-    }
-}
-
-impl Mul<Real> for Quality {
-    type Output = Self;
-
-    fn mul(self, rhs: Real) -> Self::Output {
-        Self {
-            rho: self.rho * rhs,
-            vp: self.vp * rhs,
-            vs: self.vs * rhs,
-            qp: self.qp * rhs,
-            qs: self.qs * rhs,
-            alpha: self.alpha * rhs,
-        }
-    }
-}
-
-impl Mul<Quality> for Real {
-    type Output = Quality;
-
-    fn mul(self, rhs: Quality) -> Self::Output {
-        rhs * self
     }
 }
 

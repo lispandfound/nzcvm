@@ -1,10 +1,15 @@
+use std::cmp::Ordering;
+
 use bvh::{
     aabb::{Aabb, Bounded},
     bounding_hierarchy::BHValue,
     bvh::{Bvh, BvhNode},
 };
 use nalgebra::Point;
+use small_collections::SmallBinaryHeap;
 use smallvec::SmallVec;
+
+use crate::real::Real;
 
 /// A shape that can test whether it contains a query point.
 ///
@@ -161,6 +166,20 @@ fn priority_aabb_hit_bounded<T: BHValue, const DBVH: usize, const DQ: usize>(
     Some(p_min)
 }
 
+#[derive(PartialEq, PartialOrd)]
+struct Priority(Real, usize);
+
+impl Eq for Priority {}
+
+impl Ord for Priority {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let Priority(p, i) = self;
+        let Priority(p_o, i_o) = other;
+        // The .reverse() call ensures that priority 0 > priority 255
+        p.total_cmp(p_o).reverse().then(i.cmp(i_o))
+    }
+}
+
 /// Iterator over a `DBVH`-dimensional BVH that models a ray from
 /// `(point, 0)` along the `DBVH`-th axis (the *priority* dimension).
 ///
@@ -180,37 +199,35 @@ fn priority_aabb_hit_bounded<T: BHValue, const DBVH: usize, const DQ: usize>(
 pub struct PriorityRayIterator<
     'bvh,
     'shape,
-    T: BHValue,
     const DBVH: usize,
     const DQ: usize,
     Data,
-    Shape: Contains<T, DQ, Data> + Bounded<T, DBVH>,
+    Shape: Contains<Real, DQ, Data> + Bounded<Real, DBVH>,
 > {
-    bvh: &'bvh Bvh<T, DBVH>,
-    point: Point<T, DQ>,
+    bvh: &'bvh Bvh<Real, DBVH>,
+    point: Point<Real, DQ>,
     shapes: &'shape [Shape],
-    stack: SmallVec<[usize; SMALL_VEC_RAY_SIZE]>,
-    priority_lo: T,
-    priority_hi: T,
+    stack: SmallBinaryHeap<Priority, SMALL_VEC_RAY_SIZE>,
+    priority_lo: Real,
+    priority_hi: Real,
     _phantom: std::marker::PhantomData<Data>,
 }
 
-impl<'bvh, 'shape, T, const DBVH: usize, const DQ: usize, Data, Shape>
-    PriorityRayIterator<'bvh, 'shape, T, DBVH, DQ, Data, Shape>
+impl<'bvh, 'shape, const DBVH: usize, const DQ: usize, Data, Shape>
+    PriorityRayIterator<'bvh, 'shape, DBVH, DQ, Data, Shape>
 where
-    T: BHValue,
-    Shape: Bounded<T, DBVH> + Contains<T, DQ, Data>,
+    Shape: Bounded<Real, DBVH> + Contains<Real, DQ, Data>,
 {
     fn new(
-        bvh: &'bvh Bvh<T, DBVH>,
-        point: Point<T, DQ>,
+        bvh: &'bvh Bvh<Real, DBVH>,
+        point: Point<Real, DQ>,
         shapes: &'shape [Shape],
-        priority_lo: T,
-        priority_hi: T,
+        priority_lo: Real,
+        priority_hi: Real,
     ) -> Self {
-        let mut stack = SmallVec::new();
+        let mut stack = SmallBinaryHeap::new();
         if !shapes.is_empty() {
-            stack.push(0usize);
+            stack.push(Priority(0.0, 0));
         }
         Self {
             bvh,
@@ -224,16 +241,15 @@ where
     }
 }
 
-impl<'shape, T, const DBVH: usize, const DQ: usize, Data, Shape> Iterator
-    for PriorityRayIterator<'_, 'shape, T, DBVH, DQ, Data, Shape>
+impl<'shape, const DBVH: usize, const DQ: usize, Data, Shape> Iterator
+    for PriorityRayIterator<'_, 'shape, DBVH, DQ, Data, Shape>
 where
-    T: BHValue,
-    Shape: Bounded<T, DBVH> + Contains<T, DQ, Data>,
+    Shape: Bounded<Real, DBVH> + Contains<Real, DQ, Data>,
 {
     type Item = Data;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(node_idx) = self.stack.pop() {
+        while let Some(Priority(_, node_idx)) = self.stack.pop() {
             match self.bvh.nodes[node_idx] {
                 BvhNode::Leaf { shape_index, .. } => {
                     let shape = &self.shapes[shape_index];
@@ -269,14 +285,11 @@ where
 
                     match (l_t, r_t) {
                         (None, None) => {}
-                        (Some(_), None) => self.stack.push(child_l_index),
-                        (None, Some(_)) => self.stack.push(child_r_index),
-                        (Some(lt), Some(rt)) => {
-                            let mut pushing = [child_l_index, child_r_index];
-                            if lt > rt {
-                                pushing.swap(0, 1);
-                            }
-                            self.stack.extend(pushing);
+                        (Some(lp), None) => self.stack.push(Priority(lp, child_l_index)),
+                        (None, Some(rp)) => self.stack.push(Priority(rp, child_r_index)),
+                        (Some(lp), Some(rp)) => {
+                            self.stack.push(Priority(lp, child_l_index));
+                            self.stack.push(Priority(rp, child_r_index));
                         }
                     }
                 }
@@ -291,18 +304,17 @@ where
 pub fn priority_ray_iterator<
     'bvh,
     'shape,
-    T: BHValue,
     const DBVH: usize,
     const DQ: usize,
     Data,
-    Shape: Contains<T, DQ, Data> + Bounded<T, DBVH>,
+    Shape: Contains<Real, DQ, Data> + Bounded<Real, DBVH>,
 >(
-    bvh_tree: &'bvh Bvh<T, DBVH>,
+    bvh_tree: &'bvh Bvh<Real, DBVH>,
     shapes: &'shape [Shape],
-    point: Point<T, DQ>,
-    priority_lo: T,
-    priority_hi: T,
-) -> PriorityRayIterator<'bvh, 'shape, T, DBVH, DQ, Data, Shape> {
+    point: Point<Real, DQ>,
+    priority_lo: Real,
+    priority_hi: Real,
+) -> PriorityRayIterator<'bvh, 'shape, DBVH, DQ, Data, Shape> {
     PriorityRayIterator::new(bvh_tree, point, shapes, priority_lo, priority_hi)
 }
 

@@ -11,7 +11,6 @@ provided by :class:`~nzcvm.layers.coastline.CoastlineLayer`.
 
 from __future__ import annotations
 
-
 import functools
 import logging
 from dataclasses import dataclass
@@ -191,11 +190,6 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         # Equivalent to xr.where(mask, blend(basins, offshore), background) but
         # avoids allocating a new result array.
         mask = is_above_basin & is_offshore
-        logger.debug(
-            "Assigning basin qualities using offshore basin model (to %d points)",
-            mask.sum(),
-        )
-        logger.debug("Mean basin alpha = %f", basins.alpha.mean())
         qualities.blend(basins, offshore_qualities, out=background, where=mask)
 
         return background

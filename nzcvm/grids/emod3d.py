@@ -28,17 +28,10 @@ def squashed_interpolator(
 def squashed_tapered_interpolator(
     z_surface: xr.DataArray, depth: xr.DataArray
 ) -> tuple[xr.DataArray, xr.DataArray]:
-    # Squashed tapered:
-    # z_surface + 2 * d up to -z_surface
-    # z_surface + d after
-    # z_surface + 2 * d > -z_surface
-    # 2 * z_surface + 2 * d > 0
-    # z_surface + d > 0
 
     squashed_tapered_z = z_surface + depth
     residual_depth = depth > -z_surface
 
-    # 3. Branchless 3D addition
     z = squashed_tapered_z + residual_depth * depth
 
     return z, z - z_surface

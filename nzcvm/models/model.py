@@ -15,6 +15,7 @@ nzcvm.models.mesh : Mesh I/O utilities used by :meth:`ModelTree.load_models`.
 """
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
@@ -34,54 +35,11 @@ from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
     QueryCoordinates,
     QueryParams,
 )
+from nzcvm.qualities import Quality
 from nzcvm.query import ModelRange
 
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
-
-
-@dataclass
-class Quality(DataClassDictMixin):
-    """Seismic material properties at a single point in the velocity model.
-
-    Parameters
-    ----------
-    rho :
-        Density in kg m⁻³.
-    vp :
-        P-wave velocity in m s⁻¹.
-    vs :
-        S-wave velocity in m s⁻¹.
-    qp :
-        P-wave quality factor (attenuation).
-    qs :
-        S-wave quality factor (attenuation).
-    alpha :
-        Opacity weight in [0, 1] used for alpha blending when multiple
-        models overlap.  A value of 1.0 means the model is fully opaque
-        and no lower-priority models contribute.
-
-    Examples
-    --------
-    >>> q = Quality(rho=2700.0, vp=6000.0, vs=3500.0, qp=200.0, qs=100.0, alpha=1.0)
-    >>> str(q)
-    '(ρ=2700.00, Vp=6000.00, Vs=3500.00, Qp=200.00, Qs=100.00, ɑ=1.00)'
-    """
-
-    rho: float
-    vp: float
-    vs: float
-    qp: float
-    qs: float
-    alpha: float
-
-    def __str__(self):
-        """Return a compact string like ``(ρ=…, Vp=…, Vs=…, Qp=…, Qs=…, ɑ=…)``."""
-        return (
-            f"(ρ={self.rho:.2f}, Vp={self.vp:.2f}, Vs={self.vs:.2f},"
-            f" Qp={self.qp:.2f}, Qs={self.qs:.2f}, ɑ={self.alpha:.2f})"
-        )
-
 
 @dataclass
 class Point(DataClassDictMixin):
@@ -261,12 +219,16 @@ class MeshModel:
     @property
     def name(self) -> str:
         """Human-readable name assigned at construction time."""
-        return self._raw.name  # type: ignore[no-any-return]
+        name = self._raw.name
+        assert isinstance(name, str)
+        return name
 
     @property
     def priority(self) -> int:
-        """Model priority — lower number = higher priority in a :class:`ModelTree`."""
-        return self._raw.priority  # type: ignore[no-any-return]
+        """int: Model priority lower number = higher priority in a :class:`ModelTree`."""
+        priority = self._raw.priority
+        assert isinstance(priority, int)
+        return priority
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
@@ -344,36 +306,34 @@ class ModelTree:
 
     See Also
     --------
-    ModelTree.load_models : Load from VTKHDF files or a directory.
+    ModelTree.load_models : Build a model tree from a list of paths.
     ModelTree.from_mesh : Build from an in-memory :class:`~nzcvm.models.mesh.TetrahedralMesh`.
     ModelTree.query : Single-point quality query.
     ModelTree.query_many : Vectorised multi-point query returning an xarray Dataset.
     """
 
     inner: PyModelTree
-    model_map: dict[int, str] | None = None
 
     @classmethod
-    def load_models(cls, *models: Path) -> Self:
+    def load_models(cls, models: Iterable[Path]) -> Self:
         """Load a velocity model from one or more VTKHDF files or a directory.
 
         Parameters
         ----------
-        *models :
-            Paths to individual ``.vtkhdf`` files, or a single directory
-            path.  When a directory is given every ``*.vtkhdf`` file it
-            contains is loaded.
+        models : iterable of path
+            Paths to individual models.
 
         Returns
         -------
         ModelTree
+            The model tree built from the paths supplied.
 
         Examples
         --------
         Load all mesh files in a directory (requires data files to exist):
 
         >>> from pathlib import Path
-        >>> ModelTree.load_models(Path("/path/to/models"))  # doctest: +SKIP
+        >>> ModelTree.load_models([Path("/path/to/models")])  # doctest: +SKIP
         """
 
         mesh_models = []
@@ -385,7 +345,7 @@ class ModelTree:
 
     @classmethod
     def from_mesh(
-        cls, mesh_model: TetrahedralMesh, model_map: dict | None = None
+        cls, mesh_model: TetrahedralMesh
     ) -> Self:
         """Build a :class:`ModelTree` from a single in-memory :class:`~nzcvm.models.mesh.TetrahedralMesh`.
 
@@ -408,7 +368,7 @@ class ModelTree:
         """
         raw_mesh_model = _mesh_model_from_tetra(mesh_model)
         raw_model_tree = nzcvm.model_tree([raw_mesh_model])
-        return cls(raw_model_tree, model_map or {})
+        return cls(raw_model_tree)
 
     @property
     def aabb(self) -> tuple[np.ndarray, np.ndarray]:
@@ -435,7 +395,7 @@ class ModelTree:
         Parameters
         ----------
         x, y, z :
-            Coordinates in the model's projected CRS (metres).
+            Coordinates in the model's projected CRS.
         model_range :
             Restricts the query to models whose priority falls within this
             range.  Defaults to :attr:`ModelRange.ALL`.
@@ -524,7 +484,7 @@ class ModelTree:
         out: np.ndarray | None = None,
         where: Any = None,
     ) -> np.ndarray:
-        """Vectorised query returning a raw float32 array (ufunc style).
+        """Vectorised query returning a raw float32 array.
 
         Parameters
         ----------

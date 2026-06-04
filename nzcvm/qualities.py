@@ -3,10 +3,56 @@ from typing import Literal
 
 import numpy as np
 import xarray as xr
+from mashumaro import DataClassDictMixin
 from xarray_dataclasses import AsDataset, Data, DataOptions
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.components import Component
+
+
+@dataclass
+class Quality(DataClassDictMixin):
+    """Seismic material properties at a single point in the velocity model.
+
+    Parameters
+    ----------
+    rho :
+        Density in kg m⁻³.
+    vp :
+        P-wave velocity in m s⁻¹.
+    vs :
+        S-wave velocity in m s⁻¹.
+    qp :
+        P-wave quality factor (attenuation).
+    qs :
+        S-wave quality factor (attenuation).
+    alpha :
+        Opacity weight in [0, 1] used for alpha blending when multiple
+        models overlap.  A value of 1.0 means the model is fully opaque
+        and no lower-priority models contribute.
+
+    Examples
+    --------
+    >>> q = Quality(rho=2700.0, vp=6000.0, vs=3500.0, qp=200.0, qs=100.0, alpha=1.0)
+    >>> str(q)
+    '(ρ=2700.00, Vp=6000.00, Vs=3500.00, Qp=200.00, Qs=100.00, ɑ=1.00)'
+    """
+
+    rho: float
+    vp: float
+    vs: float
+    qp: float
+    qs: float
+    alpha: float
+
+    def __str__(self):
+        """Return a compact string like ``(ρ=…, Vp=…, Vs=…, Qp=…, Qs=…, ɑ=…)``."""
+        return (
+            f"(ρ={self.rho:.2f}, Vp={self.vp:.2f}, Vs={self.vs:.2f},"
+            f" Qp={self.qp:.2f}, Qs={self.qs:.2f}, ɑ={self.alpha:.2f})"
+        )
+
+
 
 
 class Qualities(xr.Dataset):

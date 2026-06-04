@@ -30,11 +30,6 @@ class Surface:
     Given a set of (x, y) query points, returns the interpolated elevation
     (z) value at each location.  Used by grid builders to convert
     depth-below-surface coordinates to absolute elevations.
-
-    See Also
-    --------
-    build_surface_interpolator : Construct a ``Surface`` from a structured mesh.
-    read_surface_from_path : Load a ``Surface`` directly from a file path.
     """
 
     inner: PySurfaceModel

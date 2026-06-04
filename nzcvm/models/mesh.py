@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 import xarray as xr
 from xarray_dataclasses import AsDataset, Attr, Coord, Data, DataOptions
-from zarr.codecs import Blosc, Zstd
+from zarr.codecs import Blosc
 
 I = Literal['i']
 J = Literal['j']

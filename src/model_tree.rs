@@ -222,10 +222,9 @@ mod tests {
             5.0,
             epsilon = 1e-4
         );
-        assert!(
-            tree.query(Point3::new(10.0, 10.0, 10.0), None, 0, 255)
-                .is_none()
-        );
+        assert!(tree
+            .query(Point3::new(10.0, 10.0, 10.0), None, 0, 255)
+            .is_none());
     }
 
     #[test]
@@ -261,11 +260,10 @@ mod tests {
             epsilon = 1e-4
         );
         // Exact boundary: priority 50 is outside 128-255
-        assert!(
-            tree.query(PT, None, 128, 255)
-                .map(|q| q.rho == 99.0)
-                .unwrap_or(false)
-        );
+        assert!(tree
+            .query(PT, None, 128, 255)
+            .map(|q| q.rho == 99.0)
+            .unwrap_or(false));
     }
 
     #[test]

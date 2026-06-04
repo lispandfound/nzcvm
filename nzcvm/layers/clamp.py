@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
+    """Clamp seismic material properties to bounds."""
     def __init__(self, config: ClampLayerConfig, next_layer: Layer):
         super().__init__(config, next_layer)
         self.config = config

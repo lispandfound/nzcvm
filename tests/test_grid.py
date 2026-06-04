@@ -17,7 +17,7 @@ from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
-from nzcvm.models.mesh import StructuredMesh, StructuredMeshSchema
+from nzcvm.models.mesh import StructuredMeshSchema
 from pyproj import CRS
 
 # ---------------------------------------------------------------------------

@@ -1,45 +1,62 @@
 [metadata]
-keywords = []
-authors = []
-references = []
+# Additional metadata which may be stored with the model output, or ignored for
+# outputs that don't support them.
+title = "Whole country domain for testing"
+keywords = ["validation"]
+creator_name = "Jake Faulkner"
+creator_email = "jake.faulkner@canterbury.ac.nz"
+repository_doi = "TBD"
+# etc... See the ModelMetadata class for a description of the options that can
+# be included.
 
 [grid]
-type = "emod3d"
-surface = "dem.vtk"
+type = "regular"
+# DEM surface 
+surface = "./resources/dem.zarr"
 
-nx = 2100
-ny = 3300
-nz = 420
+# Extent of the model, in km
+extent_x = 650000.0
+extent_y = 1752000.0
+thickness = 50000.0
 
-# Resolution in metres now
-resolution = 100.0
-
-topo_type = "squashed_tapered"
+resolution_x = 5000.0
+resolution_y = 5000.0
+resolution_z = 1.0
 
 [grid.orientation]
-azimuth = 39.0
-origin_crs = 2193
-origin_x = 1857520.0
-origin_y = 5606532.0
+crs = 'EPSG:2193'
+azimuth = 40.0
+origin_lat = -41.4983
+origin_lon =  173.9097
 
 
+# Chunks for internal calculations.
 [grid.chunks]
-i = 128
-j = 128
+i = 256
+j = 256
 k = 128
 
+
+
+# Layer specifications. Remove any of these to remove that layer from the calculations.
 [[layers]]
+# Enforce lower/upper bounds on qualities
 type = "clamp"
+
+# Enforce Vp/Vs ratios
 min_vp_vs_ratio = 1.73
 max_vp_vs_ratio = 4.0
 
-[layers.clamps.vs]
-min = 500.0
+# [layers.clamps.vs]
+# min = 500.0
 
+[[layers]]
+type = "coastline"
+# Coastline to measure distances from.
+coastline = "resources/coastline.wkb.gz"
 
 [[layers]]
 type = "offshore"
-coastline = "coastline.wkb.gz"
 model = [
 {bottom_depth = 50.0, rho = 1810.0, vp = 1800.0, vs = 380.0, qp = 100.0, qs = 50.0, alpha = 1.0},
 {bottom_depth = 150.0, rho = 1810.0, vp = 1800.0, vs = 480.0, qp = 100.0, qs = 50.0, alpha = 1.0},
@@ -82,13 +99,14 @@ basin_depth = [
     {distance = 50000.0, bottom_depth = 3000.0}
 ]
 
-
 [[layers]]
+# Geotechnical weathering layer.
 type = "ely"
-vs30 = "./vs30.vtk"
+vs30 = "./resources/vs30.zarr"
 depth_t = 450.0
 
 [[layers]]
+# Query layer for complex tomography and 3D basin models.
 type = "query"
-model_path = "./basins"
-model_globs = ["ep2020.vtkhdf"]
+model_path = "./models"
+model_globs = ["ep2020.zarr"]

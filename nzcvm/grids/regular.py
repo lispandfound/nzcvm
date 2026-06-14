@@ -46,10 +46,10 @@ def _regular_grid(
 
     # Elevation (z) is the surface elevation shifted downward by the fixed depths.
     # This guarantees the bottom follows the topography perfectly.
-    z = surface - zeta_depth
+    z = surface + zeta_depth
 
     # Same idiomatic trick as the SW4 template to ensure coordinate ordering (i, j, k)
-    depth = -surface + z
+    depth = zeta_depth
 
     x, y, z, depth = xr.broadcast(x_phys, y_phys, z, depth)
 

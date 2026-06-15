@@ -80,7 +80,7 @@ impl Queryable for InterpolateModel<usize> {
         let q1 = qualities[self.qualities.x];
         let q2 = qualities[self.qualities.y];
         let q3 = qualities[self.qualities.z];
-        barycentric_interpolate([q0, q1, q2, q3], [bary.x, bary.w, bary.y, bary.z])
+        barycentric_interpolate([q0, q1, q2, q3], [bary.w, bary.x, bary.y, bary.z])
     }
 
     fn explanation(&self, qualities: &[Quality]) -> ModelExplanation {

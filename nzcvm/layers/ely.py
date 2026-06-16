@@ -60,7 +60,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             basins = self.next_layer(grid, model_range=ModelRange.BASINS)
 
             # Inside basins we don't have to compute the tomography or Ely taper.
-            if np.allclose(basins.alpha.values, 1.0):
+            if np.allclose(basins.alpha.any(dim="k"), 1.0):
                 logger.debug("Chunk inside basin, skipping Ely taper calculation.")
                 return basins
 
@@ -108,21 +108,11 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         # Get background for all points in this chunk (becomes the out buffer).
         background = self.next_layer(grid, model_range=model_range)
 
-        # In-place update: write the ely (or basin-over-ely) blend into
-        # background only where the taper is active.  This is equivalent to
-        # xr.where(is_in_taper, blend(basins, ely), background) but avoids
-        # allocating a new result array.
         if basins is not None:
-            # blend(basins foreground, ely background) → write into background
-
             qualities.blend(
                 basins, ely_qualities, out=background, where=is_in_taper.values
             )
         else:
-            # ely_qualities is the foreground (lhs) with alpha == 1.0 everywhere,
-            # so blend(ely, any_rhs) == ely_qualities (a0 == 1, a1 == 0).
-            # We pass background as rhs to satisfy the type signature; its values
-            # are multiplied by a1 == 0 and are never actually used in the result.
             qualities.blend(
                 ely_qualities, background, out=background, where=is_in_taper.values
             )

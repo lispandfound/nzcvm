@@ -29,6 +29,7 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
             for glob in config.model_globs
             for p in config.model_path.rglob(glob)
         )
+        logger.debug(f'Loading {len(models)} models for querying')
         self.model = ModelTree.load_models(models)
 
     def __call__(

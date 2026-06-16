@@ -10,6 +10,7 @@ python visualise_grid.py model.nc --scalar depth
 python visualise_grid.py model.nc --scalar vs --compare-to model2.nc --diff-mode abs
 """
 
+import itertools
 import gzip
 from enum import StrEnum, auto
 from pathlib import Path
@@ -221,8 +222,8 @@ def _build_structured_grid(
 
 @app.command()
 def basin(
-    mesh: Annotated[Path, typer.Argument(help="Mesh file to read.", exists=True)],
-    scalar: Annotated[str, typer.Argument(help="Material property to display.")],
+    mesh: Annotated[list[Path], typer.Argument(help="Mesh files to read.", exists=True)],
+    scalar: Annotated[str | None, typer.Option(help="Material property to display.")] = None,
     topography: Annotated[
         Path | None,
         typer.Option(help="Optional topography mesh to overlay.", exists=True),
@@ -231,24 +232,66 @@ def basin(
         Path | None,
         typer.Option(help="Path to coastline vector file (NZTM).", exists=True),
     ] = None,
+    x_pos: Annotated[
+        float | None, 
+        typer.Option(help="Add a vertical pole at (x, y).")
+    ] = None,
+    y_pos: Annotated[
+        float | None, 
+        typer.Option(help="Add a vertical pole at (x, y).")
+    ] = None,
 ) -> None:
     """Entry point for the ``nzcvm view-basin`` command."""
 
     pv = _require_pyvista()
-    mesh_dset = TetrahedralMeshSchema.from_dataset(xr.open_dataset(mesh))
-
-    points = np.c_[mesh_dset.x.values, mesh_dset.y.values, mesh_dset.z.values]
-    connectivity = mesh_dset.connectivity.values
-    cell_length = connectivity.shape[1]
-    lengths = np.full((connectivity.shape[0], 1), cell_length, dtype=connectivity.dtype)
-    cell_type = np.full(len(lengths), pv.CellType.TETRA)
-    cells = np.hstack((lengths, connectivity)).ravel()
-    mesh_data = pv.UnstructuredGrid(cells, cell_type, points)
-    mesh_data.point_data[scalar] = mesh_dset[scalar].values
-    mesh_data.point_data["alpha"] = mesh_dset["alpha"].values
     pl = pv.Plotter()
-    # This is required to ensure opacity is rendered correctly
-    pl.enable_depth_peeling(number_of_peels=10, occlusion_ratio=0.0)
+    
+    if scalar:
+        # This is required to ensure opacity is rendered correctly
+        pl.enable_depth_peeling(number_of_peels=10, occlusion_ratio=0.0)
+
+    # A palette of visually distinct colors to cycle through for the meshes
+    colors = itertools.cycle([
+        "red", "blue", "green", "yellow", "cyan", "magenta", "orange", "purple"
+    ])
+
+    # Track overall bounds [x_min, x_max, y_min, y_max, z_min, z_max] across all meshes
+    global_bounds = [float('inf'), float('-inf'), float('inf'), float('-inf'), float('inf'), float('-inf')]
+
+    for i, current_mesh in enumerate(mesh):
+        mesh_dset = TetrahedralMeshSchema.from_dataset(xr.open_dataset(current_mesh))
+
+        points = np.c_[mesh_dset.x.values, mesh_dset.y.values, mesh_dset.z.values]
+        connectivity = mesh_dset.connectivity.values
+        cell_length = connectivity.shape[1]
+        lengths = np.full((connectivity.shape[0], 1), cell_length, dtype=connectivity.dtype)
+        cell_type = np.full(len(lengths), pv.CellType.TETRA)
+        cells = np.hstack((lengths, connectivity)).ravel()
+        mesh_data = pv.UnstructuredGrid(cells, cell_type, points)
+        
+        # Update global bounds
+        b = mesh_data.bounds
+        global_bounds[0] = min(global_bounds[0], b[0])
+        global_bounds[1] = max(global_bounds[1], b[1])
+        global_bounds[2] = min(global_bounds[2], b[2])
+        global_bounds[3] = max(global_bounds[3], b[3])
+        global_bounds[4] = min(global_bounds[4], b[4])
+        global_bounds[5] = max(global_bounds[5], b[5])
+
+        if scalar:
+            mesh_data.point_data[scalar] = mesh_dset[scalar].values
+            mesh_data.point_data["alpha"] = mesh_dset["alpha"].values
+            mesh_data.point_data.active_scalars_name = scalar
+            
+            pl.add_mesh(mesh_data, cmap="hot", opacity="alpha", show_scalar_bar=False)
+            
+            # Only add the invisible mesh for the scalar bar once
+            if i == 0:
+                pl.add_mesh(mesh_data, cmap="hot", opacity=0.0, show_scalar_bar=True)
+        else:
+            # Assign the next distinct color from the cycle
+            pl.add_mesh(mesh_data, color=next(colors))
+
     if topography:
         pl.add_mesh(
             pv.read(topography),
@@ -258,12 +301,23 @@ def basin(
             label="Surface",
         )
 
-    mesh_data.point_data.active_scalars_name = scalar
-    pl.add_mesh(mesh_data, cmap="hot", opacity="alpha", show_scalar_bar=False)
-    pl.add_mesh(mesh_data, cmap="hot", opacity=0.0, show_scalar_bar=True)
+    if x_pos and y_pos:
+        # Use global mesh bounds to define the vertical extent across all models
+        z_min, z_max = global_bounds[4], global_bounds[5]
+        # Create a line from deep below to high above the meshes
+        start = (x_pos, y_pos, z_min - 5000) 
+        end = (x_pos, y_pos, z_max + 5000)
+        
+        pl.add_mesh(
+            pv.Line(start, end), 
+            color="cyan", 
+            line_width=5, 
+            label="Location Marker"
+        )
 
     if coastline:
-        add_coastline_underlay(pl, mesh_data.bounds, coastline)
+        # Coastline should map to the combined extents of all loaded meshes
+        add_coastline_underlay(pl, tuple(global_bounds), coastline)
 
     pl.camera.up = (0.0, 0.0, -1.0)
     pl.show()

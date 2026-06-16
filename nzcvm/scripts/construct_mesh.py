@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, TextIO
 
-import gmsh
 import h5py
 import numba
 import numpy as np
@@ -308,6 +307,7 @@ def construct_volumetric_mesh(
 def triangulate_polygon(
     poly: shapely.Polygon, sizing_field: LinearNDInterpolatorExt
 ) -> Triangulation:
+    import gmsh
     gmsh.initialize()
     # gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add("surface_triangulation")

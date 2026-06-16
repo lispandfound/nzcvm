@@ -36,13 +36,13 @@ BROCHER_DENSITY_COEFFS = xr.DataArray(
 DENSITY_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_DENSITY_COEFFS)
 
 
-def ely_vs_profile(
+def _ely_vs_profile(
     depth: xr.DataArray,
     vs30: xr.DataArray,
     vp_at_z_t: xr.DataArray,
     vs_at_z_t: xr.DataArray,
     depth_t: float,
-) -> Qualities:
+) -> xr.Dataset:
     """Compute the Ely GTL velocity profile at each depth value.
 
     Parameters
@@ -79,4 +79,38 @@ def ely_vs_profile(
     qs = xr.full_like(rho, 50.0)
     alpha = xr.full_like(rho, 1.0)
 
-    return QualitiesSchema.new(rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha)
+    return xr.Dataset(dict(rho=rho, vs=vs, vp=vp, qp=qp, qs=qs, alpha=alpha))
+
+
+def ely_vs_profile(
+    depth: xr.DataArray,
+    vs30: xr.DataArray,
+    vp_at_z_t: xr.DataArray,
+    vs_at_z_t: xr.DataArray,
+    depth_t: float,
+) -> Qualities:
+    """Compute the Ely GTL velocity profile at each depth value.
+
+    Parameters
+    ----------
+    depth :
+        Depth values (metres, positive downwards).  Values should satisfy
+        ``0 <= depth <= depth_t``.
+    vs30 :
+        Site-average shear-wave velocity over the top 30 m (m s⁻¹).
+    vp_at_z_t :
+        P-wave velocity at the reference depth *depth_t* from the underlying
+        tomography model (m s⁻¹).
+    vs_at_z_t :
+        S-wave velocity at the reference depth *depth_t* from the underlying
+        tomography model (m s⁻¹).
+    depth_t :
+        Reference depth (metres) at which the taper meets the tomography.
+
+    Returns
+    -------
+    Qualities
+        Ely GTL velocities and derived densities at each depth point.
+    """
+    dset = _ely_vs_profile(depth, vs30, vp_at_z_t, vs_at_z_t, depth_t)
+    return QualitiesSchema.from_dataset(dset)

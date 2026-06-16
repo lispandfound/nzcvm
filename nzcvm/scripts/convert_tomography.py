@@ -129,17 +129,17 @@ def tet_connectivity(ni: int, nj: int, nk: int):
 
 
 def data_frame_to_mesh(
-        name: str, df: pd.DataFrame, tomography_model: TomographyModel
+    name: str, df: pd.DataFrame, tomography_model: TomographyModel
 ) -> TetrahedralMesh:
-    rho = df[tomography_model.rho] * 1000
-    vp = df[tomography_model.vp] * 1000
-    vs = df[tomography_model.vs] * 1000
-    qp = df[tomography_model.qp]
-    qs = df[tomography_model.qs]
+    rho = (df[tomography_model.rho] * 1000).to_numpy()
+    vp = (df[tomography_model.vp] * 1000).to_numpy()
+    vs = (df[tomography_model.vs] * 1000).to_numpy()
+    qp = df[tomography_model.qp].to_numpy()
+    qs = df[tomography_model.qs].to_numpy()
 
-    model_x = df[tomography_model.x]
-    model_y = df[tomography_model.y]
-    model_z = df[tomography_model.z]
+    model_x = df[tomography_model.x].to_numpy()
+    model_y = df[tomography_model.y].to_numpy()
+    model_z = df[tomography_model.z].to_numpy()
 
     nz = len(np.unique_values(model_z))
     ny = len(np.unique_values(model_y))
@@ -179,18 +179,18 @@ def data_frame_to_mesh(
     transform = tomography_model.affine_inverse.astype(np.float32).T
 
     field_data = {
-        "rho": rho[morton_sorter].values.astype(np.float32),
-        "vp": vp[morton_sorter].values.astype(np.float32),
-        "vs": vs[morton_sorter].values.astype(np.float32),
-        "qp": qp[morton_sorter].values.astype(np.float32),
-        "qs": qs[morton_sorter].values.astype(np.float32),
+        "rho": rho[morton_sorter].astype(np.float32),
+        "vp": vp[morton_sorter].astype(np.float32),
+        "vs": vs[morton_sorter].astype(np.float32),
+        "qp": qp[morton_sorter].astype(np.float32),
+        "qs": qs[morton_sorter].astype(np.float32),
         "alpha": np.ones(len(points), dtype=np.float32),
         "transform": transform,
     }
     num_cells = len(connectivity)
     model_type = np.full(num_cells, 1, dtype=np.uint8)
     priority = np.full(num_cells, np.iinfo(np.uint8).max, dtype=np.uint8)
-    
+
     return make_mesh(
         name=name,
         points=points,
@@ -261,4 +261,4 @@ def convert(
         df[column_keys.qs] = 50.0
 
     mesh = data_frame_to_mesh(model.stem, df, column_keys)
-    mesh.to_zarr(output, mode='w', encoding=DEFAULT_ENCODING_SETTINGS)
+    mesh.to_zarr(output, mode="w", encoding=DEFAULT_ENCODING_SETTINGS)

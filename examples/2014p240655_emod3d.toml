@@ -81,7 +81,7 @@ basin_depth = [
     {distance = 20000.0, bottom_depth = 2000.0},
     {distance = 50000.0, bottom_depth = 3000.0}
 ]
-simplification_tolerance = 100.0
+
 
 [[layers]]
 type = "ely"

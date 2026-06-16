@@ -4,6 +4,7 @@ A :class:`Surface` wraps a surface mesh and provides point-query
 interpolation, used to convert depth-below-surface coordinates into
 absolute elevations.
 """
+
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,7 +16,7 @@ from rich.console import Console, ConsoleOptions, RenderResult
 from rich.tree import Tree
 
 from nzcvm import registry
-from nzcvm.models.mesh import StructuredMeshSchema, triangulate
+from nzcvm.models.mesh import StructuredMesh, StructuredMeshSchema, triangulate
 from nzcvm.nzcvm import PySurfaceModel, surface_model  # ty: ignore[unresolved-import]
 
 DEFAULT_TOLERANCE = 1e-4
@@ -37,20 +38,7 @@ class Surface:
     n_points: int
 
     @classmethod
-    def load(cls, path: Path) -> Self:
-        """Load a surface mesh from *surface_path* and return a :class:`Surface`.
-
-        Parameters
-        ----------
-        surface_path :
-
-
-        Returns
-        -------
-        Surface
-
-        """
-        mesh = StructuredMeshSchema.from_dataset(xr.open_dataset(path))
+    def from_dataset(cls, mesh: StructuredMesh) -> Self:
         points = np.c_[mesh.x.values.ravel(), mesh.y.values.ravel()]
         z = mesh.z.values.ravel()
         faces = triangulate(mesh)
@@ -70,6 +58,24 @@ class Surface:
         )
 
         return cls(inner, bounds=bounds, n_points=len(points))
+
+    @classmethod
+    def load(cls, path: Path) -> Self:
+        """Load a surface mesh from *surface_path* and return a :class:`Surface`.
+
+        Parameters
+        ----------
+        surface_path :
+
+
+        Returns
+        -------
+        Surface
+
+        """
+        with xr.open_dataset(path) as dset:
+            mesh = StructuredMeshSchema.from_dataset(dset)
+            return cls.from_dataset(mesh)
 
     def transform(self, x: np.ndarray, y: np.ndarray) -> np.ndarray:
         """Interpolate surface elevation at query (x, y) locations.
@@ -116,4 +122,3 @@ class Surface:
         tree.add(f"Value Range: {self.bounds[2]:.0f}-{self.bounds[5]:.0f}")
         tree.add(f"Number of points in surface: {self.n_points:,}")
         yield tree
-

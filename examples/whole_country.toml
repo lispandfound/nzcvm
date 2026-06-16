@@ -47,8 +47,8 @@ type = "clamp"
 min_vp_vs_ratio = 1.73
 max_vp_vs_ratio = 4.0
 
-[layers.clamps.vs]
-min = 500.0
+# [layers.clamps.vs]
+# min = 500.0
 
 [[layers]]
 type = "coastline"
@@ -109,4 +109,4 @@ depth_t = 450.0
 # Query layer for complex tomography and 3D basin models.
 type = "query"
 model_path = "./models"
-model_globs = ["*.zarr"]
+model_globs = ["ep2020.zarr"]

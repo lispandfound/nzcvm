@@ -197,6 +197,10 @@ impl MeshModel {
             })
             .collect();
 
+        if simplices.len() != faces.len() {
+            return Err(MeshModelError::DegenerateSimplex);
+        }
+
         let bvh_tree = Bvh::build_par(&mut simplices);
 
         Ok(Self {

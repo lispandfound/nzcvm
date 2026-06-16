@@ -24,7 +24,7 @@ class PipelineError(Exception):
 
 @dataclass
 class _SentinelConfig(LayerConfig):
-    type: Literal["_sentinel"] = "_sentinel" 
+    type: Literal["_sentinel"] = "_sentinel"
 
 
 class _SentinelLayer(Layer[_SentinelConfig]):
@@ -33,7 +33,9 @@ class _SentinelLayer(Layer[_SentinelConfig]):
     def __init__(self) -> None:
         super().__init__(_SentinelConfig(), None)  # ty: ignore[invalid-argument-type]
 
-    def __call__(self, grid: Grid, model_range: ModelRange = ModelRange.ALL) -> Qualities:
+    def __call__(
+        self, grid: Grid, model_range: ModelRange = ModelRange.ALL
+    ) -> Qualities:
         e = ValueError("Grid out of bounds of any layer")
         e.add_note(str(grid))
         raise e

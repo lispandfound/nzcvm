@@ -56,11 +56,13 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             return self.next_layer(grid, model_range=model_range)
 
         basins = None
+        in_basin = xr.full_like(is_in_taper, False)
         if model_range != ModelRange.TOMOGRAPHY:
             basins = self.next_layer(grid, model_range=ModelRange.BASINS)
 
+            in_basin = np.isclose(basins.alpha, 1.0).any(dim="k")
             # Inside basins we don't have to compute the tomography or Ely taper.
-            if np.allclose(basins.alpha.any(dim="k"), 1.0):
+            if in_basin.all():
                 logger.debug("Chunk inside basin, skipping Ely taper calculation.")
                 return basins
 
@@ -79,6 +81,8 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         )
         non_nan_vs30, _ = xr.broadcast(~np.isnan(vs30), grid.z)
         is_in_taper &= non_nan_vs30
+        in_basin, _ = xr.broadcast(in_basin, grid.z)
+        is_in_taper &= in_basin
 
         # Select a z-layer of the block.
         # The array [0] as the selection is important because it preserves the k

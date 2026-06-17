@@ -60,7 +60,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         if model_range != ModelRange.TOMOGRAPHY:
             basins = self.next_layer(grid, model_range=ModelRange.BASINS)
 
-            in_basin = np.isclose(basins.alpha, 1.0).any(dim="k")
+            in_basin = np.isclose(basins.alpha, 1.0).any("k")
             # Inside basins we don't have to compute the tomography or Ely taper.
             if in_basin.all():
                 logger.debug("Chunk inside basin, skipping Ely taper calculation.")

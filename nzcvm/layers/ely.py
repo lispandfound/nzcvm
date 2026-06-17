@@ -79,7 +79,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             output_dtypes=[np.float32],
         )
         non_nan_vs30 = ~np.isnan(vs30)
-        is_in_taper = non_nan_vs30 & in_basin & is_in_taper
+        is_in_taper = non_nan_vs30 & ~in_basin & is_in_taper
 
         # Select a z-layer of the block.
         # The array [0] as the selection is important because it preserves the k

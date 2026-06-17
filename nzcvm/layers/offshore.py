@@ -154,6 +154,9 @@ class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinCon
         model_range :
             Priority range for velocity-model queries.
         """
+        if model_range == ModelRange.TOMOGRAPHY:
+            return self.next_layer(grid, model_range=model_range)
+
         is_above_model_bottom_depth = grid.depth < self.model.absolute_bottom
         if not is_above_model_bottom_depth.any():
             logger.debug("Chunk below maximum basin depth, skipping calculation.")

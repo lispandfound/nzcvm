@@ -56,8 +56,10 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             return self.next_layer(grid, model_range=model_range)
 
         basins = None
-        in_basin = xr.full_like(is_in_taper, False)
-        if model_range != ModelRange.TOMOGRAPHY:
+
+        if model_range == ModelRange.TOMOGRAPHY:
+            in_basin = xr.full_like(is_in_taper, False)
+        else:
             basins = self.next_layer(grid, model_range=ModelRange.BASINS)
             in_basin = xr.apply_ufunc(np.isclose, basins.alpha, 1.0).any("k")
             # Inside basins we don't have to compute the tomography or Ely taper.

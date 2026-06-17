@@ -55,6 +55,14 @@ type = "coastline"
 # Coastline to measure distances from.
 coastline = "resources/coastline.wkb.gz"
 
+
+[[layers]]
+# Geotechnical weathering layer.
+type = "ely"
+vs30 = "./resources/vs30.zarr"
+depth_t = 450.0
+
+
 [[layers]]
 type = "offshore"
 model = [
@@ -98,12 +106,6 @@ basin_depth = [
     {distance = 20000.0, bottom_depth = 2000.0},
     {distance = 50000.0, bottom_depth = 3000.0}
 ]
-
-[[layers]]
-# Geotechnical weathering layer.
-type = "ely"
-vs30 = "./resources/vs30.zarr"
-depth_t = 450.0
 
 [[layers]]
 # Query layer for complex tomography and 3D basin models.

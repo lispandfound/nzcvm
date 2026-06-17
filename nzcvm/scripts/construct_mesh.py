@@ -317,6 +317,7 @@ def triangulate_polygon(
     poly: shapely.Polygon, sizing_field: LinearNDInterpolatorExt
 ) -> Triangulation:
     import gmsh
+
     gmsh.initialize()
     # gmsh.option.setNumber("General.Terminal", 0)
     gmsh.model.add("surface_triangulation")
@@ -520,6 +521,7 @@ def slice_with_model(
     bottom_surface: np.ndarray,
     model: pd.DataFrame,
     culling_volume: float,
+    pad_top: bool,
 ) -> list[Layer]:
     layers = []
     tri_verts = np.stack(
@@ -551,12 +553,16 @@ def slice_with_model(
         bottom_of_layer = np.maximum(
             np.minimum(bottom_depth, bottom_surface), top_surface
         )
+
         mesh_top = np.c_[
-            triangulation.vertices["x"], triangulation.vertices["y"], top_surface
+            triangulation.vertices["x"],
+            triangulation.vertices["y"],
+            top_surface - 50.0 if pad_top and np.isclose(z, 0.0) else top_surface,
         ]
         mesh_bottom = np.c_[
             triangulation.vertices["x"], triangulation.vertices["y"], bottom_of_layer
         ]
+
         mesh_vertices = interleave_top_and_bottom(mesh_top, mesh_bottom)
         mesh_vertices, mesh_tetra, no_neighbours, zero_volume = cull_mesh(
             mesh_vertices, tetra, culling_volume
@@ -566,6 +572,7 @@ def slice_with_model(
                 f"Found {zero_volume} degenerate tetra in this layer and {no_neighbours} vertices to remove"
             )
             print(f"{len(mesh_vertices)=}, {len(mesh_tetra)=}")
+
         if len(mesh_vertices) and len(mesh_tetra):
             layers.append(
                 Layer(
@@ -739,6 +746,12 @@ def main(
             help="Basin mesh priority (lower = higher priority).", min=0, max=255
         ),
     ] = 0,
+    pad_top: Annotated[
+        bool,
+        typer.Option(
+            help="If true, pad the top layer (useful to prevent topography peek through)."
+        ),
+    ] = True,
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
 
@@ -818,6 +831,7 @@ def main(
         mesh_bottom,
         model,
         culling_volume,
+        pad_top=pad_top,
     )
     name = output.stem
     mesh = construct_volumetric_mesh(name, layers, priority)

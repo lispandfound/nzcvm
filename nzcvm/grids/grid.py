@@ -5,6 +5,8 @@ import numpy as np
 import xarray as xr
 from xarray_dataclasses import AsDataset, Attr, Data, DataOptions
 
+from nzcvm.coordinates import Coordinate
+
 
 class Grid(xr.Dataset):
     __slots__ = ()
@@ -39,3 +41,15 @@ class GridSchema(AsDataset):
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
         dset = cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
         return dset
+
+
+def grid_like_at_depth(grid: Grid, depth: float) -> Grid:
+    # Select a z-layer of the block.
+    # The array [0] as the selection is important because it preserves the k
+    # axis for downstream layers.
+    layer = grid.isel({Coordinate.K: [0]})
+
+    # This hack sets the reference elevation to an equivalent to depth below topography
+    layer[Coordinate.Z] -= layer.depth - depth
+    layer[Coordinate.DEPTH] = xr.full_like(layer[Coordinate.DEPTH], depth)
+    return layer

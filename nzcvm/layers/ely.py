@@ -12,6 +12,7 @@ from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.ely_taper import ely_vs_profile
+from nzcvm.grids.grid import grid_like_at_depth
 from nzcvm.layers.core import Layer
 from nzcvm.models.surface import Surface
 from nzcvm.query import ModelRange
@@ -61,7 +62,11 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
             in_basin = xr.full_like(is_in_taper, False)
         else:
             basins = self.next_layer(grid, model_range=ModelRange.BASINS)
-            in_basin = xr.apply_ufunc(np.isclose, basins.alpha, 1.0).any("k")
+            surface_layer = grid_like_at_depth(grid, 0.0)
+            basin_at_surface = self.next_layer(
+                surface_layer, model_range=ModelRange.BASINS
+            ).squeeze()
+            in_basin = xr.apply_ufunc(np.isclose, basin_at_surface.alpha, 1.0)
             # Inside basins we don't have to compute the tomography or Ely taper.
             if in_basin.all():
                 logger.debug("Chunk inside basin, skipping Ely taper calculation.")
@@ -86,18 +91,14 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         # Select a z-layer of the block.
         # The array [0] as the selection is important because it preserves the k
         # axis for downstream layers.
-        surface_layer = grid.isel({Coordinate.K: [0]})
-
-        # This hack sets the reference elevation to an equivalent to depth = 450m below topography
-        surface_layer[Coordinate.Z] -= surface_layer.depth - depth_t
-        surface_layer[Coordinate.DEPTH] = depth_t
+        reference_rock_layer = grid_like_at_depth(grid, depth_t)
 
         # Calculate bounding taper qualities using *only* the tomography.
         # Calling squeeze here drops the phony K dimension we kept around to
         # calculate the qualities at the surface layer.
         logger.debug("Calculating taper qualities")
         taper_qualities = self.next_layer(
-            surface_layer, model_range=ModelRange.TOMOGRAPHY
+            reference_rock_layer, model_range=ModelRange.TOMOGRAPHY
         ).squeeze()
 
         ely_qualities = ely_vs_profile(

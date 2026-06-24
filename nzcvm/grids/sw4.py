@@ -93,9 +93,13 @@ def _curvilinear_grid(
 
 
 def _resample_refinement(
-    x: xr.DataArray, y: xr.DataArray, resolution: float, refinement: float
-) -> tuple[xr.DataArray, xr.DataArray]:
-    refinement_ratio = int(resolution / refinement)
+    x: xr.DataArray,
+    y: xr.DataArray,
+    z: xr.DataArray,
+    resolution: float,
+    refinement: float,
+) -> tuple[xr.DataArray, xr.DataArray, xr.DataArray]:
+    refinement_ratio = int(refinement / resolution)
     ni = len(x.coords[Coordinate.I])
     nj = len(x.coords[Coordinate.J])
     x_sample = x.isel(
@@ -110,7 +114,13 @@ def _resample_refinement(
             Coordinate.J: range(0, nj, refinement_ratio),
         }
     )
-    return x_sample, y_sample
+    z_sample = z.isel(
+        {
+            Coordinate.I: range(0, ni, refinement_ratio),
+            Coordinate.J: range(0, nj, refinement_ratio),
+        }
+    )
+    return x_sample, y_sample, z_sample
 
 
 @build_grids_from_config.register
@@ -183,14 +193,14 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
     # previous layer and the new bottom.
     top = top_refinement.bottom
     for name, refinement in refinements[1:]:
-        x_refinement, y_refinement = _resample_refinement(
-            x_phys, y_phys, top_refinement.resolution, refinement.resolution
+        x_refinement, y_refinement, z_refinement = _resample_refinement(
+            x_phys, y_phys, z_surface, top_refinement.resolution, refinement.resolution
         )
         grids.append(
             _curvilinear_grid(
                 x_refinement,
                 y_refinement,
-                z_surface,
+                z_refinement,
                 top,
                 refinement.bottom,
                 config.chunks[Coordinate.K],

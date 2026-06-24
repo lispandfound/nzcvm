@@ -19,7 +19,10 @@ def resolve_path(path: Path) -> Path:
 
 
 def path_type(
-    file_okay: bool = True, dir_okay: bool = True, resolve: bool = True
+    file_okay: bool = True,
+    dir_okay: bool = True,
+    resolve: bool = True,
+    exists: bool = True,
 ) -> Callable[[Path], Path]:
     """Ensures a path points to a file, directory, or either."""
 
@@ -176,13 +179,9 @@ Longitude = Annotated[float, longitude]
 
 UnitIntervalFloat = Annotated[float, validate_non_negative, le(1.0)]
 
-ExistingPath = Annotated[Path, validate_path_exists]
-ExistingFile = Annotated[
-    Path, validate_path_exists, path_type(file_okay=True, dir_okay=False)
-]
-ExistingDir = Annotated[
-    Path, validate_path_exists, path_type(file_okay=False, dir_okay=True)
-]
+ExistingPath = Annotated[Path, path_type(exists=True)]
+ExistingFile = Annotated[Path, path_type(file_okay=True, dir_okay=False, exists=True)]
+ExistingDir = Annotated[Path, path_type(file_okay=False, dir_okay=True, exists=True)]
 
 NonEmptyStr = Annotated[str, min_len(1)]
 NonEmptyList = Annotated[list[Any], min_len(1)]

@@ -184,6 +184,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             origin_lat=orientation.origin_lat,
             origin_lon=orientation.origin_lon,
             azimuth=orientation.azimuth,
+            grid_azimuth=orientation.grid_azimuth,
             bottom_left_lon=min_lon,
             bottom_left_lat=min_lat,
         )
@@ -209,6 +210,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 origin_lat=orientation.origin_lat,
                 origin_lon=orientation.origin_lon,
                 azimuth=orientation.azimuth,
+                grid_azimuth=orientation.grid_azimuth,
                 bottom_left_lon=min_lon,
                 bottom_left_lat=min_lat,
             )

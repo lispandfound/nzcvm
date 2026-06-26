@@ -108,6 +108,7 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         origin_lon=orientation.origin_lon,
         origin_lat=orientation.origin_lat,
         azimuth=orientation.azimuth,
+        grid_azimuth=orientation.grid_azimuth,
         bottom_left_lon=min_lon,
         bottom_left_lat=min_lat,
     )

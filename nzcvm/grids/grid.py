@@ -32,6 +32,7 @@ class GridSchema(AsDataset):
     origin_lat: Attr[np.float32]
 
     azimuth: Attr[np.float32]
+    grid_azimuth: Attr[np.float32]
 
     bottom_left_lon: Attr[np.float32]
     bottom_left_lat: Attr[np.float32]

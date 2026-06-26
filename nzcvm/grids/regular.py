@@ -14,7 +14,6 @@ import xarray as xr
 from scipy.spatial.transform import Rotation
 
 from nzcvm import coordinates
-
 from nzcvm.config.grids.regular import RegularGridConfig
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids import helpers
@@ -119,10 +118,11 @@ def build_regular(config: RegularGridConfig) -> dict[str, Grid]:
         origin_lat=orientation.origin_lat,
         origin_lon=orientation.origin_lon,
         azimuth=orientation.azimuth,
+        grid_azimuth=orientation.grid_azimuth,
         bottom_left_lon=min_lon,
         bottom_left_lat=min_lat,
         resolution_z=config.resolution_z,
-        resolution=min((config.resolution_x, config.resolution_y, config.resolution_z))
+        resolution=min((config.resolution_x, config.resolution_y, config.resolution_z)),
     )
 
     return {grid.name: grid}

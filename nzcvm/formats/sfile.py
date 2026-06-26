@@ -93,7 +93,11 @@ def to_sfile(velocity_model: VelocityModel, filename: Path):
 
         f.attrs.create(
             ORIGIN_AZIM_ATTR,
-            data=[top_grid.bottom_left_lon, top_grid.bottom_left_lat, top_grid.azimuth],
+            data=[
+                top_grid.bottom_left_lon,
+                top_grid.bottom_left_lat,
+                top_grid.grid_azimuth,
+            ],
             dtype=np.float64,
         )
 

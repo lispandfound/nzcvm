@@ -21,7 +21,6 @@ from nzcvm.velocity_model import VelocityModel
 # Global attributes
 ATTENUATION_ATTR = "Attenuation"
 ATTENUATION = np.int32(1)
-MAX_RESOLUTION_ATTR = "Coarsest horizontal grid spacing"
 MIN_RESOLUTION_ATTR = "Finest horizontal grid spacing"
 MIN_MAX_DEPTH_ATTR = "Min, max depth"
 ORIGIN_AZIM_ATTR = "Origin longitude, latitude, azimuth"
@@ -101,6 +100,9 @@ def to_sfile(velocity_model: VelocityModel, filename: Path):
         f.attrs.create(ATTENUATION_ATTR, data=ATTENUATION, dtype=np.int32)
         f.attrs.create(
             NGRIDS_ATTR, data=np.int32(len(velocity_model.grids)), dtype=np.int32
+        )
+        f.attrs.create(
+            MIN_RESOLUTION_ATTR, data=np.float64(top_grid.resolution), dtype=np.float64
         )
 
         mat_group = f.create_group(MATERIAL_GROUP)

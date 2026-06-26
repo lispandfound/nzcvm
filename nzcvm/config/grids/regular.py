@@ -1,8 +1,9 @@
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Literal
 
 from nzcvm.config.grids.model import Model
-from nzcvm.config.validation import ExistingPath, PositiveFloat
+from nzcvm.config.validation import PositiveFloat
 from nzcvm.coordinates import Coordinate
 
 from .core import GridConfig
@@ -43,7 +44,7 @@ class RegularGridConfig(GridConfig):
     """
 
     # Topographic surface path.
-    surface: ExistingPath
+    surface: Path
 
     # Extents and total thickness
     extent_x: PositiveFloat

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from nzcvm.config.validation import ExistingDir
+from pathlib import Path
 
 from .core import LayerConfig
 
@@ -33,6 +33,6 @@ class QueryLayerConfig(LayerConfig):
         model_globs = ["*.vtkhdf"]
     """
 
-    model_path: ExistingDir
+    model_path: Path
     model_globs: list[str] = field(default_factory=lambda: ["*.vtkhdf"])
     type: str = "query"

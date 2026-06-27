@@ -74,6 +74,7 @@ def _ely_vs_profile(
     vs = f * vs_at_z_t + g * vs30
     vp_from_vs30 = VP_FROM_VS_RELATION(vs30)
     vp = f * vp_at_z_t + g * vp_from_vs30
+    # Nafe-Drake equation is using km/s not m/s
     rho = DENSITY_RELATION(vp / 1000.0)
     qp = xr.full_like(rho, 100.0)
     qs = xr.full_like(rho, 50.0)

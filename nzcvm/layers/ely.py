@@ -61,16 +61,20 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         if model_range == ModelRange.TOMOGRAPHY:
             in_basin = xr.full_like(is_in_taper, False)
         else:
-            basins = self.next_layer(grid, model_range=ModelRange.BASINS)
             surface_layer = grid_like_at_depth(grid, 0.0)
             basin_at_surface = self.next_layer(
                 surface_layer, model_range=ModelRange.BASINS
             ).squeeze()
             in_basin = xr.apply_ufunc(np.isclose, basin_at_surface.alpha, 1.0)
-            # Inside basins we don't have to compute the tomography or Ely taper.
             if in_basin.all():
+                # If we are below the basin in all parts of the velocity model
+                # we don't calculate Ely taper, instead we fall through to the
+                # layer underneath for all qualities to preserve the impedance
+                # contrast between the basin and tomography layers.
                 logger.debug("Chunk inside basin, skipping Ely taper calculation.")
-                return basins
+                return self.next_layer(grid, model_range=model_range)
+            else:
+                basins = self.next_layer(grid, model_range=ModelRange.BASINS)
 
         safe_depth = grid.depth.clip(max=depth_t)
 
@@ -110,7 +114,7 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         )
 
         # Get background for all points in this chunk (becomes the out buffer).
-        background = self.next_layer(grid, model_range=model_range)
+        background = self.next_layer(grid, model_range=ModelRange.TOMOGRAPHY)
 
         if basins is not None:
             qualities.blend(

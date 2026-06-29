@@ -71,4 +71,4 @@ class Model(ConfigObject):
             native_lon, native_lat
         ).meridian_convergence
 
-        return -self.azimuth + meridian_convergence
+        return (-self.azimuth + meridian_convergence) % 360

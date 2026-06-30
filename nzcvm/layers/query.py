@@ -6,7 +6,9 @@ import logging
 from typing import TYPE_CHECKING
 
 import xarray as xr
-
+from pathlib import Path
+import shapely
+from shapely import Geometry
 from nzcvm.components import Component
 from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.layers.core import Layer
@@ -20,14 +22,19 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
+def _model_intersects_geometry(model_path: Path, geometry: Geometry) -> bool:
+    with xr.open_dataset(model_path) as model:
+        model_geometry = shapely.from_wkt(model.attrs['geometry'])
+        return shapely.intersects(model_geometry, geometry)
+    
 class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
-    def __init__(self, config: QueryLayerConfig, next_layer: Layer) -> None:
-        super().__init__(config, next_layer)
+    def __init__(self, config: QueryLayerConfig, geometry: Geometry, next_layer: Layer) -> None:
+        super().__init__(config, geometry, next_layer)
         models = set(
             p
             for glob in config.model_globs
             for p in config.model_path.rglob(glob)
+            if _model_intersects_geometry(p, geometry)
         )
         logger.debug(f'Loading {len(models)} models for querying')
         self.model = ModelTree.load_models(models)

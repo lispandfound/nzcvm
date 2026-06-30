@@ -56,6 +56,7 @@ from dataclasses import field, make_dataclass
 from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
 
 from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpacker
+from shapely import Geometry
 
 from nzcvm.config.layers.core import LayerConfig
 from nzcvm.layers.core import Layer
@@ -151,17 +152,20 @@ def functional_layer(func: _LayerFunc) -> type[Layer]:
     _captured_param_names = list(param_names)
 
     # Parameter names accepted by ConfigCls.__init__ (mashumaro may override).
-    _config_init_params = frozenset(inspect.signature(ConfigCls.__init__).parameters) - {"self"}
+    _config_init_params = frozenset(
+        inspect.signature(ConfigCls.__init__).parameters
+    ) - {"self"}
 
     def _init(  # type: ignore[return]
         self: Any,
         config: Any = None,
+        geometry: Geometry | None = None,
         next_layer: Layer | None = None,
         **kwargs: Any,
     ) -> None:
         # Two supported calling conventions:
-        #   1. LayerCls(config_obj, next_layer)       — used by the pipeline builder
-        #   2. LayerCls(next_layer=..., **config_kwargs)  — convenience/test API
+        #   1. LayerCls(config_obj, geometry, next_layer)
+        #   2. LayerCls(next_layer=..., geometry=..., **config_kwargs)
         if isinstance(config, ConfigCls):
             # Convention 1: first arg is already a config object.
             pass
@@ -172,8 +176,11 @@ def functional_layer(func: _LayerFunc) -> type[Layer]:
                 next_layer = config
             # Keep only kwargs that ConfigCls.__init__ actually accepts
             # (e.g. drop inherited base fields like 'provides'/'requires').
-            config = ConfigCls(**{k: v for k, v in kwargs.items() if k in _config_init_params})  # ty: ignore[invalid-assignment]
-        Layer.__init__(self, config, next_layer)  # ty: ignore[invalid-argument-type]
+            config = ConfigCls(
+                **{k: v for k, v in kwargs.items() if k in _config_init_params}
+            )  # ty: ignore[invalid-assignment]
+
+        Layer.__init__(self, config, geometry, next_layer)  # ty: ignore[invalid-argument-type]
 
     def _call(
         self: Any,

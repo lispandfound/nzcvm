@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import numpy as np
 import xarray as xr
+from shapely import Geometry
 
 from nzcvm import qualities
 from nzcvm.config.layers.ely import ElyLayerConfig
@@ -25,8 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
-    def __init__(self, config: ElyLayerConfig, next_layer: Layer) -> None:
-        super().__init__(config, next_layer)
+    def __init__(
+        self, config: ElyLayerConfig, geometry: Geometry, next_layer: Layer
+    ) -> None:
+        super().__init__(config, geometry, next_layer)
         self.interpolator = Surface.load(config.vs30)
 
     def __call__(

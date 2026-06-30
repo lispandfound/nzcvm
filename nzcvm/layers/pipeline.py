@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Literal
 
 import xarray as xr
+from shapely import Geometry
 
 from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids.grid import Grid
@@ -31,7 +32,7 @@ class _SentinelLayer(Layer[_SentinelConfig]):
     """Terminal sentinel that raises when the grid falls outside all layers."""
 
     def __init__(self) -> None:
-        super().__init__(_SentinelConfig(), None)  # ty: ignore[invalid-argument-type]
+        super().__init__(_SentinelConfig(), None, None)  # ty: ignore[invalid-argument-type]
 
     def __call__(
         self, grid: Grid, model_range: ModelRange = ModelRange.ALL
@@ -41,7 +42,7 @@ class _SentinelLayer(Layer[_SentinelConfig]):
         raise e
 
 
-def build_pipeline(configs: list[LayerConfig]) -> Layer:
+def build_pipeline(geometry: Geometry, configs: list[LayerConfig]) -> Layer:
     if not configs:
         raise ValueError("Pipeline configuration list cannot be empty.")
 
@@ -49,7 +50,7 @@ def build_pipeline(configs: list[LayerConfig]) -> Layer:
 
     for config in reversed(configs):
         layer_type = layer_from_config(config)
-        pipeline = layer_type(config, pipeline)
+        pipeline = layer_type(config, geometry, pipeline)
 
     return pipeline
 

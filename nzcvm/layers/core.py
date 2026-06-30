@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import typing
+from shapely import Geometry
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
@@ -34,7 +35,7 @@ class Layer(ABC, Generic[C]):
     registry: dict[type[LayerConfig], type[Layer]] = dict()
     config: C
 
-    def __init__(self, config: C, next_layer: Layer[Any]) -> None:
+    def __init__(self, config: C, geometry: Geometry, next_layer: Layer[Any]) -> None:
         self.config = config
         self.next_layer = next_layer
 

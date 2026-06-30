@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Self
 
 import numpy as np
 import xarray as xr
+from shapely import Geometry
 
 from nzcvm import qualities
 from nzcvm.components import Component
@@ -135,8 +136,10 @@ class OffshoreModel:
 
 
 class OffshoreBasinLayer(Layer[OffshoreBasinConfig], config_cls=OffshoreBasinConfig):
-    def __init__(self, config: OffshoreBasinConfig, next_layer: Layer):
-        super().__init__(config, next_layer)
+    def __init__(
+        self, config: OffshoreBasinConfig, geometry: Geometry, next_layer: Layer
+    ):
+        super().__init__(config, geometry, next_layer)
         self.model = OffshoreModel.build(config.basin_depth, config.model)
 
     def __call__(

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+from shapely import Geometry
 
 from nzcvm.config.layers.core import LayerConfig
 from nzcvm.grids.grid import Grid
@@ -100,7 +101,7 @@ class CountingLayer(Layer[_NullConfig]):
         The downstream layer to delegate to.
     """
 
-    def __init__(self, next_layer: Layer) -> None:
+    def __init__(self, geometry: Geometry, next_layer: Layer) -> None:
         super().__init__(_NullConfig(), next_layer)
         self.call_count = 0
 
@@ -120,7 +121,7 @@ class RecordingLayer(Layer[_NullConfig]):
         The downstream layer to delegate to.
     """
 
-    def __init__(self, next_layer: Layer) -> None:
+    def __init__(self, geometry: Geometry, next_layer: Layer) -> None:
         super().__init__(_NullConfig(), next_layer)
         self.calls: list[tuple[Grid, ModelRange]] = []
 

@@ -29,7 +29,7 @@ class GridSchema(AsDataset):
     name: Attr[str]
     resolution: Attr[float]
 
-    geometry: shapely.Geometry
+    geometry: Attr[shapely.Geometry]
     origin_lon: Attr[np.float32]
     origin_lat: Attr[np.float32]
 

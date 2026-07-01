@@ -268,11 +268,14 @@ def generate(
             print_syntax_error(e)
             sys.exit(1)
 
+        velocity_model = VelocityModel.from_config(velocity_model_spec)
+
         logger.debug("Building model pipeline")
-        model_pipeline = pipeline.build_pipeline(velocity_model_spec.layers)
+        model_pipeline = pipeline.build_pipeline(
+            velocity_model.geometry, velocity_model_spec.layers
+        )
         logger.debug("Model pipeline built")
 
-        velocity_model = VelocityModel.from_config(velocity_model_spec)
         velocity_model = execute_model_pipeline(velocity_model, model_pipeline)
 
         formats.write_velocity_model(

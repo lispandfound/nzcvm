@@ -24,8 +24,12 @@ logger = logging.getLogger(__name__)
 
 def _model_intersects_geometry(model_path: Path, geometry: Geometry) -> bool:
     with xr.open_dataset(model_path) as model:
-        model_geometry = shapely.from_wkt(model.attrs['geometry'])
-        return shapely.intersects(model_geometry, geometry)
+        model_geometry = model.attrs.get("geometry")
+        if model_geometry is None:
+            # No geometry recorded (e.g. a whole-domain tomography model) means
+            # the model has no bounds to prune against, so always load it.
+            return True
+        return shapely.intersects(shapely.from_wkb(model_geometry), geometry)
     
 class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
     def __init__(self, config: QueryLayerConfig, geometry: Geometry, next_layer: Layer) -> None:

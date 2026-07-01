@@ -69,6 +69,8 @@ def build_regular(config: RegularGridConfig) -> dict[str, Grid]:
 
     ni = np.round(config.extent_x / config.resolution_x).astype(int) + 1
     nj = np.round(config.extent_y / config.resolution_y).astype(int) + 1
+    rounded_extent_x = ni * config.resolution_x
+    rounded_extent_y = nj * config.resolution_y
 
     # Generate unit coordinates (resolution=1.0) and scale manually to handle
     # independent X and Y resolutions seamlessly with the existing helper.
@@ -97,6 +99,8 @@ def build_regular(config: RegularGridConfig) -> dict[str, Grid]:
         .astype(np.float32)
     )
 
+    geometry = helpers.outline(transform, rounded_extent_x, rounded_extent_y)
+
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
     min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
     min_lon, min_lat = orientation.to_wgs84.transform(min_x, min_y)
@@ -123,6 +127,7 @@ def build_regular(config: RegularGridConfig) -> dict[str, Grid]:
         bottom_left_lat=min_lat,
         resolution_z=config.resolution_z,
         resolution=min((config.resolution_x, config.resolution_y, config.resolution_z)),
+        geometry=geometry,
     )
 
     return {grid.name: grid}

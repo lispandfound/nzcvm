@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from shapely import Geometry
+
 from nzcvm.components import Component
 from nzcvm.config.layers.clamp import ClampLayerConfig
 from nzcvm.layers.core import Layer
@@ -19,8 +21,9 @@ logger = logging.getLogger(__name__)
 
 class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
     """Clamp seismic material properties to bounds."""
-    def __init__(self, config: ClampLayerConfig, next_layer: Layer):
-        super().__init__(config, next_layer)
+
+    def __init__(self, config: ClampLayerConfig, geometry: Geometry, next_layer: Layer):
+        super().__init__(config, geometry, next_layer)
         self.config = config
 
     def __call__(

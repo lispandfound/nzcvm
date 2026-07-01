@@ -134,17 +134,8 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
 
     ni = np.round(config.extent_x / top_refinement.resolution).astype(int) + 1
     nj = np.round(config.extent_y / top_refinement.resolution).astype(int) + 1
-
-    ox, oy = helpers.raw_coordinates(
-        ni,
-        nj,
-        top_refinement.resolution,
-        offset,
-        config.chunks,
-    )
-    min_x, min_y = dask.compute(ox.isel(i=0, j=0), oy.isel(i=0, j=0))
-    min_x = min_x.item()
-    min_y = min_y.item()
+    rounded_extent_x = ni * top_refinement.resolution
+    rounded_extent_y = nj * top_refinement.resolution
 
     orientation = config.orientation
     transform = (
@@ -157,6 +148,20 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
         .as_matrix()
         .astype(np.float32)
     )
+
+    geometry = helpers.outline(transform, rounded_extent_x, rounded_extent_y)
+
+    ox, oy = helpers.raw_coordinates(
+        ni,
+        nj,
+        top_refinement.resolution,
+        offset,
+        config.chunks,
+    )
+    min_x, min_y = dask.compute(ox.isel(i=0, j=0), oy.isel(i=0, j=0))
+    min_x = min_x.item()
+    min_y = min_y.item()
+
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
     min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
     min_lon, min_lat = orientation.to_wgs84.transform(min_x, min_y)
@@ -187,6 +192,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             grid_azimuth=orientation.grid_azimuth,
             bottom_left_lon=min_lon,
             bottom_left_lat=min_lat,
+            geometry=geometry,
         )
     )
 
@@ -213,6 +219,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 grid_azimuth=orientation.grid_azimuth,
                 bottom_left_lon=min_lon,
                 bottom_left_lat=min_lat,
+                geometry=geometry,
             )
         )
         top = refinement.bottom

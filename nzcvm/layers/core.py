@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import typing
-from shapely import Geometry
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
+from shapely import Geometry
 
 from nzcvm.config.layers import LayerConfig
 from nzcvm.query import ModelRange
@@ -37,6 +38,7 @@ class Layer(ABC, Generic[C]):
 
     def __init__(self, config: C, geometry: Geometry, next_layer: Layer[Any]) -> None:
         self.config = config
+        self.geometry = geometry
         self.next_layer = next_layer
 
     def __init_subclass__(cls, config_cls: type[C] | None = None, **kwargs):

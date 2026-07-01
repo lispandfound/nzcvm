@@ -243,7 +243,7 @@ class Layer:
 
 
 def construct_volumetric_mesh(
-    name: str, layers: list[Layer], priority: int
+    name: str, geometry: shapely.Geometry, layers: list[Layer], priority: int
 ) -> TetrahedralMesh:
 
     mesh_vertices = np.concatenate([layer.vertices for layer in layers])
@@ -308,6 +308,7 @@ def construct_volumetric_mesh(
             model_type=model_type,
             priority=priority_data,
         ),
+        geometry=geometry,
         field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
     )
     return mesh
@@ -834,7 +835,7 @@ def main(
         pad_top=pad_top,
     )
     name = output.stem
-    mesh = construct_volumetric_mesh(name, layers, priority)
+    mesh = construct_volumetric_mesh(name, poly, layers, priority)
 
     if smoothing > 0:
         print("Applying smoothing boundary")

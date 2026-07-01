@@ -10,6 +10,7 @@ import shapely
 import shapely.ops
 import xarray as xr
 from numba import guvectorize
+from shapely import Geometry
 
 from nzcvm.config.layers.coastline import CoastlineConfig
 from nzcvm.coordinates import Coordinate
@@ -19,7 +20,7 @@ from nzcvm.query import ModelRange
 if TYPE_CHECKING:
     from nzcvm.grids.grid import Grid
     from nzcvm.qualities import Qualities
-    
+
 
 logger = logging.getLogger(__name__)
 
@@ -96,8 +97,10 @@ def _ray_cast_intersections(
 
 
 class CoastlineLayer(Layer[CoastlineConfig], config_cls=CoastlineConfig):
-    def __init__(self, config: CoastlineConfig, next_layer: Layer) -> None:
-        super().__init__(config, next_layer)
+    def __init__(
+        self, config: CoastlineConfig, geometry: Geometry, next_layer: Layer
+    ) -> None:
+        super().__init__(config, geometry, next_layer)
         coastline = shapely.ops.orient(
             _read_compressed_shapely_wkb(config.coastline), sign=1.0
         )

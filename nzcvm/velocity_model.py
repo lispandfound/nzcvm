@@ -2,6 +2,7 @@ import dataclasses
 from dataclasses import dataclass, field
 from typing import Callable, Self
 
+import shapely
 import xarray as xr
 
 from nzcvm.config.metadata import ModelMetadata
@@ -27,6 +28,10 @@ class VelocityModel:
                 f"Length of assigned qualities ({', '.join(qualities)}) "
                 f"does not match number of grids ({', '.join(grids)})"
             )
+
+    @property
+    def geometry(self) -> shapely.Geometry:
+        return shapely.union_all(grid.geometry for grid in self.grids.values())
 
     @classmethod
     def from_config(cls, config: VelocityModelConfig) -> Self:

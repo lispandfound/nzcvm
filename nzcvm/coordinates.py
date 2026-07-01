@@ -22,6 +22,7 @@ nzcvm.velocity_model.ModelMetadata : Stores coordinate-system parameters alongsi
 """
 
 from enum import StrEnum, auto
+from typing import TypeVar
 
 import numpy as np
 import xarray as xr
@@ -63,13 +64,13 @@ NZGD2000_EPSG = 4167
 # Affine factory functions
 # ---------------------------------------------------------------------------
 
+
 def affine(matrix: np.ndarray) -> np.ndarray:
     n = matrix.shape[0]
     aff = np.eye(n + 1, dtype=matrix.dtype)
     aff[:n, :n] = matrix
-    
+
     return aff
-    
 
 
 def translate(x: float = 0.0, y: float = 0.0, z: float | None = None) -> Affine:
@@ -210,9 +211,10 @@ def crs_transform(x, y, *, transformer: Transformer):
     return transformer.transform(np.asarray(x), np.asarray(y))
 
 
-def apply_affine_transform(
-    transform: Affine, x: xr.DataArray, y: xr.DataArray
-) -> tuple[xr.DataArray, xr.DataArray]:
+T = TypeVar("T", bound=np.ndarray | xr.DataArray | xr.Dataset)
+
+
+def apply_affine_transform(transform: Affine, x: T, y: T) -> tuple[T, T]:
     x_prime = transform[0, 0] * x + transform[0, 1] * y + transform[0, 2]
     y_prime = transform[1, 0] * x + transform[1, 1] * y + transform[1, 2]
     return x_prime, y_prime

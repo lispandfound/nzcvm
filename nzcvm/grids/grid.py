@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import shapely
 import xarray as xr
 from xarray_dataclasses import AsDataset, Attr, Data, DataOptions
 
@@ -28,6 +29,7 @@ class GridSchema(AsDataset):
     name: Attr[str]
     resolution: Attr[float]
 
+    geometry: shapely.Geometry
     origin_lon: Attr[np.float32]
     origin_lat: Attr[np.float32]
 

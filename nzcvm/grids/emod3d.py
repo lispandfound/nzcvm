@@ -81,6 +81,10 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         np.array([0, 0, orientation.grid_azimuth]), degrees=True
     ).as_matrix().astype(np.float32)
 
+    geometry = helpers.outline(
+        transform, config.nx * config.resolution, config.ny * config.resolution
+    )
+
     x_phys, y_phys = coordinates.apply_affine_transform(transform, ox, oy)
     min_x, min_y = coordinates.apply_affine_transform(transform, min_x, min_y)
     min_lon, min_lat = orientation.to_wgs84.transform(min_x, min_y)
@@ -111,6 +115,7 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
         grid_azimuth=orientation.grid_azimuth,
         bottom_left_lon=min_lon,
         bottom_left_lat=min_lat,
+        geometry=geometry,
     )
 
     return {grid.name: grid}

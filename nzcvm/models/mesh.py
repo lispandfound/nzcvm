@@ -11,13 +11,15 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import shapely
 import xarray as xr
 from xarray_dataclasses import AsDataset, Attr, Coord, Data, DataOptions
 from zarr.codecs import Blosc
 
-I = Literal['i']
-J = Literal['j']
-K = Literal['k']
+I = Literal["i"]
+J = Literal["j"]
+K = Literal["k"]
+
 
 class TetrahedralMesh(xr.Dataset):
     __slots__ = ()
@@ -25,7 +27,8 @@ class TetrahedralMesh(xr.Dataset):
     @property
     def models(self):
         return self.connectivity
-    
+
+
 @dataclass
 class TetrahedralMeshSchema(AsDataset):
     name: Attr[str]
@@ -44,92 +47,91 @@ class TetrahedralMeshSchema(AsDataset):
     qp: Data[tuple[I,], np.float32]
     qs: Data[tuple[I,], np.float32]
     alpha: Data[tuple[I,], np.float32]
-    
+
     i: Coord[I, np.uint64]
     j: Coord[J, np.uint64]
     k: Coord[K, np.uint64]
 
     transform: Attr[np.ndarray | None] = None
-
+    geometry: Attr[shapely.Geometry | None] = None
     __dataoptions__ = DataOptions(TetrahedralMesh)
-    
+
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> TetrahedralMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
         return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
 
+
 MEDIUM_COMPRESSOR = [Blosc(cname="zstd", clevel=5, shuffle=True)]
-HIGH_COMPRESSOR =  [Blosc(cname="zstd", clevel=7, shuffle=True)]
+HIGH_COMPRESSOR = [Blosc(cname="zstd", clevel=7, shuffle=True)]
 
 DEFAULT_ENCODING_SETTINGS = {
     "x": {"compressors": MEDIUM_COMPRESSOR},
     "y": {"compressors": MEDIUM_COMPRESSOR},
     "z": {"compressors": MEDIUM_COMPRESSOR},
-    
-    "connectivity": {
-        "compressors": HIGH_COMPRESSOR
-    },
-    "priority": {
-        "compressors": MEDIUM_COMPRESSOR
-    },
-    "model_type": {
-        "compressors": MEDIUM_COMPRESSOR
-    },
-
-    "rho":   {"compressors": HIGH_COMPRESSOR},
-    "vp":    {"compressors": HIGH_COMPRESSOR},
-    "vs":    {"compressors": HIGH_COMPRESSOR},
-    "qp":    {"compressors": HIGH_COMPRESSOR},
-    "qs":    {"compressors": HIGH_COMPRESSOR},
+    "connectivity": {"compressors": HIGH_COMPRESSOR},
+    "priority": {"compressors": MEDIUM_COMPRESSOR},
+    "model_type": {"compressors": MEDIUM_COMPRESSOR},
+    "rho": {"compressors": HIGH_COMPRESSOR},
+    "vp": {"compressors": HIGH_COMPRESSOR},
+    "vs": {"compressors": HIGH_COMPRESSOR},
+    "qp": {"compressors": HIGH_COMPRESSOR},
+    "qs": {"compressors": HIGH_COMPRESSOR},
     "alpha": {"compressors": HIGH_COMPRESSOR},
 }
+
 
 class StructuredMesh(xr.Dataset):
     __slots__ = ()
 
+
 @dataclass
 class StructuredMeshSchema(AsDataset):
     """A structured-grid surface mesh."""
+
     x: Data[tuple[I, J], np.float32]
     y: Data[tuple[I, J], np.float32]
     z: Data[tuple[I, J], np.float32]
-    
+
     i: Coord[I, np.uint64]
     j: Coord[J, np.uint64]
-    
+
     name: Attr[str]
 
     __dataoptions__ = DataOptions(StructuredMesh)
-    
+
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> StructuredMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
         return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
 
+
 DEFAULT_STRUCTURED_ENCODING_SETTINGS = {
-    "x":   {"compressors": MEDIUM_COMPRESSOR},
-    "y":    {"compressors": MEDIUM_COMPRESSOR},
-    "z":    {"compressors": MEDIUM_COMPRESSOR},
+    "x": {"compressors": MEDIUM_COMPRESSOR},
+    "y": {"compressors": MEDIUM_COMPRESSOR},
+    "z": {"compressors": MEDIUM_COMPRESSOR},
 }
-    
+
+
 def triangulate(mesh: StructuredMesh) -> np.ndarray:
-    nx = mesh.sizes['i']
-    ny = mesh.sizes['j']  # This is the stride multiplier for row-major layout
-    
+    nx = mesh.sizes["i"]
+    ny = mesh.sizes["j"]  # This is the stride multiplier for row-major layout
+
     # Generate the 2D grids
     ii, jj = np.meshgrid(np.arange(nx - 1), np.arange(ny - 1), indexing="ij")
-    
+
     # Use ny (the size of j) instead of nx
     p00 = (ii * ny + jj).ravel()
     p10 = ((ii + 1) * ny + jj).ravel()
     p11 = ((ii + 1) * ny + (jj + 1)).ravel()
     p01 = (ii * ny + (jj + 1)).ravel()
-    
+
     tri1 = np.stack((p00, p10, p11), axis=1)
     tri2 = np.stack((p00, p11, p01), axis=1)
-    
+
     faces = np.vstack((tri1, tri2)).astype(np.uint64)
     return faces
+
 
 def make_mesh(
     name: str,
@@ -137,6 +139,7 @@ def make_mesh(
     connectivity: np.ndarray,
     cell_data: dict[str, np.ndarray],
     field_data: dict[str, np.ndarray],
+    geometry: shapely.Geometry,
 ) -> TetrahedralMesh:
     """Create a :class:`TetrahedralMesh`.
 
@@ -164,7 +167,7 @@ def make_mesh(
     nj, nk = connectivity.shape
     j = np.arange(nj)
     k = np.arange(nk)
-    
+
     return TetrahedralMeshSchema.new(
         name=name,
         x=points[..., 0],
@@ -174,6 +177,7 @@ def make_mesh(
         i=i,
         j=j,
         k=k,
+        geometry=geometry,
         **cell_data,
-        **field_data
+        **field_data,
     )

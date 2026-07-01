@@ -1,8 +1,10 @@
 import dask.array as da
 import numpy as np
+import shapely
 import xarray as xr
 
-from nzcvm.coordinates import Coordinate
+from nzcvm import coordinates
+from nzcvm.coordinates import Affine, Coordinate
 from nzcvm.models.surface import Surface
 
 
@@ -49,6 +51,18 @@ def ensure_chunks(*dsets: xr.DataArray) -> list[xr.DataArray]:
             if dim not in target or len(sizes) > len(target[dim]):
                 target[dim] = sizes
     return [dset.chunk(target) for dset in dsets]
+
+
+def outline(transform: Affine, extent_x: float, extent_y: float) -> shapely.Geometry:
+    dx = extent_x / 2
+    dy = extent_y / 2
+    # shape: (2, -1)
+    corners_x_local = np.array([-dx, dx, dx, -dx])
+    corners_y_local = np.array([-dy, -dy, dy, dy])
+    corners_x, corners_y = coordinates.apply_affine_transform(
+        transform, corners_x_local, corners_y_local
+    )
+    return shapely.Polygon(np.c_[corners_x, corners_y])
 
 
 def raw_coordinates(

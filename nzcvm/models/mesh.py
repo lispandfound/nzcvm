@@ -8,7 +8,7 @@ and structured grids (topographic surfaces).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import shapely
@@ -16,9 +16,28 @@ import xarray as xr
 from xarray_dataclasses import AsDataset, Attr, Coord, Data, DataOptions
 from zarr.codecs import Blosc
 
+from nzcvm.xarray import encode
+
 I = Literal["i"]
 J = Literal["j"]
 K = Literal["k"]
+
+
+def _encode_geometry_attr(value: Any) -> Any:
+    """Turn a live ``shapely.Geometry`` attr into hex-WKB, a JSON-safe string zarr/netcdf can store."""
+    if isinstance(value, shapely.Geometry):
+        return shapely.to_wkb(value, hex=True)
+    return value
+
+
+def _decode_geometry_attr(value: Any) -> Any:
+    """Turn a hex-WKB geometry attr back into a live ``shapely.Geometry``."""
+    if isinstance(value, str):
+        try:
+            return shapely.from_wkb(value)
+        except Exception:
+            return value
+    return value
 
 
 class TetrahedralMesh(xr.Dataset):
@@ -59,6 +78,7 @@ class TetrahedralMeshSchema(AsDataset):
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> TetrahedralMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
+        dataset = encode(dataset, attr_hook=_decode_geometry_attr)
         return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
 
 
@@ -139,7 +159,7 @@ def make_mesh(
     connectivity: np.ndarray,
     cell_data: dict[str, np.ndarray],
     field_data: dict[str, np.ndarray],
-    geometry: shapely.Geometry,
+    geometry: shapely.Geometry | None,
 ) -> TetrahedralMesh:
     """Create a :class:`TetrahedralMesh`.
 
@@ -168,7 +188,7 @@ def make_mesh(
     j = np.arange(nj)
     k = np.arange(nk)
 
-    return TetrahedralMeshSchema.new(
+    mesh = TetrahedralMeshSchema.new(
         name=name,
         x=points[..., 0],
         y=points[..., 1],
@@ -181,3 +201,4 @@ def make_mesh(
         **cell_data,
         **field_data,
     )
+    return encode(mesh, attr_hook=_encode_geometry_attr)

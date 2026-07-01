@@ -200,6 +200,7 @@ def data_frame_to_mesh(
             priority=priority,
         ),
         field_data=field_data,
+        geometry=None,
     )
 
 

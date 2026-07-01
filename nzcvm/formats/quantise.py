@@ -3,6 +3,8 @@ from typing import Hashable
 import xarray as xr
 from zarr.codecs import ZFPY, Blosc
 
+from nzcvm.xarray import Encoder, encode
+
 DEFAULT_PRECISION: dict[Hashable, dict] = {
     "x": dict(tolerance=0.5),
     "y": dict(tolerance=0.5),
@@ -20,22 +22,25 @@ def _quantise_encoding(settings: dict) -> dict:
     }
 
 
-def _apply_compression(dset: xr.Dataset, settings: dict[Hashable, dict]) -> xr.Dataset:
-    dset = dset.copy(deep=False)
-    for var in dset.data_vars:
-        if var_settings := settings.get(var):
+def _compression_hook(var_settings: dict | None) -> Encoder:
+    def hook(da: xr.DataArray) -> xr.DataArray:
+        da = da.copy(deep=False)
+        if var_settings:
             encoding = _quantise_encoding(var_settings)
         else:
             codec = Blosc(cname="lz4", clevel=4, shuffle=True)
             encoding = {
                 "compressors": [codec],
             }
+        da.encoding.update(encoding)
+        return da
 
-        dset[var].encoding.update(encoding)
-    return dset
+    return hook
 
 
 def apply_compression(
     dtree: xr.DataTree, settings: dict[Hashable, dict]
 ) -> xr.DataTree:
-    return dtree.map_over_datasets(_apply_compression, kwargs=dict(settings=settings))
+    variables = {var for node in dtree.subtree for var in node.dataset.data_vars}
+    hooks = {str(var): _compression_hook(settings.get(var)) for var in variables}
+    return encode(dtree, **hooks)

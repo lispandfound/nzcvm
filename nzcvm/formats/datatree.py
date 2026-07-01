@@ -3,16 +3,21 @@ from pathlib import Path
 from typing import Any
 
 import hdf5plugin
+import shapely
 import xarray as xr
 from numcodecs import ZFPY, Blosc
 
 from nzcvm.formats import quantise
 from nzcvm.velocity_model import VelocityModel
+from nzcvm.xarray import encode
 
 
+# TODO: Eliminate in favour of encode architecture
 def _coerce_attribute_value_to_netcdf(v: Any) -> Any:
     if isinstance(v, Enum):
         return v.value
+    elif isinstance(v, shapely.Geometry):
+        return shapely.to_wkt(v)
     return v
 
 
@@ -78,4 +83,5 @@ def to_netcdf(
 
 def to_zarr(velocity_model: VelocityModel, path: Path) -> None:
     dtree = velocity_model.to_datatree()
+    dtree = encode(dtree, attr_hook=_coerce_attribute_value_to_netcdf)
     dtree.to_zarr(path, mode="w")

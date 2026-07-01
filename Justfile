@@ -169,6 +169,8 @@ surface := "uv run nzcvm convert-tiff main"
 ep2020:
     @test -f models/ep2020.zarr || {{ tomography }} ep2020.csv models/ep2020.zarr
 
+models: ep2020 basins
+
 vs30:
     @test -f resources/vs30.zarr || {{ surface }} ${VS30_TIFF} 1 resources/vs30.zarr --downsample 3 
 

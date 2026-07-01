@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Self
 
 import shapely
-import xarray as xr
 
+import xarray as xr
 from nzcvm.config.metadata import ModelMetadata
 from nzcvm.config.velocity_model import VelocityModelConfig
 from nzcvm.coordinates import Coordinate
@@ -31,7 +31,7 @@ class VelocityModel:
 
     @property
     def geometry(self) -> shapely.Geometry:
-        return shapely.union_all(grid.geometry for grid in self.grids.values())
+        return shapely.union_all([grid.geometry for grid in self.grids.values()])
 
     @classmethod
     def from_config(cls, config: VelocityModelConfig) -> Self:

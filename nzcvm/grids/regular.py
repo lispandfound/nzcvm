@@ -93,7 +93,7 @@ def build_regular(config: RegularGridConfig) -> dict[str, Grid]:
         coordinates.translate(orientation.grid_origin_x, orientation.grid_origin_y)
         # Consistent with the rotation specified in the z-axis down convention
         @ Rotation.from_rotvec(
-            np.array([0.0, 0.0, orientation.grid_azimuth]), degrees=True
+            np.array([0.0, 0.0, -orientation.grid_azimuth]), degrees=True
         )
         .as_matrix()
         .astype(np.float32)

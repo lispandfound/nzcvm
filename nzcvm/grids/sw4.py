@@ -11,13 +11,14 @@ See Also
 nzcvm.config.grids.sw4.SW4GridConfig : Grid configuration.
 nzcvm.grids.helpers : Shared surface-elevation helpers.
 """
-import logging
-import pyproj
 
+import logging
 from typing import Any
-import shapely
+
 import dask
 import numpy as np
+import pyproj
+import shapely
 import xarray as xr
 from scipy.spatial.transform import Rotation
 
@@ -145,19 +146,20 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
         # This is consistent with the rotation specified in the z-axis down
         # convention.
         @ Rotation.from_rotvec(
-            np.array([0.0, 0.0, orientation.grid_azimuth]), degrees=True
+            np.array([0.0, 0.0, -orientation.grid_azimuth]), degrees=True
         )
         .as_matrix()
         .astype(np.float32)
     )
-    
+
     geometry = helpers.outline(transform, rounded_extent_x, rounded_extent_y)
     trns = pyproj.Transformer.from_crs(orientation.crs, 4326, always_xy=True)
-    geometry_wgs = shapely.transform(geometry, lambda c: np.stack(trns.transform(*c.T), axis=1))
-    
-    logger = logging.getLogger(__name__)
-    logger.debug(f'Geometry: {shapely.to_geojson(geometry_wgs)}')
+    geometry_wgs = shapely.transform(
+        geometry, lambda c: np.stack(trns.transform(*c.T), axis=1)
+    )
 
+    logger = logging.getLogger(__name__)
+    logger.debug(f"Geometry: {shapely.to_geojson(geometry_wgs)}")
 
     ox, oy = helpers.raw_coordinates(
         ni,
@@ -231,6 +233,5 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             )
         )
         top = refinement.bottom
-
 
     return {grid.name: grid for grid in grids}

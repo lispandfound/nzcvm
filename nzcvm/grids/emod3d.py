@@ -78,7 +78,7 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     transform = coordinates.translate(
         orientation.grid_origin_x, orientation.grid_origin_y
     ) @ Rotation.from_rotvec(
-        np.array([0, 0, orientation.grid_azimuth]), degrees=True
+        np.array([0, 0, -orientation.grid_azimuth]), degrees=True
     ).as_matrix().astype(np.float32)
 
     geometry = helpers.outline(

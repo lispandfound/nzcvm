@@ -40,7 +40,7 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
             for p in config.model_path.rglob(glob)
             if _model_intersects_geometry(p, geometry)
         )
-        logger.debug(f'Loading {len(models)} models for querying')
+        logger.debug(f"Loading {len(models)} models ({', '.join(str(m) for m in sorted(models))}) for querying")
         self.model = ModelTree.load_models(models)
 
     def __call__(

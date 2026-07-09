@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+import shapely
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.grids.grid import Grid, GridSchema
@@ -79,9 +80,11 @@ def make_grid(
         depth=depth,
         name="test",
         resolution=100.0,
+        geometry=shapely.box(171.9, -43.6, 172.1, -43.4),
         origin_lon=np.float32(172.0),
         origin_lat=np.float32(-43.5),
         azimuth=np.float32(0.0),
+        grid_azimuth=np.float32(0.0),
         bottom_left_lon=np.float32(172.0),
         bottom_left_lat=np.float32(-43.5),
     )

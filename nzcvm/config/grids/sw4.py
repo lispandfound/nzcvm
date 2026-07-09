@@ -1,7 +1,9 @@
 import itertools
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
+
+import numpy as np
 
 from nzcvm.config.core import ConfigObject
 from nzcvm.config.grids.model import Model
@@ -9,7 +11,7 @@ from nzcvm.config.validation import PositiveFloat
 from nzcvm.coordinates import Coordinate
 
 from .core import GridConfig
-import numpy as np
+
 
 @dataclass
 class MeshRefinement(ConfigObject):

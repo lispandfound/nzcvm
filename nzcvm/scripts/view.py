@@ -10,8 +10,8 @@ python visualise_grid.py model.nc --scalar depth
 python visualise_grid.py model.nc --scalar vs --compare-to model2.nc --diff-mode abs
 """
 
-import itertools
 import gzip
+import itertools
 from enum import StrEnum, auto
 from pathlib import Path
 from typing import Annotated
@@ -24,7 +24,7 @@ import xarray as xr
 # Adjust these imports according to your local package structure
 from nzcvm.components import Component
 from nzcvm.grids.grid import Grid
-from nzcvm.models.mesh import StructuredMeshSchema, TetrahedralMeshSchema
+from nzcvm.models.mesh import TetrahedralMeshSchema
 from nzcvm.qualities import Qualities
 from nzcvm.velocity_model import VelocityModel
 

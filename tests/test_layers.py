@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import shapely
 import xarray as xr
 from hypothesis import given
 from hypothesis import strategies as st
@@ -28,6 +29,10 @@ from nzcvm.qualities import QualitiesSchema
 from nzcvm.query import ModelRange
 from tests.conftest import make_grid
 
+# Layers now carry a spatial domain; these unit tests don't exercise masking,
+# so any covering geometry works.
+GEOM = shapely.box(171.9, -43.6, 172.1, -43.4)
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -40,7 +45,7 @@ def _clamp_over_constant(
     """Apply *config* to a 2×2×2 grid backed by a ConstantLayer(*constants*)."""
     grid = make_grid()
     inner = ConstantLayer(**constants)
-    layer = ClampLayer(config, inner)
+    layer = ClampLayer(config, GEOM, inner)
     return layer(grid)
 
 
@@ -164,8 +169,8 @@ def test_clamp_delegates_to_next_layer() -> None:
     """ClampLayer must call next_layer exactly once per grid call."""
     cfg = ClampLayerConfig()
     inner = ConstantLayer()
-    counter = CountingLayer(inner)
-    clamp = ClampLayer(cfg, counter)
+    counter = CountingLayer(GEOM, inner)
+    clamp = ClampLayer(cfg, GEOM, counter)
     clamp(make_grid())
     assert counter.call_count == 1
 
@@ -174,8 +179,8 @@ def test_clamp_propagates_model_range() -> None:
     """The model_range kwarg is forwarded to next_layer unchanged."""
     cfg = ClampLayerConfig()
     inner = ConstantLayer()
-    recorder = RecordingLayer(inner)
-    clamp = ClampLayer(cfg, recorder)
+    recorder = RecordingLayer(GEOM, inner)
+    clamp = ClampLayer(cfg, GEOM, recorder)
     clamp(make_grid(), model_range=ModelRange.BASINS)
     assert recorder.calls[0][1] == ModelRange.BASINS
 

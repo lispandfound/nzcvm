@@ -4,6 +4,7 @@ import dask.array as da
 import h5py
 import numpy as np
 import pytest
+import shapely
 
 from nzcvm.config.metadata import ModelMetadata
 from nzcvm.coordinates import Coordinate
@@ -33,9 +34,11 @@ def _grid(name: str, resolution: float, base: float, shape=(2, 3, 4)):
         depth=depth.astype(np.float32),
         name=name,
         resolution=resolution,
+        geometry=shapely.box(170.0, -43.0, 172.0, -41.0),
         origin_lon=np.float32(170.0),
         origin_lat=np.float32(-43.0),
         azimuth=np.float32(25.0),
+        grid_azimuth=np.float32(25.0),
         bottom_left_lon=np.float32(171.0),
         bottom_left_lat=np.float32(-42.0),
     )

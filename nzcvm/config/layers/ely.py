@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
-
 from pathlib import Path
+
 from nzcvm.config.validation import PositiveFloat
 
 from .core import LayerConfig

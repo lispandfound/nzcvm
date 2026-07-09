@@ -3,7 +3,7 @@
 The mathematical correctness of the underlying Rust interpolator is
 covered by cargo tests.  Here we test the Python-level contract:
 
-* :func:`~nzcvm.models.surface.build_surface_interpolator` produces a
+* :meth:`~nzcvm.models.surface.Surface.from_dataset` produces a
   :class:`~nzcvm.models.surface.Surface` with sensible metadata.
 * :meth:`~nzcvm.models.surface.Surface.transform` preserves the input shape
   and returns float32 values.
@@ -17,8 +17,8 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from nzcvm.models.mesh import StructuredMesh
-from nzcvm.models.surface import Surface, build_surface_interpolator
+from nzcvm.models.mesh import StructuredMeshSchema
+from nzcvm.models.surface import Surface
 
 # ---------------------------------------------------------------------------
 # Fixture
@@ -34,9 +34,10 @@ def _flat_surface(
     ys = np.linspace(cy - side / 2, cy + side / 2, n, dtype=np.float32)
     xx, yy = np.meshgrid(xs, ys, indexing="ij")
     zz = np.full_like(xx, z)
-    pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
-    mesh = StructuredMesh(points=pts, dims=(n, n, 1))
-    return build_surface_interpolator(mesh)
+    mesh = StructuredMeshSchema.new(
+        x=xx, y=yy, z=zz, i=np.arange(n), j=np.arange(n), name="flat"
+    )
+    return Surface.from_dataset(mesh)
 
 
 @pytest.fixture()

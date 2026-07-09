@@ -18,8 +18,8 @@ Example
     from nzcvm.config.layers.clamp import ClampLayerConfig, Bound
 
     terminal = constant(vs=3500.0)
-    counter  = CountingLayer(terminal)
-    clamp    = ClampLayer(ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), counter)
+    counter  = CountingLayer(geometry, terminal)
+    clamp    = ClampLayer(ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), geometry, counter)
 
     qualities = clamp(grid)
     assert counter.call_count == 1
@@ -102,7 +102,7 @@ class CountingLayer(Layer[_NullConfig]):
     """
 
     def __init__(self, geometry: Geometry, next_layer: Layer) -> None:
-        super().__init__(_NullConfig(), next_layer)
+        super().__init__(_NullConfig(), geometry, next_layer)
         self.call_count = 0
 
     def __call__(
@@ -122,7 +122,7 @@ class RecordingLayer(Layer[_NullConfig]):
     """
 
     def __init__(self, geometry: Geometry, next_layer: Layer) -> None:
-        super().__init__(_NullConfig(), next_layer)
+        super().__init__(_NullConfig(), geometry, next_layer)
         self.calls: list[tuple[Grid, ModelRange]] = []
 
     def __call__(

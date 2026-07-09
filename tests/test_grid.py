@@ -11,6 +11,8 @@ from pathlib import Path
 import dask.array as da
 import numpy as np
 import pytest
+from pyproj import CRS
+
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.config.grids.model import Model
 from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
@@ -18,7 +20,6 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
 from nzcvm.models.mesh import StructuredMeshSchema
-from pyproj import CRS
 
 # ---------------------------------------------------------------------------
 # Shared fixture: flat surface file
@@ -31,20 +32,21 @@ _SURFACE_EXTENT = 2_000_000.0  # 2000 km side, clearly encompasses test grids
 
 
 def _write_flat_surface(path: Path) -> None:
-    """Write a flat z=0 StructuredMesh VTKHDF surface to *path*."""
+    """Write a flat z=0 StructuredMesh zarr surface to *path*."""
     n = 8  # 8×8 grid of points — enough for interpolation
     xs = np.linspace(_SURFACE_XMIN, _SURFACE_XMIN + _SURFACE_EXTENT, n, dtype=np.float32)
     ys = np.linspace(_SURFACE_YMIN, _SURFACE_YMIN + _SURFACE_EXTENT, n, dtype=np.float32)
     xx, yy = np.meshgrid(xs, ys, indexing="ij")
     zz = np.zeros_like(xx)
-    pts = np.column_stack([xx.ravel(), yy.ravel(), zz.ravel()])
-    mesh = StructuredMeshSchema.new(x=xx, y=yy, z=zz)
-    mesh.save(path)
+    mesh = StructuredMeshSchema.new(
+        x=xx, y=yy, z=zz, i=np.arange(n), j=np.arange(n), name="flat"
+    )
+    mesh.to_zarr(path, mode="w")
 
 
 @pytest.fixture(scope="module")
 def flat_surface(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    p = tmp_path_factory.mktemp("surfaces") / "flat.vtkhdf"
+    p = tmp_path_factory.mktemp("surfaces") / "flat.zarr"
     _write_flat_surface(p)
     return p
 
@@ -222,9 +224,10 @@ class TestSW4Shape:
             flat_surface,
             extent_x=4000.0,
             extent_y=4000.0,
+            # Shallowest refinement is finest; each deeper layer is 2x coarser.
             refinements={
-                "top": MeshRefinement(resolution=1000.0, bottom=2000.0),
-                "bottom": MeshRefinement(resolution=500.0, bottom=4000.0),
+                "top": MeshRefinement(resolution=500.0, bottom=2000.0),
+                "bottom": MeshRefinement(resolution=1000.0, bottom=4000.0),
             },
         )
         grids = build_grids_from_config(cfg)
@@ -280,9 +283,10 @@ class TestSW4RefinementSeams:
         top_bottom = 2000.0
         cfg = _sw4_config(
             flat_surface,
+            # Shallowest refinement is finest; the deeper layer is 2x coarser.
             refinements={
                 "top": MeshRefinement(resolution=1000.0, bottom=top_bottom),
-                "bot": MeshRefinement(resolution=1000.0, bottom=4000.0),
+                "bot": MeshRefinement(resolution=2000.0, bottom=4000.0),
             },
         )
         grids = build_grids_from_config(cfg)

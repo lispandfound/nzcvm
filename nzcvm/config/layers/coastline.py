@@ -4,7 +4,6 @@ from pathlib import Path
 from nzcvm.config.layers import LayerConfig
 
 
-
 @dataclass
 class CoastlineConfig(LayerConfig):
     coastline: Path

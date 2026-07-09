@@ -1,4 +1,4 @@
-from nzcvm.grids import emod3d, sw4, regular
+from nzcvm.grids import emod3d, regular, sw4
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
 

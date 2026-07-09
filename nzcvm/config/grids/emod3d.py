@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from pathlib import Path
 from typing import Literal
 
 from nzcvm.config.grids import GridConfig
 from nzcvm.config.grids.model import Model
-from pathlib import Path
 from nzcvm.config.validation import (
     PositiveFloat,
     PositiveInt,

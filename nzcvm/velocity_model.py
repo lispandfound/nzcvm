@@ -3,8 +3,8 @@ from dataclasses import dataclass, field
 from typing import Callable, Self
 
 import shapely
-
 import xarray as xr
+
 from nzcvm.config.metadata import ModelMetadata
 from nzcvm.config.velocity_model import VelocityModelConfig
 from nzcvm.coordinates import Coordinate

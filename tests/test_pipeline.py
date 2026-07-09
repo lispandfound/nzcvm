@@ -9,6 +9,7 @@ layer implementation details.
 from __future__ import annotations
 
 import pytest
+import shapely
 
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
 from nzcvm.layers.clamp import ClampLayer
@@ -17,6 +18,10 @@ from nzcvm.layers.pipeline import build_pipeline
 from nzcvm.models.model import ModelRange
 from tests.conftest import make_grid
 
+# Layers now carry a spatial domain; these unit tests don't exercise masking,
+# so any covering geometry works.
+GEOM = shapely.box(171.9, -43.6, 172.1, -43.4)
+
 # ---------------------------------------------------------------------------
 # build_pipeline guard-rail
 # ---------------------------------------------------------------------------
@@ -24,7 +29,7 @@ from tests.conftest import make_grid
 
 def test_build_pipeline_empty_list_raises() -> None:
     with pytest.raises(ValueError):
-        build_pipeline([])
+        build_pipeline(GEOM, [])
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +41,7 @@ def test_build_pipeline_single_config_produces_callable() -> None:
     """A single-element config list must produce a callable layer that raises
     ValueError when the grid is out of bounds (sentinel reached)."""
     cfg = ClampLayerConfig()
-    pipeline = build_pipeline([cfg])
+    pipeline = build_pipeline(GEOM, [cfg])
     with pytest.raises(ValueError, match="out of bounds"):
         pipeline(make_grid())
 
@@ -48,9 +53,9 @@ def test_build_pipeline_single_config_produces_callable() -> None:
 def test_clamp_chain_outer_before_inner() -> None:
     """The outermost ClampLayer runs *before* the inner ConstantLayer."""
     terminal = ConstantLayer(vs=3000.0)
-    counter = CountingLayer(terminal)
+    counter = CountingLayer(GEOM, terminal)
     # Min-vs clamp of 4000 will push vs up from 3000 to 4000
-    clamp = ClampLayer(ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), counter)
+    clamp = ClampLayer(ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), GEOM, counter)
 
     grid = make_grid()
     result = clamp(grid)
@@ -65,10 +70,10 @@ def test_two_clamp_layers_compose_correctly() -> None:
     """Stacking two ClampLayers applies both constraints."""
     terminal = ConstantLayer(vs=3000.0, vp=5000.0)
     clamp_inner = ClampLayer(
-        ClampLayerConfig(clamps={"vs": Bound(min=3500.0)}), terminal
+        ClampLayerConfig(clamps={"vs": Bound(min=3500.0)}), GEOM, terminal
     )
     clamp_outer = ClampLayer(
-        ClampLayerConfig(clamps={"vp": Bound(max=4500.0)}), clamp_inner
+        ClampLayerConfig(clamps={"vp": Bound(max=4500.0)}), GEOM, clamp_inner
     )
 
     result = clamp_outer(make_grid())
@@ -86,8 +91,8 @@ def test_two_clamp_layers_compose_correctly() -> None:
 def test_model_range_propagated_through_clamp() -> None:
     """model_range passed to outermost layer reaches innermost layer."""
     terminal = ConstantLayer()
-    recorder = RecordingLayer(terminal)
-    clamp = ClampLayer(ClampLayerConfig(), recorder)
+    recorder = RecordingLayer(GEOM, terminal)
+    clamp = ClampLayer(ClampLayerConfig(), GEOM, recorder)
 
     clamp(make_grid(), model_range=ModelRange.BASINS)
     assert recorder.calls[0][1] == ModelRange.BASINS

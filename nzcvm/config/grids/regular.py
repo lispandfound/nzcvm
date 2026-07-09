@@ -1,5 +1,5 @@
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 from nzcvm.config.grids.model import Model

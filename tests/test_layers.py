@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+import xarray as xr
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -84,10 +85,39 @@ def test_clamp_vs_both_bounds(vs_min: float, vs_max: float, vs_val: float) -> No
     assert float(result.vs.max()) <= float(np.float32(vs_max))
 
 
-def test_clamp_unclamped_components_unchanged() -> None:
-    """Components not mentioned in *clamps* are passed through unchanged."""
+def test_clamp_ungoverned_components_unchanged() -> None:
+    """Properties Vs does not govern (qp/qs) pass through a vs clamp untouched."""
     cfg = ClampLayerConfig(clamps={Component.VS: Bound(min=4000.0)})
-    result = _clamp_over_constant(cfg, rho=2700.0)
+    result = _clamp_over_constant(cfg, vs=3500.0, qp=222.0, qs=111.0)
+    assert float(result.qp.mean()) == pytest.approx(222.0, rel=1e-4)
+    assert float(result.qs.mean()) == pytest.approx(111.0, rel=1e-4)
+
+
+def test_clamp_vs_snaps_vp_and_rho_onto_manifold() -> None:
+    """Clamping Vs regenerates Vp and density from the Brocher/Nafe-Drake curve.
+
+    Independent clipping would leave vp/rho at their (now inconsistent) input
+    values; the coherent clamp must move them onto the empirical manifold at
+    the points where Vs changed.
+    """
+    from nzcvm.ely_taper import DENSITY_RELATION, VP_FROM_VS_RELATION
+
+    cfg = ClampLayerConfig(clamps={Component.VS: Bound(min=4000.0)})
+    # vs 3500 -> 4000, so vp/rho should be regenerated (not left at 6000/2700).
+    result = _clamp_over_constant(cfg, vs=3500.0, vp=6000.0, rho=2700.0)
+
+    expected_vp = float(VP_FROM_VS_RELATION(xr.DataArray(np.float32(4000.0))))
+    expected_rho = float(DENSITY_RELATION(xr.DataArray(np.float32(expected_vp))))
+    assert float(result.vp.mean()) == pytest.approx(expected_vp, rel=1e-4)
+    assert float(result.rho.mean()) == pytest.approx(expected_rho, rel=1e-4)
+
+
+def test_clamp_vs_untouched_leaves_vp_rho_alone() -> None:
+    """Where Vs is not moved by the clamp, Vp and density are left as-is."""
+    cfg = ClampLayerConfig(clamps={Component.VS: Bound(min=1000.0)})
+    # vs 3500 already satisfies the bound, so nothing is snapped.
+    result = _clamp_over_constant(cfg, vs=3500.0, vp=6000.0, rho=2700.0)
+    assert float(result.vp.mean()) == pytest.approx(6000.0, rel=1e-4)
     assert float(result.rho.mean()) == pytest.approx(2700.0, rel=1e-4)
 
 

@@ -54,8 +54,17 @@ class ClampLayerConfig(LayerConfig):
     """Configuration DTO for a :class:`~nzcvm.layers.clamp.ClampLayer`.
 
     The *clamps* mapping associates each velocity component with its
-    ``(min, max)`` bounds as a 2-tuple.  ``None`` means unbounded on that
-    side.  Components not listed are left unclamped.
+    ``(min, max)`` bounds.  ``None`` means unbounded on that side; components
+    not listed are left unclamped.
+
+    Vs is the *master* property: a ``vs`` bound clamps Vs and then regenerates
+    Vp and density from the Brocher/Nafe-Drake relations at the affected
+    points, so the three stay physically consistent.  ``min_vp_vs_ratio`` /
+    ``max_vp_vs_ratio`` bound the Vp/Vs (Poisson) ratio as a physical guard
+    (the isotropic hard floor is ``sqrt(2)``).  Bounds on any other component
+    are applied as plain hard guards and do not trigger the coherence
+    machinery, so reserve them for properties Vs does not govern (``qp``,
+    ``qs``) or for hard-capping an output.
     """
 
     type: str = "clamp"

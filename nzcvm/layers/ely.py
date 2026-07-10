@@ -120,8 +120,9 @@ class ElyLayer(Layer[ElyLayerConfig], config_cls=ElyLayerConfig):
         background = self.next_layer(grid, model_range=ModelRange.TOMOGRAPHY)
 
         if basins is not None:
+            qualities.blend(basins, background, out=background)
             qualities.blend(
-                basins, ely_qualities, out=background, where=is_in_taper.values
+                ely_qualities, background, out=background, where=is_in_taper.values
             )
         else:
             qualities.blend(

@@ -98,6 +98,45 @@ def test_clamp_ungoverned_components_unchanged() -> None:
     assert float(result.qs.mean()) == pytest.approx(111.0, rel=1e-4)
 
 
+def test_clamp_qs_floored_to_multiple_of_vs() -> None:
+    """A relative min bound floors Qs at ``factor * Vs`` (EMOD3D Qs = 50*Vs)."""
+    cfg = ClampLayerConfig(clamps={Component.QS: Bound(min=0.05, min_ref="vs")})
+    # Vs = 3000 m/s -> floor 0.05 * 3000 = 150; input Qs = 40 is below it.
+    result = _clamp_over_constant(cfg, vs=3000.0, qs=40.0)
+    assert float(result.qs.mean()) == pytest.approx(150.0, rel=1e-4)
+
+
+def test_clamp_qp_capped_to_multiple_of_vp() -> None:
+    """A relative max bound caps Qp at ``factor * Vp``; below the cap is untouched."""
+    cfg = ClampLayerConfig(clamps={Component.QP: Bound(max=0.1, max_ref="vp")})
+    # Vp = 5000 m/s -> cap 0.1 * 5000 = 500; input Qp = 900 is above it, 200 is not.
+    capped = _clamp_over_constant(cfg, vp=5000.0, qp=900.0)
+    assert float(capped.qp.mean()) == pytest.approx(500.0, rel=1e-4)
+    below = _clamp_over_constant(cfg, vp=5000.0, qp=200.0)
+    assert float(below.qp.mean()) == pytest.approx(200.0, rel=1e-4)
+
+
+def test_clamp_relative_bound_uses_clamped_vs() -> None:
+    """Qs floored to k*Vs tracks the *clamped* Vs, since Vs is finalised first."""
+    cfg = ClampLayerConfig(
+        clamps={
+            Component.VS: Bound(min=4000.0),  # forces Vs 3000 -> 4000
+            Component.QS: Bound(min=0.05, min_ref="vs"),
+        }
+    )
+    result = _clamp_over_constant(cfg, vs=3000.0, qs=40.0)
+    assert float(result.vs.mean()) == pytest.approx(4000.0, rel=1e-4)
+    assert float(result.qs.mean()) == pytest.approx(0.05 * 4000.0, rel=1e-4)
+
+
+def test_clamp_bound_rejects_unknown_ref() -> None:
+    """A ``*_ref`` naming a non-component is rejected at config time."""
+    from mashumaro.exceptions import InvalidFieldValue
+
+    with pytest.raises(InvalidFieldValue):
+        Bound(min=0.05, min_ref="not_a_component")
+
+
 def test_clamp_vs_snaps_vp_and_rho_onto_manifold() -> None:
     """Clamping Vs regenerates Vp and density from the Brocher/Nafe-Drake curve.
 

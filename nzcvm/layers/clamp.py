@@ -84,10 +84,18 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
 
         # Any remaining explicit per-component bounds act as hard guards. These
         # bypass the coherence machinery, so reserve them for properties Vs
-        # does not govern (e.g. qp/qs) or for hard-capping an output.
+        # does not govern (e.g. qp/qs) or for hard-capping an output. A bound
+        # side may be a constant or a multiple of another component (via
+        # ``min_ref``/``max_ref``); ``resolve`` returns the effective scalar or
+        # per-point array. Because Vs/Vp were already finalised above, a Qs
+        # bound of ``0.05 * Vs`` (i.e. Qs = 50*Vs, Vs in m/s) tracks the clamped
+        # velocity, and Qp likewise against Vp.
         for c, bound in self.config.clamps.items():
             if c == Component.VS:
                 continue
-            qualities[c] = qualities[c].clip(min=bound.min, max=bound.max)
+            qualities[c] = qualities[c].clip(
+                min=bound.resolve("min", qualities),
+                max=bound.resolve("max", qualities),
+            )
 
         return qualities

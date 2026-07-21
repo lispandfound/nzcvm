@@ -237,8 +237,6 @@ class Layer:
     rho: float
     vp: float
     vs: float
-    qp: float = 100.0
-    qs: float = 50.0
     alpha: float = 1.0
 
 
@@ -270,15 +268,19 @@ def construct_volumetric_mesh(
             for layer in layers
         ]
     )
+    # EMOD3D derives anelastic attenuation directly from velocity as
+    # Qs = 50 * Vs and Qp = 100 * Vs (Vs in km/s).  layer.vs is in m/s, so
+    # scale by 1/1000.  Any qp/qs a 1D basin model might carry is deliberately
+    # ignored so basins match the solver's on-the-fly Q calculation.
     qp = np.concatenate(
         [
-            np.full((len(layer.vertices),), layer.qp, dtype=np.float32)
+            np.full((len(layer.vertices),), 100.0 * layer.vs / 1000.0, dtype=np.float32)
             for layer in layers
         ]
     )
     qs = np.concatenate(
         [
-            np.full((len(layer.vertices),), layer.qs, dtype=np.float32)
+            np.full((len(layer.vertices),), 50.0 * layer.vs / 1000.0, dtype=np.float32)
             for layer in layers
         ]
     )

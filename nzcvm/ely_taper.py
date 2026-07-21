@@ -75,8 +75,12 @@ def _ely_vs_profile(
     vp_from_vs30 = VP_FROM_VS_RELATION(vs30)
     vp = f * vp_at_z_t + g * vp_from_vs30
     rho = DENSITY_RELATION(vp)
-    qp = xr.full_like(rho, 100.0)
-    qs = xr.full_like(rho, 50.0)
+    # EMOD3D derives anelastic attenuation directly from velocity as
+    # Qs = 50 * Vs and Qp = 100 * Vs (Vs in km/s).  The tapered vs here is in
+    # m/s, so scale by 1/1000 to match the tomography and basin generators and
+    # let Q follow the tapered velocity through the GTL.
+    qs = 50.0 * vs / 1000.0
+    qp = 100.0 * vs / 1000.0
     alpha = xr.full_like(rho, 1.0)
 
     return xr.Dataset(dict(rho=rho, vs=vs, vp=vp, qp=qp, qs=qs, alpha=alpha))

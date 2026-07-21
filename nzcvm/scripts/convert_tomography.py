@@ -255,11 +255,13 @@ def convert(
 
     column_keys = MODEL_COLUMNS[model_type]
 
-    if column_keys.qp not in df:
-        df[column_keys.qp] = 100.0
-
-    if column_keys.qs not in df:
-        df[column_keys.qs] = 50.0
+    # EMOD3D derives anelastic attenuation directly from velocity as
+    # Qs = 50 * Vs and Qp = 100 * Vs (Vs in km/s).  Always compute Q this way,
+    # overriding any qp/qs the tomography file might supply, so the material
+    # matches the solver's on-the-fly Q calculation.  Velocities are still in
+    # km/s at this point; the conversion to m/s happens in data_frame_to_mesh.
+    df[column_keys.qs] = 50.0 * df[column_keys.vs]
+    df[column_keys.qp] = 100.0 * df[column_keys.vs]
 
     mesh = data_frame_to_mesh(model.stem, df, column_keys)
     mesh.to_zarr(output, mode="w", encoding=DEFAULT_ENCODING_SETTINGS)

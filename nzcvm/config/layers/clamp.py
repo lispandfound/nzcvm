@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 
 from mashumaro.exceptions import InvalidFieldValue
 
+from nzcvm.components import Component
 from nzcvm.config.core import ConfigObject
 
 from .core import LayerConfig
@@ -29,24 +30,97 @@ def _validate_bounds(name: str, min_val: float | None, max_val: float | None):
 
 @dataclass
 class Bound(ConfigObject):
+    """A ``(min, max)`` bound applied to a component.
+
+    Each side is either a constant, or a multiple of another component when the
+    matching ``*_ref`` is set.  For example ``Bound(min=0.05, min_ref="vs")``
+    clamps the component to be at least ``0.05 * Vs`` at every point, which
+    reproduces the EMOD3D ``Qs = 50 * Vs`` relation (Vs is carried in m/s
+    internally, so the factor is ``50 / 1000``).  ``None`` leaves that side
+    unbounded.  The reference component's value is taken in the pipeline's
+    native units (velocities in m/s), evaluated pointwise at clamp time.
+    """
+
     min: float | None = None
     max: float | None = None
+    min_ref: str | None = None
+    max_ref: str | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
 
+        valid_refs = {str(c) for c in Component}
+        for side, coeff, ref in (
+            ("min", self.min, self.min_ref),
+            ("max", self.max, self.max_ref),
+        ):
+            if ref is None:
+                continue
+            if ref not in valid_refs:
+                self._raise(
+                    f"{side}_ref",
+                    f"{side}_ref must be one of {sorted(valid_refs)}, got {ref!r}.",
+                )
+            if coeff is None:
+                self._raise(
+                    side, f"{side}_ref is set but {side} multiplier is missing."
+                )
+
         try:
-            _validate_bounds("Component", self.min, self.max)
+            if self.min_ref is None and self.max_ref is None:
+                # Both sides constant: reuse the constant validator.
+                _validate_bounds("Component", self.min, self.max)
+            else:
+                # At least one relative side. Multipliers must be positive; a
+                # min < max cross-check is only meaningful when both sides share
+                # the same reference basis (or are both constant multipliers).
+                if self.min is not None and self.min <= 0:
+                    raise ValueError(f"Minimum multiplier must be > 0, have: {self.min}.")
+                if self.max is not None and self.max <= 0:
+                    raise ValueError(f"Maximum multiplier must be > 0, have: {self.max}.")
+                if (
+                    self.min is not None
+                    and self.max is not None
+                    and self.min_ref == self.max_ref
+                    and self.min >= self.max
+                ):
+                    raise ValueError(
+                        f"Bounds make no sense: min ({self.min}) must be < max ({self.max})."
+                    )
         except ValueError as e:
-            raise InvalidFieldValue(
-                field_name="max"
-                if self.max and self.min and self.max <= self.min
-                else "min",
-                field_type=float,
-                field_value={"min": self.min, "max": self.max},
-                holder_class=self.__class__,
-                msg=str(e),
-            ) from e
+            self._raise(
+                "max" if self.max and self.min and self.max <= self.min else "min",
+                str(e),
+            )
+
+    def _raise(self, field_name: str, msg: str):
+        raise InvalidFieldValue(
+            field_name=field_name,
+            field_type=float,
+            field_value={
+                "min": self.min,
+                "max": self.max,
+                "min_ref": self.min_ref,
+                "max_ref": self.max_ref,
+            },
+            holder_class=self.__class__,
+            msg=msg,
+        )
+
+    def resolve(self, which: str, qualities):
+        """Resolve the ``"min"`` or ``"max"`` side to a scalar or per-point array.
+
+        Returns ``None`` when that side is unbounded, the constant when no
+        ``*_ref`` is set, or ``coefficient * qualities[ref]`` (a DataArray
+        broadcastable to the grid) for a relative bound.
+        """
+        coeff = getattr(self, which)
+        ref = getattr(self, f"{which}_ref")
+        if coeff is None:
+            return None
+        if ref is None:
+            return coeff
+        return coeff * qualities[ref]
 
 
 @dataclass
@@ -64,7 +138,10 @@ class ClampLayerConfig(LayerConfig):
     (the isotropic hard floor is ``sqrt(2)``).  Bounds on any other component
     are applied as plain hard guards and do not trigger the coherence
     machinery, so reserve them for properties Vs does not govern (``qp``,
-    ``qs``) or for hard-capping an output.
+    ``qs``) or for hard-capping an output.  Such a bound may be a constant or a
+    multiple of another component via ``min_ref``/``max_ref`` on the
+    :class:`Bound` -- e.g. ``[layers.clamps.qs] min = 0.05, min_ref = "vs"``
+    floors Qs at ``50 * Vs`` (Vs in m/s), and ``qp`` against ``vp`` likewise.
     """
 
     type: str = "clamp"

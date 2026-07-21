@@ -9,6 +9,7 @@ each component being clipped independently into an inconsistent state.
 
 from __future__ import annotations
 
+import graphlib
 import logging
 from typing import TYPE_CHECKING
 
@@ -16,7 +17,7 @@ import xarray as xr
 from shapely import Geometry
 
 from nzcvm.components import Component
-from nzcvm.config.layers.clamp import ClampLayerConfig
+from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
 from nzcvm.ely_taper import DENSITY_RELATION, VP_FROM_VS_RELATION
 from nzcvm.layers.core import Layer
 from nzcvm.query import ModelRange
@@ -29,15 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
-    """Clamp seismic material properties, keeping Vs/Vp/density coherent.
-
-    Vs is the master property.  Clamping Vs snaps the dependent properties
-    (Vp, then density) back onto the Brocher/Nafe-Drake manifold at the points
-    where Vs actually moved; untouched points are left exactly as the
-    downstream layer produced them.  An optional Vp/Vs (Poisson) window is then
-    enforced as a physical guard, and density follows any Vp the guard moves.
-    Bounds on any other component act as plain hard guards.
-    """
+    """Clamp seismic material properties, keeping Vs/Vp/density coherent."""
 
     def __init__(self, config: ClampLayerConfig, geometry: Geometry, next_layer: Layer):
         super().__init__(config, geometry, next_layer)
@@ -50,9 +43,8 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
     ) -> Qualities:
         qualities = self.next_layer(grid, model_range=model_range)
 
-        # Vs is the master property: clamp it, then snap the dependent
-        # properties back onto the empirical manifold so (vs, vp, rho) stay
-        # mutually consistent instead of drifting into non-physical territory.
+        # Vs is handled specially. Where it is clamped we update other
+        # properties match empirical relations based on the clamped Vs value.
         vs_bound = self.config.clamps.get(Component.VS)
         if vs_bound is not None:
             vs = qualities.vs
@@ -64,10 +56,6 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
             qualities[Component.VP] = vp
             qualities[Component.RHO] = rho
 
-        # Physical Vp/Vs (Poisson) guard. sqrt(2) is the hard lower bound for
-        # an isotropic elastic solid (nu -> 0); values above ~2 correspond to
-        # saturated near-surface material (nu -> 0.5). Keep density coherent
-        # wherever the guard moves Vp.
         min_ratio = self.config.min_vp_vs_ratio
         max_ratio = self.config.max_vp_vs_ratio
         if min_ratio or max_ratio:
@@ -82,15 +70,9 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
                 guarded_vp != vp, DENSITY_RELATION(guarded_vp), qualities.rho
             )
 
-        # Any remaining explicit per-component bounds act as hard guards. These
-        # bypass the coherence machinery, so reserve them for properties Vs
-        # does not govern (e.g. qp/qs) or for hard-capping an output. A bound
-        # side may be a constant or a multiple of another component (via
-        # ``min_ref``/``max_ref``); ``resolve`` returns the effective scalar or
-        # per-point array. Because Vs/Vp were already finalised above, a Qs
-        # bound of ``0.05 * Vs`` (i.e. Qs = 50*Vs, Vs in m/s) tracks the clamped
-        # velocity, and Qp likewise against Vp.
-        for c, bound in self.config.clamps.items():
+        # By topologically sorting clamps, we ensure that all bounds are
+        # consistently set when we update them.
+        for c, bound in self._topologically_sorted_clamps():
             if c == Component.VS:
                 continue
             qualities[c] = qualities[c].clip(
@@ -99,3 +81,11 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
             )
 
         return qualities
+
+    def _topologically_sorted_clamps(self) -> list[tuple[Component, Bound]]:
+        graph = {
+            c: {ref for ref in [clamp.min_ref, clamp.max_ref] if ref}
+            for c, clamp in self.config.clamps.items()
+        }
+        ts = graphlib.TopologicalSorter(graph)
+        return [(c, self.config.clamps[c]) for c in ts.static_order()]

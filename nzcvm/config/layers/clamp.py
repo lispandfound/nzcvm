@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from typing import Literal
 
 from mashumaro.exceptions import InvalidFieldValue
 
@@ -21,9 +22,9 @@ def _validate_bounds(name: str, min_val: float | None, max_val: float | None):
             raise ValueError(f"Minimum {name} must be > 0, have: {min_val}.")
         case (_min, None):
             pass
-        case (min_val, max_val) if not (0 < min_val < max_val):
+        case (min_val, max_val) if not (0 < min_val <= max_val):
             raise ValueError(
-                f"{name} bounds make no sense, must have bounds between (0, inf) with max > min,"
+                f"{name} bounds make no sense, must have bounds between (0, inf) with max >= min,"
                 f" but read {name} min = {min_val} and {name} max = {max_val}."
             )
 
@@ -43,8 +44,8 @@ class Bound(ConfigObject):
 
     min: float | None = None
     max: float | None = None
-    min_ref: str | None = None
-    max_ref: str | None = None
+    min_ref: Component | None = None
+    max_ref: Component | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -68,28 +69,28 @@ class Bound(ConfigObject):
 
         try:
             if self.min_ref is None and self.max_ref is None:
-                # Both sides constant: reuse the constant validator.
                 _validate_bounds("Component", self.min, self.max)
             else:
-                # At least one relative side. Multipliers must be positive; a
-                # min < max cross-check is only meaningful when both sides share
-                # the same reference basis (or are both constant multipliers).
                 if self.min is not None and self.min <= 0:
-                    raise ValueError(f"Minimum multiplier must be > 0, have: {self.min}.")
+                    raise ValueError(
+                        f"Minimum multiplier must be > 0, have: {self.min}."
+                    )
                 if self.max is not None and self.max <= 0:
-                    raise ValueError(f"Maximum multiplier must be > 0, have: {self.max}.")
+                    raise ValueError(
+                        f"Maximum multiplier must be > 0, have: {self.max}."
+                    )
                 if (
                     self.min is not None
                     and self.max is not None
                     and self.min_ref == self.max_ref
-                    and self.min >= self.max
+                    and self.min > self.max
                 ):
                     raise ValueError(
-                        f"Bounds make no sense: min ({self.min}) must be < max ({self.max})."
+                        f"Bounds make no sense: min ({self.min}) must be <= max ({self.max})."
                     )
         except ValueError as e:
             self._raise(
-                "max" if self.max and self.min and self.max <= self.min else "min",
+                "max" if self.max and self.min and self.max < self.min else "min",
                 str(e),
             )
 
@@ -107,7 +108,7 @@ class Bound(ConfigObject):
             msg=msg,
         )
 
-    def resolve(self, which: str, qualities):
+    def resolve(self, which: Literal["min"] | Literal["max"], qualities):
         """Resolve the ``"min"`` or ``"max"`` side to a scalar or per-point array.
 
         Returns ``None`` when that side is unbounded, the constant when no
@@ -145,7 +146,7 @@ class ClampLayerConfig(LayerConfig):
     """
 
     type: str = "clamp"
-    clamps: dict[str, Bound] = field(default_factory=dict)
+    clamps: dict[Component, Bound] = field(default_factory=dict)
     min_vp_vs_ratio: float | None = None
     max_vp_vs_ratio: float | None = None
 
@@ -167,7 +168,6 @@ class ClampLayerConfig(LayerConfig):
                 msg=str(e),
             ) from e
 
-        # 3. Explicitly trigger bound validations for mapped elements
         for component, bound in self.clamps.items():
             try:
                 _validate_bounds(str(component), bound.min, bound.max)

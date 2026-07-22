@@ -1,9 +1,11 @@
 """Shared fixtures for the nzcvm test suite."""
 
+import os
+from pathlib import Path
+
 import numpy as np
 import pytest
 import shapely
-
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.grids.grid import Grid, GridSchema
 
@@ -94,3 +96,19 @@ def make_grid(
 def unit_grid() -> Grid:
     """2×2×2 concrete Grid with all points inside the unit tetrahedron."""
     return make_grid()
+
+
+def get_model_directory():
+    return Path(os.getenv("MODEL_PATH"))
+
+
+@pytest.fixture
+def model_directory():
+    return get_model_directory()
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    if "model_path" in metafunc.fixturenames:
+        paths = list(get_model_directory().glob("*.zarr"))
+        ids = [p.stem for p in paths]
+        metafunc.parametrize("model_path", paths, ids=ids)

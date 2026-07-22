@@ -5,8 +5,14 @@ res := "500"
 smoothing := "10000.0"
 construct := "uv run nzcvm basin main"
 coastline := "resources/coastline.wkb.gz"
+
 banks:
-    @test -d models/BanksPeninsula.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/BanksPeninsulaVolcanics/BanksPeninsulaVolcanics_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/regional/Canterbury/CantDEM.h5 ${NZCVM_DATA_ROOT}/regional/BanksPeninsulaVolcanics/BanksPeninsulaVolcanics_basement_WGS84.h5 ${NZCVM_DATA_ROOT}/regional/BanksPeninsulaVolcanics/BanksPeninsulaVolcanics_Miocene_WGS84.h5 models/BanksPeninsula.zarr --priority 44 --vm-1d ${NZCVM_DATA_ROOT}/vm1d/banks_dummy.fd_modfile --no-pad-top
+    if [ ! -d models/BanksPeninsula_GTL.zarr ]; then \
+        {{ construct }} ${NZCVM_DATA_ROOT}/regional/BanksPeninsulaVolcanics/BanksPeninsulaVolcanics_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/regional/Canterbury/CantDEM.h5 ${NZCVM_DATA_ROOT}/regional/BanksPeninsulaVolcanics/BanksPeninsulaVolcanics_basement_WGS84.h5 ${NZCVM_DATA_ROOT}/regional/BanksPeninsulaVolcanics/BanksPeninsulaVolcanics_Miocene_WGS84.h5 models/BanksPeninsula.zarr --priority 44 --vm-1d ${NZCVM_DATA_ROOT}/vm1d/banks_dummy.fd_modfile --no-pad-top; \
+        uv run banks.py; \
+        rm -r models/BanksPeninsula.zarr; \
+    fi
+
 canterbury:
     @test -d models/CantQuatenary.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Canterbury/Canterbury_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/regional/Canterbury/CantDEM.h5 ${NZCVM_DATA_ROOT}/regional/Canterbury/CantDEM.h5 ${NZCVM_DATA_ROOT}/regional/Canterbury/Canterbury_Pliocene_46_WGS84_v8p9p18.h5 models/CantQuatenary.zarr --priority 46 --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v3_Pliocene_Enforced.fd_modfile  --smoothing {{ smoothing }} --coastline {{ coastline }} 
     @test -d models/CantPliocene.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Canterbury/Canterbury_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/regional/Canterbury/CantDEM.h5 ${NZCVM_DATA_ROOT}/regional/Canterbury/Canterbury_Pliocene_46_WGS84_v8p9p18.h5 ${NZCVM_DATA_ROOT}/regional/Canterbury/Canterbury_Miocene_WGS84.h5 models/CantPliocene.zarr --priority 47 --rho 1950 --vp 2100 --vs 677 --smoothing {{ smoothing }} --coastline {{ coastline }} --no-pad-top
@@ -161,7 +167,8 @@ nelson:
 kaikoura:
     @test -d models/Kaikoura.zarr || {{ construct }} ${NZCVM_DATA_ROOT}/regional/Kaikoura/Kaikoura_outline_WGS84.geojson ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/surface/NZ_DEM_HD.h5 ${NZCVM_DATA_ROOT}/regional/Kaikoura/Kaikoura_basement_WGS84.h5 models/Kaikoura.zarr --priority 43 --vm-1d ${NZCVM_DATA_ROOT}/vm1d/Cant1D_v2.fd_modfile  --smoothing {{ smoothing }} --coastline {{ coastline }}
 
-basins: alexandra balclutha canterbury castle_hill cheviot collingwood dunedin gisborne greater_wellington hakataramea hanmer hawkes_bay kaikoura karamea mackenzie marlborough mosgiel murchison napier ne_otago nelson north_canterbury omaio_bay palmerston_north porirua queen_charlotte ranfurly rarakau southern_hawkes_bay southland springs_junction te_anau te_araroa tolaga_bay waiapu waikato_hauraki wairarapa waitaki wakatipu wanaka wellington west_coast westport whakatane whangaparoa
+[parallel]
+basins: alexandra banks balclutha canterbury castle_hill cheviot collingwood dunedin gisborne greater_wellington hakataramea hanmer hawkes_bay kaikoura karamea mackenzie marlborough mosgiel murchison napier ne_otago nelson north_canterbury omaio_bay palmerston_north porirua queen_charlotte ranfurly rarakau southern_hawkes_bay southland springs_junction te_anau te_araroa tolaga_bay waiapu waikato_hauraki wairarapa waitaki wakatipu wanaka wellington west_coast westport whakatane whangaparoa
 
 tomography := "uv run nzcvm tomography convert"
 surface := "uv run nzcvm convert-tiff main"
@@ -170,6 +177,8 @@ ep2020:
     @test -f models/ep2020.zarr || {{ tomography }} ep2020.csv models/ep2020.zarr
 
 models: ep2020 basins
+    MODEL_PATH=$(realpath models) uv run pytest -svv tests/test_models.py
+    zip -r models.zip models
 
 vs30:
     @test -f resources/vs30.zarr || {{ surface }} ${VS30_TIFF} 1 resources/vs30.zarr --downsample 3 

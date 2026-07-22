@@ -41,6 +41,7 @@ from nzcvm.query import ModelRange
 MB = 1 / (1024 * 1024)
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Point(DataClassDictMixin):
     """A 3-D point returned by some query methods.
@@ -185,7 +186,7 @@ class MeshModel:
     @classmethod
     def from_path(cls, path: Path) -> Self:
         mesh_dataset = TetrahedralMeshSchema.from_dataset(xr.load_dataset(path))
-        
+
         return cls(_mesh_model_from_tetra(mesh_dataset))
 
     @classmethod
@@ -344,9 +345,7 @@ class ModelTree:
         return cls(raw)
 
     @classmethod
-    def from_mesh(
-        cls, mesh_model: TetrahedralMesh
-    ) -> Self:
+    def from_mesh(cls, mesh_model: TetrahedralMesh) -> Self:
         """Build a :class:`ModelTree` from a single in-memory :class:`~nzcvm.models.mesh.TetrahedralMesh`.
 
         Parameters
@@ -642,30 +641,40 @@ def _mesh_model_from_tetra(
 ) -> Any:
     """Build a PyMeshModel from a :class:`~nzcvm.models.mesh.TetrahedralMesh`."""
     connectivity = mesh_model.connectivity.values
-    
+
     types = mesh_model.model_type.values
-    
+
     model_idx = mesh_model.models.values.ravel()
 
-    qualities = np.c_[mesh_model.rho.values, mesh_model.vp.values, mesh_model.vs.values, mesh_model.qp.values, mesh_model.qs.values, mesh_model.alpha.values]
+    qualities = np.c_[
+        mesh_model.rho.values,
+        mesh_model.vp.values,
+        mesh_model.vs.values,
+        mesh_model.qp.values,
+        mesh_model.qs.values,
+        mesh_model.alpha.values,
+    ]
 
     priority = mesh_model.priority.isel(j=0).item()
     name = mesh_model.name
-    
-    transform = mesh_model.attrs.get('transform')
-    
+
+    transform = mesh_model.attrs.get("transform")
+
     if transform is not None:
         transform = np.array(transform, dtype=np.float32)
 
     points = np.c_[mesh_model.x.values, mesh_model.y.values, mesh_model.z.values]
-
-    return nzcvm.mesh_model(
-        points,
-        connectivity,
-        types,
-        model_idx,
-        qualities,
-        priority,
-        transform,
-        name,
-    )
+    try:
+        return nzcvm.mesh_model(
+            points,
+            connectivity,
+            types,
+            model_idx,
+            qualities,
+            priority,
+            transform,
+            name,
+        )
+    except ValueError as e:
+        e.add_note(f"While building model: {mesh_model.name!r}")
+        raise e

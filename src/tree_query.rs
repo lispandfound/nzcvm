@@ -166,10 +166,16 @@ fn priority_aabb_hit_bounded<T: BHValue, const DBVH: usize, const DQ: usize>(
     Some(p_min)
 }
 
-#[derive(PartialEq, PartialOrd)]
+#[derive(PartialEq)]
 struct Priority(Real, usize);
 
 impl Eq for Priority {}
+
+impl PartialOrd for Priority {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl Ord for Priority {
     fn cmp(&self, other: &Self) -> Ordering {

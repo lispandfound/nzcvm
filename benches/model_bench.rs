@@ -40,7 +40,8 @@ fn bench_mesh_queries(c: &mut Criterion) {
             vec![mock_quality(); total_vertices],
             (n, n, n),
             |i, j, k| k + j * n + i * n * n,
-        );
+        )
+        .unwrap_or_else(|_| panic!("mesh construction failed"));
 
         // Multiple query points to isolate spatial bias
         let queries = [

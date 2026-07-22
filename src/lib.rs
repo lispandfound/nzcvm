@@ -1,4 +1,5 @@
 pub mod blend;
+pub mod compact_bvh;
 pub mod mesh;
 pub mod model;
 pub mod model_tree;
@@ -164,6 +165,14 @@ mod nzcvm {
             .map(Quality::from)
             .collect();
 
+        // Quality indices are stored as u32 inside the compiled model.
+        if qualities.len() > u32::MAX as usize {
+            return Err(PyValueError::new_err(format!(
+                "Too many qualities for a single mesh model: {}",
+                qualities.len()
+            )));
+        }
+
         let types = types_py.as_array();
         let mut models_vec = Vec::with_capacity(types.len());
         let model_idx = models_py.as_array();
@@ -172,17 +181,17 @@ mod nzcvm {
             match model_type {
                 0 => {
                     models_vec.push(Model::from(ConstantModel {
-                        quality: model_idx[idx],
+                        quality: model_idx[idx] as u32,
                     }));
                     idx += 1;
                 }
                 1 => {
                     models_vec.push(Model::from(InterpolateModel {
                         qualities: Point4::new(
-                            model_idx[idx],
-                            model_idx[idx + 1],
-                            model_idx[idx + 2],
-                            model_idx[idx + 3],
+                            model_idx[idx] as u32,
+                            model_idx[idx + 1] as u32,
+                            model_idx[idx + 2] as u32,
+                            model_idx[idx + 3] as u32,
                         ),
                     }));
                     idx += 4;

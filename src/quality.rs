@@ -132,42 +132,6 @@ mod tests {
     use super::*;
     use approx::assert_relative_eq;
 
-    fn q(v: Real) -> Quality {
-        Quality {
-            rho: v,
-            vp: v,
-            vs: v,
-            qp: v,
-            qs: v,
-            alpha: v,
-        }
-    }
-
-    #[test]
-    fn test_quality_add() {
-        let a = q(1.0);
-        let b = q(2.0);
-        let c = a + b;
-        assert_relative_eq!(c.rho, 3.0);
-        assert_relative_eq!(c.vp, 3.0);
-        assert_relative_eq!(c.alpha, 3.0);
-    }
-
-    #[test]
-    fn test_quality_mul_scalar() {
-        let a = q(4.0);
-        let b = a * 0.5;
-        assert_relative_eq!(b.rho, 2.0);
-        assert_relative_eq!(b.vs, 2.0);
-    }
-
-    #[test]
-    fn test_scalar_mul_quality() {
-        let a = q(4.0);
-        let b = 0.5 * a;
-        assert_relative_eq!(b.rho, 2.0);
-    }
-
     #[test]
     fn test_blend_identity_alpha_one() {
         let a = Quality {

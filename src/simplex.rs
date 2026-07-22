@@ -1,5 +1,4 @@
 use crate::real::Real;
-use crate::tree_query::Contains;
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::BHShape;
 use deepsize::{Context, DeepSizeOf};
@@ -33,15 +32,16 @@ const CONTAINMENT_EPS: Real = 1e-4;
 ///
 /// Vertex `c3` is the "anchor" vertex; the other three vertices are stored
 /// implicitly through the inverse of the matrix `[c0-c3, c1-c3, c2-c3]`.
+///
+/// This struct is deliberately minimal (48 bytes with `Real = f32` — one
+/// cache line) because meshes hold tens of millions of them.  Everything
+/// needed only while *building* the BVH (AABB, node bookkeeping) lives in
+/// [`BuildSimplex`] and is discarded after construction.  A simplex is
+/// identified by its position in the mesh's simplex array.
 #[derive(Clone, Copy, Debug)]
 pub struct Simplex {
     pub c3: Point3<Real>,
     inv_matrix: Matrix3<Real>,
-
-    aabb: Aabb<Real, 3>,
-
-    pub id: usize,
-    node_index: usize,
 }
 
 impl DeepSizeOf for Simplex {
@@ -55,42 +55,15 @@ impl Simplex {
     ///
     /// The inverse of `[c0-c3, c1-c3, c2-c3]` is precomputed here and reused
     /// in every subsequent [`barycentric_coordinates`](Self::barycentric_coordinates)
-    /// and [`Contains::contains`] call, which is the hot path for BVH queries.
+    /// and [`contains`](Self::contains) call, which is the hot path for BVH
+    /// queries.
     ///
-    /// # Panics
-    ///
-    /// Panics if the four vertices are coplanar (degenerate simplex).
-    pub fn new(
-        c0: Point3<Real>,
-        c1: Point3<Real>,
-        c2: Point3<Real>,
-        c3: Point3<Real>,
-        id: usize,
-    ) -> Option<Self> {
-        let pts = [c0, c1, c2, c3];
-        let min_p = pts
-            .iter()
-            .copied()
-            .reduce(|acc, p| Point3::new(acc.x.min(p.x), acc.y.min(p.y), acc.z.min(p.z)))
-            .unwrap();
-        let max_p = pts
-            .iter()
-            .copied()
-            .reduce(|acc, p| Point3::new(acc.x.max(p.x), acc.y.max(p.y), acc.z.max(p.z)))
-            .unwrap();
-
-        let aabb = Aabb::with_bounds(min_p, max_p);
-
+    /// Returns `None` if the four vertices are coplanar (degenerate simplex).
+    pub fn new(c0: Point3<Real>, c1: Point3<Real>, c2: Point3<Real>, c3: Point3<Real>) -> Option<Self> {
         let m = Matrix3::from_columns(&[c0 - c3, c1 - c3, c2 - c3]);
         let inv_matrix = m.try_inverse()?;
 
-        Some(Self {
-            c3,
-            inv_matrix,
-            aabb,
-            id,
-            node_index: 0,
-        })
+        Some(Self { c3, inv_matrix })
     }
 
     /// Return the barycentric coordinates of `p` with respect to this simplex.
@@ -108,8 +81,7 @@ impl Simplex {
     ///     Point3::new(1.0, 0.0, 0.0),
     ///     Point3::new(0.0, 1.0, 0.0),
     ///     Point3::new(0.0, 0.0, 1.0),
-    ///     0,
-    /// );
+    /// ).unwrap();
     /// let bary = s.barycentric_coordinates(Point3::new(0.25, 0.25, 0.25));
     /// let sum = bary.x + bary.y + bary.z + bary.w;
     /// assert!((sum - 1.0).abs() < 1e-5);
@@ -125,12 +97,12 @@ impl Simplex {
 
         Point4::new(l0, l1, l2, l3)
     }
-}
 
-impl Contains<Real, 3, Simplex> for Simplex {
+    /// Test whether `query_point` lies inside this simplex (within
+    /// [`CONTAINMENT_EPS`] of each face).
     // This one inline statement speeds up calculations by 6%!
     #[inline(always)]
-    fn contains(&self, query_point: &Point3<Real>) -> Option<Simplex> {
+    pub fn contains(&self, query_point: &Point3<Real>) -> bool {
         let diff = query_point - self.c3;
         // This duplication of the matrix multiply from
         // `barycentric_coordinates` is deliberate. `l3` is not needed here, so
@@ -140,25 +112,61 @@ impl Contains<Real, 3, Simplex> for Simplex {
 
         let sum = l.x + l.y + l.z;
 
-        if (l.x >= -CONTAINMENT_EPS)
+        (l.x >= -CONTAINMENT_EPS)
             && (l.y >= -CONTAINMENT_EPS)
             && (l.z >= -CONTAINMENT_EPS)
             && (sum <= 1.0 + CONTAINMENT_EPS)
-        {
-            Some(*self)
-        } else {
-            None
-        }
     }
 }
 
-impl Bounded<Real, 3> for Simplex {
+/// Build-time wrapper around [`Simplex`] carrying the fields the BVH build
+/// needs (AABB and node bookkeeping).  Discarded once the mesh's
+/// [`CompactBvh`](crate::compact_bvh::CompactBvh) has been constructed.
+pub struct BuildSimplex {
+    pub simplex: Simplex,
+    aabb: Aabb<Real, 3>,
+    node_index: usize,
+}
+
+impl BuildSimplex {
+    /// Construct a build-time simplex from four vertices.
+    ///
+    /// Returns `None` if the four vertices are coplanar (degenerate simplex).
+    pub fn new(
+        c0: Point3<Real>,
+        c1: Point3<Real>,
+        c2: Point3<Real>,
+        c3: Point3<Real>,
+    ) -> Option<Self> {
+        let simplex = Simplex::new(c0, c1, c2, c3)?;
+
+        let pts = [c0, c1, c2, c3];
+        let min_p = pts
+            .iter()
+            .copied()
+            .reduce(|acc, p| Point3::new(acc.x.min(p.x), acc.y.min(p.y), acc.z.min(p.z)))
+            .unwrap();
+        let max_p = pts
+            .iter()
+            .copied()
+            .reduce(|acc, p| Point3::new(acc.x.max(p.x), acc.y.max(p.y), acc.z.max(p.z)))
+            .unwrap();
+
+        Some(Self {
+            simplex,
+            aabb: Aabb::with_bounds(min_p, max_p),
+            node_index: 0,
+        })
+    }
+}
+
+impl Bounded<Real, 3> for BuildSimplex {
     fn aabb(&self) -> Aabb<Real, 3> {
         self.aabb
     }
 }
 
-impl BHShape<Real, 3> for Simplex {
+impl BHShape<Real, 3> for BuildSimplex {
     fn set_bh_node_index(&mut self, index: usize) {
         self.node_index = index;
     }

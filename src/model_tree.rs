@@ -207,9 +207,14 @@ mod tests {
         let qualities = vec![q; v.len()];
         let models = faces
             .iter()
-            .map(|f| Model::from(InterpolateModel { qualities: *f }))
+            .map(|f| {
+                Model::from(InterpolateModel {
+                    qualities: f.map(|i| i as u32),
+                })
+            })
             .collect();
         MeshModel::new(v, faces, models, qualities, priority, None, String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"))
     }
 
     const PT: Point3<Real> = Point3::new(0.5, 0.5, 0.5);
@@ -320,8 +325,9 @@ mod tests {
             qs: 1.0,
             alpha: 1.0,
         };
-        let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let mesh = MeshModel::new(v, faces, models, vec![q], 0, None, String::new());
+        let models = vec![Model::from(ConstantModel { quality: 0 })];
+        let mesh = MeshModel::new(v, faces, models, vec![q], 0, None, String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
         let tree = ModelTree::new(vec![mesh]);
         assert_relative_eq!(
             tree.query(Point3::new(0.1, 0.1, 0.1), None, 0, 255)

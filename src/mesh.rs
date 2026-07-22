@@ -1,13 +1,14 @@
+use crate::compact_bvh::CompactBvh;
 use crate::model::*;
 use crate::quality::Quality;
 use crate::real::Real;
-use crate::simplex::Simplex;
-use crate::tree_query::{contains_point_iterator, Contains};
+use crate::simplex::{BuildSimplex, Simplex};
+use crate::tree_query::Contains;
 use deepsize::{Context, DeepSizeOf};
 
 use bvh::aabb::{Aabb, Bounded};
 use bvh::bounding_hierarchy::{BHShape, BoundingHierarchy};
-use bvh::bvh::{Bvh, BvhNode};
+use bvh::bvh::Bvh;
 use nalgebra::{Affine3, Point, Point3, Point4, Vector3};
 use serde::Serialize;
 
@@ -34,14 +35,19 @@ pub struct MeshModelView {
 
 /// A single tetrahedral mesh model with an internal BVH for fast point queries.
 ///
-/// Each simplex in the mesh carries a [`Model`] that maps a query point to a
-/// [`Quality`].  The outer [`ModelTree`](crate::model_tree::ModelTree) holds
-/// a collection of `MeshModel`s and dispatches queries via a 4-D BVH (the
-/// fourth dimension encodes priority).
+/// Each simplex in the mesh carries a model (via [`ModelMap`]) that maps a
+/// query point to a [`Quality`].  The outer
+/// [`ModelTree`](crate::model_tree::ModelTree) holds a collection of
+/// `MeshModel`s and dispatches queries via a 4-D BVH (the fourth dimension
+/// encodes priority).
+///
+/// Internally the simplices are stored in BVH leaf order (the tree is built
+/// with the `bvh` crate and then converted to a [`CompactBvh`]), so a leaf
+/// visit scans adjacent entries of `simplices`.
 pub struct MeshModel {
-    bvh_tree: Bvh<Real, 3>,
+    bvh_tree: CompactBvh,
     simplices: Vec<Simplex>,
-    model_map: Vec<Model>,
+    model_map: ModelMap,
     qualities: Vec<Quality>,
     aabb: Aabb<Real, 3>,
     transform: Option<Affine3<Real>>,
@@ -63,7 +69,7 @@ impl DeepSizeOf for MeshModel {
         self.simplices.deep_size_of_children(context)
             + self.model_map.deep_size_of_children(context)
             + self.qualities.deep_size_of_children(context)
-            + self.bvh_tree.nodes.capacity() * size_of::<BvhNode<Real, 3>>()
+            + self.bvh_tree.deep_size_of_children(context)
             + self.name.deep_size_of_children(context)
     }
 }
@@ -126,7 +132,11 @@ impl MeshModel {
 
         let models = faces
             .iter()
-            .map(|q| Model::from(InterpolateModel { qualities: *q }))
+            .map(|q| {
+                Model::from(InterpolateModel {
+                    qualities: q.map(|i| i as u32),
+                })
+            })
             .collect();
 
         Self::new(
@@ -183,32 +193,36 @@ impl MeshModel {
         let spatial_padding = Vector3::repeat(0.01);
         let aabb = Aabb::with_bounds(min_point - spatial_padding, max_point + spatial_padding);
 
-        let mut simplices: Vec<Simplex> = faces
+        let mut build_simplices: Vec<BuildSimplex> = faces
             .iter()
-            .enumerate()
-            .filter_map(|(i, f)| {
-                Simplex::new(
-                    vertices[f.x],
-                    vertices[f.y],
-                    vertices[f.z],
-                    vertices[f.w],
-                    i,
-                )
+            .filter_map(|f| {
+                BuildSimplex::new(vertices[f.x], vertices[f.y], vertices[f.z], vertices[f.w])
             })
             .collect();
 
-        if simplices.len() != faces.len() {
+        if build_simplices.len() != faces.len() {
             return Err(MeshModelError::DegenerateSimplex);
         }
+        drop(vertices);
+        drop(faces);
 
-        let bvh_tree = Bvh::build_par(&mut simplices);
+        let full_tree = Bvh::build_par(&mut build_simplices);
+        // Convert to the compact query-only representation and gather the
+        // per-simplex arrays into its leaf order.
+        let (bvh_tree, order) = CompactBvh::from_bvh(&full_tree, build_simplices.len());
+        drop(full_tree);
+        let simplices: Vec<Simplex> = order
+            .iter()
+            .map(|&i| build_simplices[i as usize].simplex)
+            .collect();
+        let model_map = ModelMap::from_models(models).reorder(&order);
 
         Ok(Self {
             bvh_tree,
             simplices,
             qualities,
             aabb,
-            model_map: models,
+            model_map,
             priority,
             name,
             id: 0,
@@ -220,10 +234,6 @@ impl MeshModel {
     /// Number of vertex-quality entries in this mesh.
     pub fn points(&self) -> usize {
         self.qualities.len()
-    }
-
-    fn quality_for(&self, simplex: &Simplex, point: &Point3<Real>) -> Quality {
-        self.model_map[simplex.id].quality_at(&self.qualities, simplex, point)
     }
 
     /// Transform a point from world space into the mesh's local space.
@@ -238,25 +248,16 @@ impl MeshModel {
     /// Returns `None` if no simplex contains the point.
     pub fn query(&self, point: Point3<Real>) -> Option<Quality> {
         let transformed = self.global_to_local(point);
-        contains_point_iterator(&self.bvh_tree, &self.simplices, &transformed)
+        self.bvh_tree
+            .containing_indices(&self.simplices, transformed)
             .next()
-            .map(|simplex| self.quality_for(&simplex, &transformed))
+            .map(|i| {
+                self.model_map
+                    .quality_at(i, &self.qualities, &self.simplices[i], &transformed)
+            })
     }
 
     pub fn pretty_print(&self) {
-        use bvh::bvh::BvhNode;
-        fn max_depth(nodes: &[BvhNode<Real, 3>], node_index: usize) -> usize {
-            match nodes[node_index] {
-                BvhNode::Node {
-                    child_l_index,
-                    child_r_index,
-                    ..
-                } => (max_depth(nodes, child_l_index) + 1).max(max_depth(nodes, child_r_index) + 1),
-                _ => 0,
-            }
-        }
-
-        let depth = max_depth(&self.bvh_tree.nodes, 0);
         let name_display = if self.name.is_empty() {
             format!("(id={})", self.id)
         } else {
@@ -267,7 +268,7 @@ impl MeshModel {
             name_display,
             self.qualities.len(),
             self.simplices.len(),
-            depth,
+            self.bvh_tree.depth(),
             self.priority,
         )
     }
@@ -384,10 +385,21 @@ mod tests {
         vertices
     }
 
+    fn interpolate_all(faces: &[Point4<usize>]) -> Vec<Model> {
+        faces
+            .iter()
+            .map(|f| {
+                Model::from(InterpolateModel {
+                    qualities: f.map(|i| i as u32),
+                })
+            })
+            .collect()
+    }
+
     #[test]
     fn test_simplex_barycentric_properties() {
         let v = unit_tetrahedron_universe();
-        let simplex = Simplex::new(v[0], v[1], v[2], v[3], 0).unwrap();
+        let simplex = Simplex::new(v[0], v[1], v[2], v[3]).unwrap();
 
         let points_to_test = [Point3::new(0.25, 0.25, 0.25), Point3::new(10.0, -5.0, 2.0)];
 
@@ -415,7 +427,7 @@ mod tests {
         let v2 = Point3::new(0.0, 0.0, 5.0);
         let v3 = Point3::new(1.0, 1.0, 1.0);
 
-        let simplex = Simplex::new(v0, v1, v2, v3, 0).unwrap();
+        let simplex = BuildSimplex::new(v0, v1, v2, v3).unwrap();
         let aabb = simplex.aabb();
 
         assert_relative_eq!(aabb.min.x, -1.0);
@@ -435,7 +447,8 @@ mod tests {
             .collect();
 
         let chart = |i, j, k| i + j * ni + k * ni * nj;
-        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart);
+        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart)
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
 
         // Vertex (1,1,1) is index 7 in a 2x2x2 grid
         let p_v7 = Point3::new(1.0, 1.0, 1.0);
@@ -456,7 +469,8 @@ mod tests {
             .collect();
 
         let chart = |i, j, k| i + j * ni + k * ni * nj;
-        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart);
+        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart)
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
 
         // Interior: x=2.5, y=1.2, z=3.7 -> rho = 7.4
         let p_in = Point3::new(2.5, 1.2, 3.7);
@@ -470,11 +484,10 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let quality = mock_quality(1.0);
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let models = vec![Model::from(InterpolateModel {
-            qualities: faces[0],
-        })];
+        let models = interpolate_all(&faces);
         let qualities = vec![quality; 4];
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
         let q = mesh.query(Point3::new(5.0, 5.0, 5.0));
         assert!(q.is_none());
     }
@@ -487,12 +500,14 @@ mod tests {
         let vertices = generate_grid(ni, nj, nk);
         let qualities: Vec<Quality> = vertices.iter().map(|_| mock_quality(1.0)).collect();
         let chart = |i, j, k| i + j * ni + k * ni * nj;
-        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart);
+        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart)
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
         let aabb = mesh.aabb3();
-        assert_relative_eq!(aabb.min.x, 0.0);
-        assert_relative_eq!(aabb.max.x, 2.0);
-        assert_relative_eq!(aabb.min.z, 0.0);
-        assert_relative_eq!(aabb.max.z, 2.0);
+        // The mesh AABB includes 0.01 of spatial padding on each side.
+        assert_relative_eq!(aabb.min.x, 0.0, epsilon = 0.011);
+        assert_relative_eq!(aabb.max.x, 2.0, epsilon = 0.011);
+        assert_relative_eq!(aabb.min.z, 0.0, epsilon = 0.011);
+        assert_relative_eq!(aabb.max.z, 2.0, epsilon = 0.011);
     }
 
     #[test]
@@ -500,10 +515,9 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
         let qualities_vec: Vec<Quality> = (0..4).map(|i| mock_quality(i as Real)).collect();
-        let models = vec![Model::from(InterpolateModel {
-            qualities: faces[0],
-        })];
-        let mesh = MeshModel::new(v, faces, models, qualities_vec, 0, None, String::new());
+        let models = interpolate_all(&faces);
+        let mesh = MeshModel::new(v, faces, models, qualities_vec, 0, None, String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
         let q = mesh.query(Point3::new(0.25, 0.25, 0.25));
         assert!(q.is_some());
         // Centroid bary coords all equal 0.25; qualities are 0,1,2,3
@@ -525,8 +539,9 @@ mod tests {
             alpha: 1.0,
         };
         let qualities = vec![q_fixed];
-        let models = vec![Model::from(ConstantModel { quality: 0usize })];
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new());
+        let models = vec![Model::from(ConstantModel { quality: 0 })];
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, None, String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
         let result = mesh.query(Point3::new(0.2, 0.1, 0.1));
         assert!(result.is_some());
         let q_result = result.unwrap();
@@ -541,14 +556,15 @@ mod tests {
         use nalgebra::{Affine3, Translation3};
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let models = vec![Model::from(ConstantModel { quality: 0usize })];
+        let models = vec![Model::from(ConstantModel { quality: 0 })];
         let qualities = vec![mock_quality(5.0)];
 
         // World-to-local: subtract 5 from x-coordinate.
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
             Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
         );
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new());
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
 
         // (5.1, 0.1, 0.1) in world → (0.1, 0.1, 0.1) in local → inside
         let q = mesh.query(Point3::new(5.1, 0.1, 0.1));
@@ -566,19 +582,69 @@ mod tests {
         use nalgebra::{Affine3, Translation3};
         let v = unit_tetrahedron_universe();
         let faces = vec![Point4::new(0usize, 1, 2, 3)];
-        let models = vec![Model::from(ConstantModel { quality: 0usize })];
+        let models = vec![Model::from(ConstantModel { quality: 0 })];
         let qualities = vec![mock_quality(1.0)];
 
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
             Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
         );
-        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new());
+        let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new())
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
         let aabb = mesh.aabb3();
 
-        // Tetrahedron spans [5,6] × [0,1] × [0,1] in world space.
-        assert_relative_eq!(aabb.min.x, 5.0, epsilon = 1e-4);
-        assert_relative_eq!(aabb.max.x, 6.0, epsilon = 1e-4);
-        assert_relative_eq!(aabb.min.y, 0.0, epsilon = 1e-4);
-        assert_relative_eq!(aabb.min.z, 0.0, epsilon = 1e-4);
+        // Tetrahedron spans [5,6] × [0,1] × [0,1] in world space (plus the
+        // 0.01 spatial padding on each side of the AABB).
+        assert_relative_eq!(aabb.min.x, 5.0, epsilon = 0.011);
+        assert_relative_eq!(aabb.max.x, 6.0, epsilon = 0.011);
+        assert_relative_eq!(aabb.min.y, 0.0, epsilon = 0.011);
+        assert_relative_eq!(aabb.min.z, 0.0, epsilon = 0.011);
+    }
+
+    /// Queries through a mesh large enough to exercise multi-simplex leaves
+    /// and several tree levels must agree with direct simplex containment.
+    #[test]
+    fn test_compact_bvh_matches_exhaustive_scan() {
+        let ni = 6;
+        let nj = 5;
+        let nk = 4;
+        let vertices = generate_grid(ni, nj, nk);
+        let qualities: Vec<Quality> = vertices
+            .iter()
+            .map(|p| mock_quality(p.x + 2.0 * p.y + 3.0 * p.z))
+            .collect();
+        let chart = |i, j, k| i + j * ni + k * ni * nj;
+        let mesh =
+            MeshModel::curvilinear_mesh(vertices.clone(), qualities, (ni, nj, nk), chart)
+                .unwrap_or_else(|_| panic!("mesh construction failed"));
+
+        // Points on a fine grid inside and outside the mesh.
+        for xi in 0..=14 {
+            for yi in 0..=10 {
+                for zi in 0..=8 {
+                    let p = Point3::new(
+                        xi as Real * 0.45 - 0.5,
+                        yi as Real * 0.45 - 0.5,
+                        zi as Real * 0.45 - 0.5,
+                    );
+                    let via_bvh = mesh
+                        .bvh_tree
+                        .containing_indices(&mesh.simplices, p)
+                        .next()
+                        .is_some();
+                    let exhaustive = mesh.simplices.iter().any(|s| s.contains(&p));
+                    assert_eq!(via_bvh, exhaustive, "mismatch at {p:?}");
+                    if via_bvh {
+                        // The quality field is linear, so any containing
+                        // simplex interpolates to the same value.
+                        let q = mesh.query(p).unwrap();
+                        assert_relative_eq!(
+                            q.rho,
+                            p.x + 2.0 * p.y + 3.0 * p.z,
+                            epsilon = 1e-3
+                        );
+                    }
+                }
+            }
+        }
     }
 }

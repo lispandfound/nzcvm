@@ -159,7 +159,7 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
     )
 
     logger = logging.getLogger(__name__)
-    logger.debug(f"Geometry: {shapely.to_geojson(geometry_wgs)}")
+    logger.info(f"Geometry: {shapely.to_geojson(geometry_wgs)}")
 
     ox, oy = helpers.raw_coordinates(
         ni,

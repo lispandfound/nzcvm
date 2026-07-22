@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 def _model_intersects_geometry(model_path: Path, geometry: Geometry) -> bool:
     with xr.open_dataset(model_path) as model:
         model_geometry = model.attrs.get("geometry")
@@ -31,9 +32,12 @@ def _model_intersects_geometry(model_path: Path, geometry: Geometry) -> bool:
             # the model has no bounds to prune against, so always load it.
             return True
         return shapely.intersects(shapely.from_wkb(model_geometry), geometry)
-    
+
+
 class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
-    def __init__(self, config: QueryLayerConfig, geometry: Geometry, next_layer: Layer) -> None:
+    def __init__(
+        self, config: QueryLayerConfig, geometry: Geometry, next_layer: Layer
+    ) -> None:
         super().__init__(config, geometry, next_layer)
         models = set(
             p
@@ -41,7 +45,9 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
             for p in config.model_path.rglob(glob)
             if _model_intersects_geometry(p, geometry)
         )
-        logger.debug(f"Loading {len(models)} models ({', '.join(str(m) for m in sorted(models))}) for querying")
+        logger.info(
+            f"Loading {len(models)} models ({', '.join(str(m) for m in sorted(models))}) for querying"
+        )
         self.model = ModelTree.load_models(models)
 
     def __call__(

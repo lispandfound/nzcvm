@@ -1,4 +1,5 @@
 """Command-line interface for generating NZCVM velocity models."""
+
 import contextlib
 import logging
 import sys
@@ -172,7 +173,8 @@ app.add_typer(convert_tomography.app, name="tomography")
 app.add_typer(surface_cli.app, name="surface")
 app.add_typer(tree_stats.app, name="tree-stats")
 app.add_typer(view.app, name="view")
-app.add_typer(convert_tiff.app, name='convert-tiff')
+app.add_typer(convert_tiff.app, name="convert-tiff")
+
 
 @app.command()
 def generate(

@@ -13,7 +13,7 @@
 //!
 //! With `Real = f32` a [`CompactNode`] is 56 bytes and there are at most
 //! `⌈n / 2⌉` of them, compared to `2n - 1` nodes of 80 bytes each for the
-//! `bvh` crate's tree — roughly a 10× reduction in index overhead per simplex.
+//! `bvh` crate's tree.
 
 use bvh::aabb::Aabb;
 use bvh::bvh::{Bvh, BvhNode};

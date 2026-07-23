@@ -26,6 +26,8 @@ from nzcvm.models.mesh import (
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
 
+PAD_DEPTH = 50.0
+
 app = typer.Typer(help="Construct a volumetric tetrahedral mesh for a basin model.")
 
 
@@ -149,14 +151,34 @@ def read_surface_file(
 
 
 class LinearNDInterpolatorExt(object):
+    """Linear interpolator with nearest-neighbour fallback outside the hull.
+
+    NaN input values are dropped before the interpolators are built so that an
+    undefined source node does not contaminate the linear interpolation of its
+    valid neighbours. The number of query points that fell outside the convex
+    hull of the (valid) input points on the most recent call — and were
+    therefore filled by nearest-neighbour extrapolation — is recorded in
+    :attr:`num_extrapolated` so callers can surface silent extrapolation.
+    """
+
     def __init__(self, points, values):
+        points = np.asarray(points)
+        values = np.asarray(values)
+        valid = ~np.isnan(values)
+        if not valid.all():
+            points = points[valid]
+            values = values[valid]
         self.funcinterp = sp.interpolate.LinearNDInterpolator(points, values)
         self.funcnearest = sp.interpolate.NearestNDInterpolator(points, values)
+        self.num_extrapolated = 0
 
     def __call__(self, *args):
         t = self.funcinterp(*args)
-        t_n = self.funcnearest(*args)
-        t[np.isnan(t)] = t_n[np.isnan(t)]
+        nan_mask = np.isnan(t)
+        self.num_extrapolated = int(np.count_nonzero(nan_mask))
+        if self.num_extrapolated:
+            t_n = self.funcnearest(*args)
+            t[nan_mask] = t_n[nan_mask]
         return t
 
 
@@ -409,9 +431,17 @@ def triangulate_polygon(
 def interpolate_surface(
     surface: np.ndarray,
     vertices: np.ndarray,
+    label: str = "surface",
 ) -> np.ndarray:
     interp = LinearNDInterpolatorExt(surface[:, :-1], surface[:, -1])
-    return interp(np.c_[vertices["x"], vertices["y"]])
+    result = interp(np.c_[vertices["x"], vertices["y"]])
+    if interp.num_extrapolated:
+        print(
+            f"Warning: {interp.num_extrapolated} of {len(result)} vertices fell "
+            f"outside the extent of the {label} and were filled by "
+            "nearest-neighbour extrapolation."
+        )
+    return result
 
 
 def enforce_mesh_constraints(mesh_top, mesh_bottom):
@@ -433,10 +463,10 @@ def enforce_mesh_constraints(mesh_top, mesh_bottom):
     if top_nan_mask.any():
         print("Warning: top surface has nan values. Will crimp to bottom-level.")
         mesh_top[top_nan_mask] = mesh_bottom[top_nan_mask]
-    overlap_mask = mesh_top >= mesh_bottom
+    overlap_mask = mesh_top > mesh_bottom
     if overlap_mask.any():
-        print("Warning: bottom surface clips top surface")
-        mesh_bottom[overlap_mask] = mesh_top[overlap_mask]
+        print("Warning: top surface dips below bottom (basement) surface")
+        mesh_top[overlap_mask] = mesh_bottom[overlap_mask]
     return mesh_top, mesh_bottom
 
 
@@ -463,11 +493,13 @@ def read_layered_model(layered_model_path: Path) -> pd.DataFrame:
         skiprows=1,
         sep=r"\s+",
         comment="#",
-        names=["vp", "vs", "rho", "qp", "qs", "thickness"],
+        names=["vp", "vs", "rho", "qp", "qs", "bottom_depth"],
     )
-    for col in ["vp", "vs", "rho", "thickness"]:
+    for col in ["vp", "vs", "rho", "bottom_depth"]:
         df[col] *= 1000.0
-    df["z"] = np.cumulative_sum(df["thickness"], include_initial=True)[:-1]
+    bottom_depth = df["bottom_depth"].to_numpy()
+    df["z"] = np.concatenate(([0.0], bottom_depth[:-1]))
+    df["thickness"] = bottom_depth - df["z"]
 
     return df
 
@@ -551,11 +583,12 @@ def slice_with_model(
     sorted_triangles["k"] = tri_verts[:, 2]
 
     tetra = construct_mesh_tetra(sorted_triangles)
+    emitted_layer = False
     for _, row in model.iterrows():
         z = row["z"]
         print(f"Layer starting at z={z:3f}m")
-        if np.all(top_surface > bottom_surface):
-            print("Stopping because top depth is below the bottom of basin model")
+        if np.all(top_surface >= bottom_surface):
+            print("Stopping because the basin is filled to the basement everywhere")
             break
         bottom_depth = topography + (row["z"] + row["thickness"])
         if np.all(bottom_depth < top_surface):
@@ -565,10 +598,15 @@ def slice_with_model(
             np.minimum(bottom_depth, bottom_surface), top_surface
         )
 
+        top_of_layer = top_surface
+        if pad_top and not emitted_layer:
+            has_thickness = bottom_of_layer > top_surface
+            top_of_layer = np.where(has_thickness, top_surface - PAD_DEPTH, top_surface)
+
         mesh_top = np.c_[
             triangulation.vertices["x"],
             triangulation.vertices["y"],
-            top_surface - 50.0 if pad_top and np.isclose(z, 0.0) else top_surface,
+            top_of_layer,
         ]
         mesh_bottom = np.c_[
             triangulation.vertices["x"], triangulation.vertices["y"], bottom_of_layer
@@ -596,9 +634,10 @@ def slice_with_model(
                     qs=row["qs"],
                 )
             )
+            emitted_layer = True
         else:
-            print("Skipping as no vertices met culling criteria")
-            break
+            print("Skipping layer as no vertices met culling criteria")
+            continue
         top_surface = bottom_of_layer
     return layers
 
@@ -774,6 +813,15 @@ def main(
 ) -> None:
     """Entry point for the ``nzcvm construct-mesh`` command."""
 
+    if vm_1d is not None:
+        model = read_layered_model(vm_1d)
+    elif all(v is not None for v in (rho, vp, vs, qp, qs)):
+        model = uniform_model(rho, vp, vs, qp, qs)
+    else:
+        raise typer.BadParameter(
+            "Provide either --vm-1d, or all of --rho, --vp, --vs, --qp and --qs."
+        )
+
     collection = shapely.from_geojson(bounds.read_text())
     internal_poly = preprocess_polygon(collection.geoms[0]).simplify(simplification)
     shapely.prepare(internal_poly)
@@ -794,17 +842,19 @@ def main(
     top_bbox = get_surface_wgs_bounds(top_surface)
     bottom_bbox = get_surface_wgs_bounds(bottom_surface)
 
-    area_top = (top_bbox[1] - top_bbox[0]) * (top_bbox[3] - top_bbox[2])
-    area_bottom = (bottom_bbox[1] - bottom_bbox[0]) * (bottom_bbox[3] - bottom_bbox[2])
-
-    smallest_bbox = top_bbox if area_top < area_bottom else bottom_bbox
-    lat_buf = (smallest_bbox[1] - smallest_bbox[0]) * 0.05
-    lon_buf = (smallest_bbox[3] - smallest_bbox[2]) * 0.05
+    surface_bbox = (
+        min(top_bbox[0], bottom_bbox[0]),
+        max(top_bbox[1], bottom_bbox[1]),
+        min(top_bbox[2], bottom_bbox[2]),
+        max(top_bbox[3], bottom_bbox[3]),
+    )
+    lat_buf = (surface_bbox[1] - surface_bbox[0]) * 0.05
+    lon_buf = (surface_bbox[3] - surface_bbox[2]) * 0.05
     buffered_bbox = (
-        smallest_bbox[0] - lat_buf,
-        smallest_bbox[1] + lat_buf,
-        smallest_bbox[2] - lon_buf,
-        smallest_bbox[3] + lon_buf,
+        surface_bbox[0] - lat_buf,
+        surface_bbox[1] + lat_buf,
+        surface_bbox[2] - lon_buf,
+        surface_bbox[3] + lon_buf,
     )
     topo_x, topo_y, topo_z = read_surface_file(topography, bbox=buffered_bbox)
     top_x, top_y, top_z = read_surface_file(top_surface, bbox=buffered_bbox)
@@ -832,15 +882,16 @@ def main(
     bottom_surface_data = np.c_[bot_x.ravel(), bot_y.ravel(), bot_z.ravel()]
     topography_data = np.c_[topo_x.ravel(), topo_y.ravel(), topo_z.ravel()]
 
-    mesh_top = interpolate_surface(top_surface_data, triangulation.vertices)
-    mesh_bottom = interpolate_surface(bottom_surface_data, triangulation.vertices)
+    mesh_top = interpolate_surface(
+        top_surface_data, triangulation.vertices, label="top surface"
+    )
+    mesh_bottom = interpolate_surface(
+        bottom_surface_data, triangulation.vertices, label="bottom surface"
+    )
     mesh_top, mesh_bottom = enforce_mesh_constraints(mesh_top, mesh_bottom)
-    mesh_topography = interpolate_surface(topography_data, triangulation.vertices)
-
-    if vm_1d is None and (rho and vp and vs and qp and qs):
-        model = uniform_model(rho, vp, vs, qp, qs)
-    elif vm_1d is not None:
-        model = read_layered_model(vm_1d)
+    mesh_topography = interpolate_surface(
+        topography_data, triangulation.vertices, label="topography"
+    )
 
     print("Slicing model into volumetric mesh")
     layers = slice_with_model(

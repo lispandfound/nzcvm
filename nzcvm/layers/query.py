@@ -39,11 +39,13 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
         self, config: QueryLayerConfig, geometry: Geometry, next_layer: Layer
     ) -> None:
         super().__init__(config, geometry, next_layer)
-        models = set(
-            p
-            for glob in config.model_globs
-            for p in config.model_path.rglob(glob)
-            if _model_intersects_geometry(p, geometry)
+        models = sorted(
+            {
+                p
+                for glob in config.model_globs
+                for p in config.model_path.rglob(glob)
+                if _model_intersects_geometry(p, geometry)
+            }
         )
         logger.info(
             f"Loading {len(models)} models ({', '.join(str(m) for m in sorted(models))}) for querying"

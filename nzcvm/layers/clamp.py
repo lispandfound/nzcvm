@@ -88,4 +88,8 @@ class ClampLayer(Layer[ClampLayerConfig], config_cls=ClampLayerConfig):
             for c, clamp in self.config.clamps.items()
         }
         ts = graphlib.TopologicalSorter(graph)
-        return [(c, self.config.clamps[c]) for c in ts.static_order()]
+        return [
+            (c, self.config.clamps[c])
+            for c in ts.static_order()
+            if c in self.config.clamps
+        ]

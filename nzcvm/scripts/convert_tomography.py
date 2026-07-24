@@ -134,15 +134,16 @@ def data_frame_to_mesh(
     rho = (df[tomography_model.rho] * 1000).to_numpy()
     vp = (df[tomography_model.vp] * 1000).to_numpy()
     vs = (df[tomography_model.vs] * 1000).to_numpy()
-    if tomography_model.qp not in df.columns:
-        qp = 0.05 * vs
-    else:
-        qp = df[tomography_model.qp].to_numpy()
 
     if tomography_model.qs not in df.columns:
-        qs = qp / 2
+        qs = 0.05 * vs
     else:
         qs = df[tomography_model.qs].to_numpy()
+
+    if tomography_model.qp not in df.columns:
+        qp = 2.0 * qs
+    else:
+        qp = df[tomography_model.qp].to_numpy()
 
     model_x = df[tomography_model.x].to_numpy()
     model_y = df[tomography_model.y].to_numpy()

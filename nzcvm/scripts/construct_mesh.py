@@ -1,6 +1,7 @@
 """Construct a tetrahedral volumetric mesh for a basin model using adaptive topography gradient logic."""
 
 import gzip
+import itertools
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,18 +26,23 @@ from nzcvm.models.mesh import (
 )
 
 TRANSFORMER = pyproj.Transformer.from_crs(4326, 2193, always_xy=True)
+INV_TRANSFORMER = pyproj.Transformer.from_crs(2193, 4326, always_xy=True)
 
 PAD_DEPTH = 50.0
 
 app = typer.Typer(help="Construct a volumetric tetrahedral mesh for a basin model.")
 
 
-def get_surface_wgs_bounds(surface_path: Path) -> tuple[float, float, float, float]:
+def get_surface_bounds(surface_path: Path) -> shapely.Polygon:
     """Return the WGS84 coordinate bounds (min_lat, max_lat, min_lon, max_lon) of a surface."""
     with h5py.File(surface_path, "r") as f:
         lat = f["latitude"][:]
         lon = f["longitude"][:]
-    return float(lat.min()), float(lat.max()), float(lon.min()), float(lon.max())
+
+    x_lon, y_lat = np.meshgrid(lon, lat)
+
+    x, y = TRANSFORMER.transform(x_lon, y_lat)
+    return shapely.box(xmin=x.min(), xmax=x.max(), ymin=y.min(), ymax=y.max())
 
 
 def preprocess_polygon(poly: shapely.Polygon) -> shapely.Polygon:
@@ -200,9 +206,6 @@ def gradient_field(
     # Characteristic local grid spacing (metres)
     cell_size = np.sqrt(np.abs(dx * dy))  # geometric mean of dx, dy
 
-    # h = error_target * cell_size / grad_mag
-    # → coarsen on flat terrain, refine on steep terrain
-    # → stays in metres and scales with your grid resolution
     with np.errstate(divide="ignore", invalid="ignore"):
         h_field = (error_target * cell_size) / (grad_mag + 1e-8)
 
@@ -839,23 +842,23 @@ def main(
 
     shapely.prepare(poly)
 
-    top_bbox = get_surface_wgs_bounds(top_surface)
-    bottom_bbox = get_surface_wgs_bounds(bottom_surface)
+    top_bbox = get_surface_bounds(top_surface)
+    bottom_bbox = get_surface_bounds(bottom_surface)
+    (min_x, min_y, max_x, max_y) = shapely.bounds(
+        shapely.buffer(shapely.intersection(top_bbox, bottom_bbox), 10000.0)
+    )
+    corners = np.array(list(itertools.product((min_x, max_x), (min_y, max_y)))).T
+    corners_x = corners[0]
+    corners_y = corners[1]
+    corners_lon, corners_lat = INV_TRANSFORMER.transform(corners_x, corners_y)
 
-    surface_bbox = (
-        min(top_bbox[0], bottom_bbox[0]),
-        max(top_bbox[1], bottom_bbox[1]),
-        min(top_bbox[2], bottom_bbox[2]),
-        max(top_bbox[3], bottom_bbox[3]),
-    )
-    lat_buf = (surface_bbox[1] - surface_bbox[0]) * 0.05
-    lon_buf = (surface_bbox[3] - surface_bbox[2]) * 0.05
     buffered_bbox = (
-        surface_bbox[0] - lat_buf,
-        surface_bbox[1] + lat_buf,
-        surface_bbox[2] - lon_buf,
-        surface_bbox[3] + lon_buf,
+        corners_lat.min(),
+        corners_lat.max(),
+        corners_lon.min(),
+        corners_lon.max(),
     )
+
     topo_x, topo_y, topo_z = read_surface_file(topography, bbox=buffered_bbox)
     top_x, top_y, top_z = read_surface_file(top_surface, bbox=buffered_bbox)
     bot_x, bot_y, bot_z = read_surface_file(bottom_surface, bbox=buffered_bbox)
@@ -868,6 +871,7 @@ def main(
         topo_x, topo_y, topo_z, max_h=max_h, error_target=error_target
     )
     fields.append((topo_x.ravel(), topo_y.ravel(), h_topo.ravel()))
+
     if topography != top_surface:
         h_top = gradient_field(
             top_x, top_y, top_z, max_h=max_h, error_target=error_target

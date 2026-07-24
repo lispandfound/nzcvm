@@ -3,8 +3,8 @@
 //! The tree is built with the `bvh` crate (parallel SAH build) and then
 //! converted into this representation, which is what the mesh actually keeps:
 //!
-//! * only *internal* nodes are stored — leaves are encoded as tagged `u32`
-//!   child slots pointing directly into the simplex array;
+//! * only *internal* nodes are stored — leaves are encoded as [`ChildSlot`]s
+//!   pointing directly into the simplex array;
 //! * child indices are `u32` instead of `usize`, and the never-queried
 //!   `parent_index` is dropped;
 //! * subtrees of up to [`MAX_LEAF_SIZE`] simplices are collapsed into a single
@@ -15,6 +15,7 @@
 //! `⌈n / 2⌉` of them, compared to `2n - 1` nodes of 80 bytes each for the
 //! `bvh` crate's tree.
 
+use bitfield_struct::bitfield;
 use bvh::aabb::Aabb;
 use bvh::bvh::{Bvh, BvhNode};
 use deepsize::{Context, DeepSizeOf};
@@ -30,24 +31,95 @@ use crate::simplex::Simplex;
 /// of adjacent 48-byte records — cheap compared to extra node traversal.
 pub const MAX_LEAF_SIZE: u32 = 4;
 
-/// A child slot with this bit set is a leaf reference, otherwise it is an
-/// index into [`CompactBvh::nodes`].
-const LEAF_BIT: u32 = 1 << 31;
-/// Bits 29–30 of a leaf slot hold `count - 1` (1..=MAX_LEAF_SIZE simplices).
-const COUNT_SHIFT: u32 = 29;
-/// Bits 0–28 of a leaf slot hold the start index into the simplex array,
-/// limiting a single mesh to 2^29 (~537 M) simplices.
-const START_MASK: u32 = (1 << COUNT_SHIFT) - 1;
+/// Largest simplex index a [`ChildSlot`] payload can hold.
+const MAX_START: u32 = (1 << 29) - 1;
 
 const STACK_CAPACITY: usize = 16;
 
-/// One internal node: the AABBs of both children plus their tagged slots.
+/// A contiguous run of simplices forming one leaf.
+#[derive(Clone, Copy)]
+struct LeafRange {
+    start: u32,
+    count: u32,
+}
+
+impl LeafRange {
+    fn end(self) -> u32 {
+        self.start + self.count
+    }
+}
+
+/// What a [`ChildSlot`] points at.
+#[derive(Clone, Copy)]
+enum Child {
+    /// Index into [`CompactBvh::nodes`].
+    Node(u32),
+    Leaf(LeafRange),
+}
+
+/// A [`Child`] packed into 4 bytes.
+///
+/// `Child` itself is 8 bytes — a `u32` payload leaves no niche for the
+/// discriminant — so the tag, the leaf size and the payload share one word.
+/// The layout is declared rather than hand-shifted; [`ChildSlot::unpack`]
+/// recovers a [`Child`] on the stack and the optimiser folds it away.
+#[bitfield(u32)]
+struct ChildSlot {
+    /// Node index, or the first simplex of a leaf.  29 bits limits a single
+    /// mesh to 2^29 (~537 M) simplices.
+    #[bits(29)]
+    payload: u32,
+    /// Simplices in the leaf, `1..=`[`MAX_LEAF_SIZE`]; unused for nodes.
+    #[bits(2, default = 1, from = count_from_bits, into = count_into_bits)]
+    count: u32,
+    is_leaf: bool,
+}
+
+const fn count_from_bits(bits: u8) -> u32 {
+    bits as u32 + 1
+}
+
+const fn count_into_bits(count: u32) -> u8 {
+    (count - 1) as u8
+}
+
+impl ChildSlot {
+    fn node(index: u32) -> Self {
+        Self::new().with_payload(index)
+    }
+
+    fn leaf(range: LeafRange) -> Self {
+        debug_assert!((1..=MAX_LEAF_SIZE).contains(&range.count));
+        Self::new()
+            .with_is_leaf(true)
+            .with_payload(range.start)
+            .with_count(range.count)
+    }
+
+    fn unpack(self) -> Child {
+        if self.is_leaf() {
+            Child::Leaf(LeafRange {
+                start: self.payload(),
+                count: self.count(),
+            })
+        } else {
+            Child::Node(self.payload())
+        }
+    }
+}
+
+/// One child of an internal node: its bounding box and where it lives.
+#[derive(Clone, Copy)]
+struct ChildRef {
+    aabb: Aabb<Real, 3>,
+    slot: ChildSlot,
+}
+
+/// One internal node: both of its children.
 #[derive(Clone, Copy)]
 struct CompactNode {
-    aabb_l: Aabb<Real, 3>,
-    aabb_r: Aabb<Real, 3>,
-    left: u32,
-    right: u32,
+    left: ChildRef,
+    right: ChildRef,
 }
 
 #[cfg(not(feature = "high_precision"))]
@@ -55,20 +127,15 @@ const _: () = assert!(std::mem::size_of::<CompactNode>() == 56);
 
 pub struct CompactBvh {
     nodes: Vec<CompactNode>,
-    /// Tagged slot of the root (a leaf for meshes of ≤ `MAX_LEAF_SIZE`
+    /// The root child slot (a leaf for meshes of ≤ `MAX_LEAF_SIZE`
     /// simplices), or `None` for an empty mesh.
-    root: Option<u32>,
+    root: Option<ChildSlot>,
 }
 
 impl DeepSizeOf for CompactBvh {
     fn deep_size_of_children(&self, _context: &mut Context) -> usize {
         self.nodes.capacity() * std::mem::size_of::<CompactNode>()
     }
-}
-
-fn leaf_slot(start: u32, count: u32) -> u32 {
-    debug_assert!((1..=MAX_LEAF_SIZE).contains(&count));
-    LEAF_BIT | ((count - 1) << COUNT_SHIFT) | start
 }
 
 /// Number of shapes in each subtree of the source tree, indexed by node.
@@ -115,7 +182,7 @@ impl CompactBvh {
     /// per-simplex arrays through `order` so that leaf slots index correctly.
     pub fn from_bvh(tree: &Bvh<Real, 3>, num_shapes: usize) -> (Self, Vec<u32>) {
         assert!(
-            num_shapes < START_MASK as usize,
+            num_shapes <= MAX_START as usize,
             "mesh exceeds the compact BVH limit of 2^29 simplices"
         );
         if num_shapes == 0 {
@@ -138,11 +205,14 @@ impl CompactBvh {
             nodes: &mut Vec<CompactNode>,
             order: &mut Vec<u32>,
             i: usize,
-        ) -> u32 {
+        ) -> ChildSlot {
             if counts[i] <= MAX_LEAF_SIZE {
                 let start = order.len() as u32;
                 collect_shapes(src, order, i);
-                return leaf_slot(start, counts[i]);
+                return ChildSlot::leaf(LeafRange {
+                    start,
+                    count: counts[i],
+                });
             }
             // A subtree holding more than one shape is always a `Node`.
             let BvhNode::Node {
@@ -155,18 +225,25 @@ impl CompactBvh {
             else {
                 unreachable!("leaf node with subtree count > 1")
             };
-            let slot = nodes.len() as u32;
+            // The children's slots are only known once they have been
+            // emitted, so reserve this node first and patch them in after.
+            let index = nodes.len() as u32;
+            let placeholder = ChildSlot::node(0);
             nodes.push(CompactNode {
-                aabb_l: child_l_aabb,
-                aabb_r: child_r_aabb,
-                left: 0,
-                right: 0,
+                left: ChildRef {
+                    aabb: child_l_aabb,
+                    slot: placeholder,
+                },
+                right: ChildRef {
+                    aabb: child_r_aabb,
+                    slot: placeholder,
+                },
             });
             let left = emit(src, counts, nodes, order, child_l_index);
             let right = emit(src, counts, nodes, order, child_r_index);
-            nodes[slot as usize].left = left;
-            nodes[slot as usize].right = right;
-            slot
+            nodes[index as usize].left.slot = left;
+            nodes[index as usize].right.slot = right;
+            ChildSlot::node(index)
         }
 
         let root = emit(&tree.nodes, &counts, &mut nodes, &mut order, 0);
@@ -202,12 +279,14 @@ impl CompactBvh {
 
     /// Maximum depth of the tree (0 when the root is a single leaf).
     pub fn depth(&self) -> usize {
-        fn go(nodes: &[CompactNode], slot: u32) -> usize {
-            if slot & LEAF_BIT != 0 {
-                return 0;
+        fn go(nodes: &[CompactNode], slot: ChildSlot) -> usize {
+            match slot.unpack() {
+                Child::Leaf(_) => 0,
+                Child::Node(index) => {
+                    let node = &nodes[index as usize];
+                    1 + go(nodes, node.left.slot).max(go(nodes, node.right.slot))
+                }
             }
-            let node = &nodes[slot as usize];
-            1 + go(nodes, node.left).max(go(nodes, node.right))
         }
         self.root.map_or(0, |root| go(&self.nodes, root))
     }
@@ -218,7 +297,7 @@ pub struct ContainingIndices<'a> {
     nodes: &'a [CompactNode],
     simplices: &'a [Simplex],
     point: Point3<Real>,
-    stack: SmallVec<[u32; STACK_CAPACITY]>,
+    stack: SmallVec<[ChildSlot; STACK_CAPACITY]>,
     /// Range of the leaf currently being scanned.
     cursor: u32,
     end: u32,
@@ -236,17 +315,19 @@ impl Iterator for ContainingIndices<'_> {
                     return Some(i);
                 }
             }
-            let slot = self.stack.pop()?;
-            if slot & LEAF_BIT != 0 {
-                self.cursor = slot & START_MASK;
-                self.end = self.cursor + ((slot >> COUNT_SHIFT) & 0b11) + 1;
-            } else {
-                let node = &self.nodes[slot as usize];
-                if node.aabb_l.contains(&self.point) {
-                    self.stack.push(node.left);
+            match self.stack.pop()?.unpack() {
+                Child::Leaf(range) => {
+                    self.cursor = range.start;
+                    self.end = range.end();
                 }
-                if node.aabb_r.contains(&self.point) {
-                    self.stack.push(node.right);
+                Child::Node(index) => {
+                    let node = &self.nodes[index as usize];
+                    if node.left.aabb.contains(&self.point) {
+                        self.stack.push(node.left.slot);
+                    }
+                    if node.right.aabb.contains(&self.point) {
+                        self.stack.push(node.right.slot);
+                    }
                 }
             }
         }

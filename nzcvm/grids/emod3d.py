@@ -47,7 +47,7 @@ def _topography_type_interpolator(
             return squashed_tapered_interpolator
 
 
-def _depth_array(nk: int, resolution: float, chunks: int) -> xr.DataArray:
+def _depth_array(nk: int, resolution: float) -> xr.DataArray:
     k = np.arange(nk)
     offset = np.float32(1 / (2 * resolution))
     k_da = xr.DataArray(
@@ -55,7 +55,8 @@ def _depth_array(nk: int, resolution: float, chunks: int) -> xr.DataArray:
         dims=[Coordinate.K],
         coords=dict({Coordinate.K: k}),
     )
-    return k_da.chunk({Coordinate.K: chunks})
+    # Chunking only ever applies to i/j; k is always kept as a single chunk.
+    return k_da.chunk({Coordinate.K: -1})
 
 
 @build_grids_from_config.register
@@ -94,7 +95,7 @@ def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
 
     interpolator = _topography_type_interpolator(config.topo_type)
 
-    depth_1d = _depth_array(config.nz, config.resolution, config.chunks[Coordinate.K])
+    depth_1d = _depth_array(config.nz, config.resolution)
 
     z_phys, depth_out = interpolator(z_surface, depth_1d)
 

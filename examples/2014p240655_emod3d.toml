@@ -26,7 +26,6 @@ origin_y = 5606532.0
 [grid.chunks]
 i = 128
 j = 128
-k = 128
 
 [[layers]]
 type = "clamp"

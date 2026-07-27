@@ -28,7 +28,6 @@ def _regular_grid(
     surface: xr.DataArray,
     thickness: float,
     resolution_z: float,
-    chunks: int,
     **kwargs: Any,
 ) -> Grid:
     nk = np.round(thickness / resolution_z).astype(int) + 1
@@ -37,11 +36,12 @@ def _regular_grid(
     # Depth is purely a function of k and resolution_z
     depth_values = np.linspace(0.0, thickness, num=nk, dtype=np.float32)
 
+    # Chunking only ever applies to i/j; k is always kept as a single chunk.
     zeta_depth = xr.DataArray(
         depth_values,
         dims=[Coordinate.K],
         coords={Coordinate.K: k},
-    ).chunk({Coordinate.K: chunks})
+    ).chunk({Coordinate.K: -1})
 
     # Elevation (z) is the surface elevation shifted downward by the fixed depths.
     # This guarantees the bottom follows the topography perfectly.
@@ -118,7 +118,6 @@ def build_regular(config: RegularGridConfig) -> dict[str, Grid]:
         z_surface,
         name="grid",
         thickness=config.thickness,
-        chunks=config.chunks[Coordinate.K],
         origin_lat=orientation.origin_lat,
         origin_lon=orientation.origin_lon,
         azimuth=orientation.azimuth,

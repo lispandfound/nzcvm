@@ -126,7 +126,6 @@ bottom = 42000.0
 [grid.chunks]
 i = 256
 j = 256
-k = 128
 
 [[layers]]
 type = "clamp"

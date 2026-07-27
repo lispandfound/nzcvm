@@ -48,7 +48,6 @@ def _curvilinear_grid(
     surface: xr.DataArray,
     top: float | xr.DataArray,
     bottom: float,
-    chunks: int,
     resolution: float,
     **kwargs: Any,
 ) -> Grid:
@@ -61,11 +60,12 @@ def _curvilinear_grid(
 
     nk = np.round(thickness / resolution).astype(int) + 1
     k = np.arange(nk)
+    # Chunking only ever applies to i/j; k is always kept as a single chunk.
     zeta = xr.DataArray(
         np.linspace(0, 1, num=nk, dtype=np.float32),
         dims=[Coordinate.K],
         coords={Coordinate.K: k},
-    ).chunk({Coordinate.K: chunks})
+    ).chunk({Coordinate.K: -1})
 
     z = top * (np.float32(1.0) - zeta) + bottom * zeta
 
@@ -193,7 +193,6 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
             z_surface,
             z_surface,
             top_refinement.bottom,
-            config.chunks[Coordinate.K],
             top_refinement.resolution,
             name=top_name,
             origin_lat=orientation.origin_lat,
@@ -220,7 +219,6 @@ def build_sw4(config: SW4GridConfig) -> dict[str, Grid]:
                 z_refinement,
                 top,
                 refinement.bottom,
-                config.chunks[Coordinate.K],
                 refinement.resolution,
                 name=name,
                 origin_lat=orientation.origin_lat,

@@ -86,7 +86,7 @@ def _emod3d_config(
     chunks: dict | None = None,
 ) -> EMOD3DGrid:
     if chunks is None:
-        chunks = {Coordinate.I: nx, Coordinate.J: ny, Coordinate.K: nz}
+        chunks = {Coordinate.I: nx, Coordinate.J: ny}
     return EMOD3DGrid(
         surface=flat_surface,
         nx=nx,
@@ -121,10 +121,10 @@ class TestEMOD3DShape:
             assert isinstance(grid[var].data, da.Array), f"{var} is not dask"
 
     def test_all_dims_chunked_according_to_config(self, flat_surface: Path) -> None:
-        """After ensure_chunks all three dims must be chunked per the config."""
+        """After ensure_chunks, i/j must be chunked per the config; k is always a single chunk."""
         nx, ny, nz = 8, 8, 8
-        ci, cj, ck = 4, 4, 4
-        chunks = {Coordinate.I: ci, Coordinate.J: cj, Coordinate.K: ck}
+        ci, cj = 4, 4
+        chunks = {Coordinate.I: ci, Coordinate.J: cj}
         grid = _single_grid(
             _emod3d_config(flat_surface, nx=nx, ny=ny, nz=nz, chunks=chunks)
         )
@@ -132,7 +132,7 @@ class TestEMOD3DShape:
             csizes = grid[var].chunksizes
             assert all(c <= ci for c in csizes["i"]), f"{var}: i not chunked"
             assert all(c <= cj for c in csizes["j"]), f"{var}: j not chunked"
-            assert all(c <= ck for c in csizes["k"]), f"{var}: k not chunked"
+            assert csizes["k"] == (nz,), f"{var}: k must be a single chunk"
 
 
 class TestEMOD3DCentreRegistration:
@@ -210,7 +210,7 @@ def _sw4_config(
         extent_y=extent_y,
         orientation=_model(azimuth),
         refinements=refinements,
-        chunks={Coordinate.I: 8, Coordinate.J: 8, Coordinate.K: 8},
+        chunks={Coordinate.I: 8, Coordinate.J: 8},
     )
 
 

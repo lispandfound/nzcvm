@@ -11,7 +11,7 @@ from nzcvm.config.validation import (
 )
 from nzcvm.coordinates import Coordinate
 
-DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: -1}
+DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128}
 
 
 class TopographyType(StrEnum):

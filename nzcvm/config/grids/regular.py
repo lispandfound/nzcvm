@@ -8,7 +8,7 @@ from nzcvm.coordinates import Coordinate
 
 from .core import GridConfig
 
-DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128, Coordinate.K: 128}
+DEFAULT_CHUNK_SIZES = {Coordinate.I: 128, Coordinate.J: 128}
 
 
 @dataclass

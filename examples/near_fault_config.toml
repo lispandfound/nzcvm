@@ -34,7 +34,6 @@ bottom = 3500.0
 [grid.chunks]
 i = 128
 j = 128
-k = 128
 
 [[layers]]
 type = "fault_zone"

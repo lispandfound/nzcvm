@@ -49,7 +49,7 @@ REFINEMENTS = {
     "lower_crust":  MeshRefinement(resolution=200.0, bottom=60_000.0),
 }
 
-CHUNK_SIZE = 64  # voxels per chunk along each axis
+CHUNK_SIZE = 64  # voxels per chunk along i/j; k is always a single chunk
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +98,6 @@ def run_benchmark() -> None:
             chunks={
                 Coordinate.I: CHUNK_SIZE,
                 Coordinate.J: CHUNK_SIZE,
-                Coordinate.K: CHUNK_SIZE,
             },
         )
         grids = build_grids_from_config(config)

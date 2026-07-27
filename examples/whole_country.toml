@@ -34,7 +34,6 @@ origin_lon =  173.9097
 [grid.chunks]
 i = 256
 j = 256
-k = 128
 
 
 

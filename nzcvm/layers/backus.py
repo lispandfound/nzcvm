@@ -72,6 +72,7 @@ class BackusAveragedLayer(
         slow_vs_qs = xr.zeros_like(rho)
 
         for m in range(n):
+            logger.debug(f"Backus averaged: {m + 1}/{n}")
             sample_z = upper + ((m + 0.5) / n) * span
             sample_depth = sample_z - free_surface_z  # depth transform from z
             grid_sample = grid.assign(z=sample_z, depth=sample_depth)

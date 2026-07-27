@@ -44,51 +44,54 @@ class BackusAveragedLayer(
             Priority range for velocity-model queries.
         """
         z = grid.z
+        free_surface_z = (grid.z - grid.depth).isel(k=0)
 
-        free_surface_z = grid.z.isel(k=0) - grid.depth.isel(k=0)
-
-        # Neighbour-midpoint tributary edges, in elevation.
         upper = 0.5 * (z.shift(k=1) + z)
         lower = 0.5 * (z + z.shift(k=-1))
-
         lower = lower.where(z.k != z.k[-1], 2 * z - upper)
-
         is_top_grid = bool(z.k[0] == 0)
         if is_top_grid:
-            upper = upper.where(z.k != z.k[0], z.isel(k=0))  # [z_fs, z_fs+Δz/2]
+            upper = upper.where(z.k != z.k[0], z.isel(k=0))  # truncate at free surface
         else:
-            upper = upper.where(z.k != z.k[0], 2 * z - lower)  # symmetric mirror
-
-        span = lower - upper  # elevation thickness (> 0)
+            upper = upper.where(z.k != z.k[0], 2 * z - lower)  # mirror at interface
+        span = lower - upper
         n = self.config.samples
 
-        rho = xr.zeros_like(z)
-        inv_m = xr.zeros_like(rho)
-        inv_mu = xr.zeros_like(rho)
-        slow_vp = xr.zeros_like(rho)
-        slow_vp_qp = xr.zeros_like(rho)
-        slow_vs = xr.zeros_like(rho)
-        slow_vs_qs = xr.zeros_like(rho)
+        # alpha-weighted accumulators
+        w = xr.zeros_like(z)
+        a_rho = xr.zeros_like(z)
+        a_invm = xr.zeros_like(z)
+        a_invmu = xr.zeros_like(z)
+        a_svp = xr.zeros_like(z)
+        a_svpq = xr.zeros_like(z)
+        a_svs = xr.zeros_like(z)
+        a_svsq = xr.zeros_like(z)
 
         for m in range(n):
-            logger.debug(f"Backus averaged: {m + 1}/{n}")
             sample_z = upper + ((m + 0.5) / n) * span
-            sample_depth = sample_z - free_surface_z  # depth transform from z
+            sample_depth = sample_z - free_surface_z
             grid_sample = grid.assign(z=sample_z, depth=sample_depth)
             q = self.next_layer(grid_sample, model_range)
-            rho += q.rho
-            inv_m += np.reciprocal(q.rho * np.square(q.vp))
-            inv_mu += np.reciprocal(q.rho * np.square(q.vs))
+            a = q.alpha
+            w += a
+            a_rho += a * q.rho
+            a_invm += a * np.reciprocal(q.rho * np.square(q.vp))
+            a_invmu += a * np.reciprocal(q.rho * np.square(q.vs))
             inv_vp = np.reciprocal(q.vp)
-            slow_vp += inv_vp
-            slow_vp_qp += inv_vp * np.reciprocal(q.qp)
+            a_svp += a * inv_vp
+            a_svpq += a * inv_vp * np.reciprocal(q.qp)
             inv_vs = np.reciprocal(q.vs)
-            slow_vs += inv_vs
-            slow_vs_qs += inv_vs * np.reciprocal(q.qs)
+            a_svs += a * inv_vs
+            a_svsq += a * inv_vs * np.reciprocal(q.qs)
 
-        rho /= n
-        vp = np.sqrt((n / inv_m) / rho)
-        vs = np.sqrt((n / inv_mu) / rho)
-        qp = slow_vp / slow_vp_qp
-        qs = slow_vs / slow_vs_qs
-        return QualitiesSchema.new(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs)
+        covered = w > 0
+        w_safe = w.where(covered, 1.0)
+
+        alpha = w / n
+        rho = xr.where(covered, a_rho / w_safe, 0.0)
+        vp = xr.where(covered, w / np.sqrt((a_invm * a_rho).where(covered, 1.0)), 0.0)
+        vs = xr.where(covered, w / np.sqrt((a_invmu * a_rho).where(covered, 1.0)), 0.0)
+        qp = xr.where(covered, a_svp / a_svpq.where(covered, 1.0), 0.0)
+        qs = xr.where(covered, a_svs / a_svsq.where(covered, 1.0), 0.0)
+
+        return QualitiesSchema.new(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha)

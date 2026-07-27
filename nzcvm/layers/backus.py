@@ -45,8 +45,7 @@ class BackusAveragedLayer(
         """
         z = grid.z
 
-        # HACK: assumes that dz is constant with depth.
-        free_surface_z = (grid.z - grid.depth).isel(k=0)
+        free_surface_z = grid.z.isel(k=0) - grid.depth.isel(k=0)
 
         # Neighbour-midpoint tributary edges, in elevation.
         upper = 0.5 * (z.shift(k=1) + z)

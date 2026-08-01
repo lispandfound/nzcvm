@@ -7,10 +7,9 @@ import xarray as xr
 T = TypeVar("T", bound=xr.DataArray | xr.Dataset)
 Encoder = Callable[[T], T]
 AttrEncoder = Callable[[Any], Any]
-XarrayObject = TypeVar("XarrayObject", bound=xr.DataArray | xr.DataTree | xr.Dataset)
 
 
-def encode(
+def encode[XarrayObject: (xr.DataArray | xr.DataTree | xr.Dataset)](
     obj: XarrayObject, attr_hook: AttrEncoder | None = None, **kwarg_hooks: Encoder
 ) -> XarrayObject:
     if isinstance(obj, xr.DataTree):

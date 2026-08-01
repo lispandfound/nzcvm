@@ -51,7 +51,7 @@ class ResourceMonitor:
     def _monitor_loop(self):
         try:
             last_disk = psutil.disk_io_counters()
-        except Exception:
+        except (OSError, RuntimeError, NotImplementedError):
             last_disk = None
 
         last_time = time.time()
@@ -117,7 +117,7 @@ class LogProgress(Callback):
         ntasks = len(state["dependencies"])
 
         if ntasks > 0:
-            percent = int(round((ndone / ntasks) * 100))
+            percent = round((ndone / ntasks) * 100)
             if percent % self.log_interval == 0 and percent != self.last_logged:
                 self.logger.log(
                     self.level,

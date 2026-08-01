@@ -203,10 +203,10 @@ def data_frame_to_mesh(
         name=name,
         points=points,
         connectivity=connectivity,
-        cell_data=dict(
-            model_type=model_type,
-            priority=priority,
-        ),
+        cell_data={
+            "model_type": model_type,
+            "priority": priority,
+        },
         field_data=field_data,
         geometry=None,
     )
@@ -217,7 +217,7 @@ class ModelType(StrEnum):
 
 
 MODEL_KWARGS: dict[ModelType, dict[str, int | str]] = {
-    ModelType.EP2020: dict(header=1, sep=r"\s+")
+    ModelType.EP2020: {"header": 1, "sep": r"\s+"}
 }
 
 MODEL_COLUMNS = {

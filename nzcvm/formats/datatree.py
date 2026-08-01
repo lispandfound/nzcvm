@@ -32,7 +32,7 @@ def _translate_compressor_to_hdf5(dset: xr.Dataset) -> xr.Dataset:
             compressor = compressor[0]
 
         if isinstance(compressor, ZFPY):
-            kwargs = dict()
+            kwargs = {}
             if compressor.tolerance > 0:
                 kwargs["accuracy"] = compressor.tolerance
             elif compressor.rate > 0:

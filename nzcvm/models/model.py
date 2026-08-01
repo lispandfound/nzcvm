@@ -677,4 +677,4 @@ def _mesh_model_from_tetra(
         )
     except ValueError as e:
         e.add_note(f"While building model: {mesh_model.name!r}")
-        raise e
+        raise

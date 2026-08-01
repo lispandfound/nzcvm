@@ -6,11 +6,11 @@ from zarr.codecs import ZFPY, Blosc
 from nzcvm.xarray import Encoder, encode
 
 DEFAULT_PRECISION: dict[Hashable, dict] = {
-    "x": dict(tolerance=0.5),
-    "y": dict(tolerance=0.5),
-    "z": dict(tolerance=0.5),
-    "depth": dict(tolerance=0.5),
-    "qualities": dict(precision=9),
+    "x": {"tolerance": 0.5},
+    "y": {"tolerance": 0.5},
+    "z": {"tolerance": 0.5},
+    "depth": {"tolerance": 0.5},
+    "qualities": {"precision": 9},
 }
 
 

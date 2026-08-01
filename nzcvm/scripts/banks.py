@@ -46,9 +46,9 @@ def _load_bpv_surface(basement_path: Path) -> Surface:
     x, y = TRANSFORMER.transform(llon, llat)
     ni, nj = x.shape
     bpv_dset = xr.Dataset(
-        dict(x=(("i", "j"), x), y=(("i", "j"), y), z=(("i", "j"), z)),
-        coords=dict(i=np.arange(ni), j=np.arange(nj)),
-        attrs=dict(name="BPV"),
+        {"x": (("i", "j"), x), "y": (("i", "j"), y), "z": (("i", "j"), z)},
+        coords={"i": np.arange(ni), "j": np.arange(nj)},
+        attrs={"name": "BPV"},
     )
     bpv_dset = StructuredMeshSchema.from_dataset(bpv_dset)
     return Surface.from_dataset(bpv_dset)

@@ -126,8 +126,8 @@ class OffshoreModel:
             depths,
             input_core_dims=[[]],
             output_core_dims=[["component"]],
-            kwargs=dict(xp=self.model_top_depths, fp=self.model_qualities),
-            output_sizes=dict(component=len(list(Component))),
+            kwargs={"xp": self.model_top_depths, "fp": self.model_qualities},
+            output_sizes={"component": len(list(Component))},
             output_dtypes=[depths.dtype],
         )
         dset = darr.assign_coords(component=list(Component)).to_dataset(dim="component")

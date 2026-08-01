@@ -51,7 +51,7 @@ class VelocityModel:
         quality_keys = set(self.qualities)
         return {
             k: (self.grids[k], self.qualities[k])
-            for k in self.grids.keys()
+            for k in self.grids
             if k in quality_keys
         }
 

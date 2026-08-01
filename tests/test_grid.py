@@ -259,7 +259,7 @@ class TestSW4Shape:
         )
         grids = build_grids_from_config(cfg)
         grid = grids["top"]
-        expected_ni = int(round(extent_x / res)) + 1
+        expected_ni = round(extent_x / res) + 1
         assert grid.x.shape[0] == expected_ni
 
 

@@ -53,7 +53,7 @@ def _depth_array(nk: int, resolution: float) -> xr.DataArray:
     k_da = xr.DataArray(
         offset + np.float32(k) * np.float32(resolution),
         dims=[Coordinate.K],
-        coords=dict({Coordinate.K: k}),
+        coords={Coordinate.K: k},
     )
     # Chunking only ever applies to i/j; k is always kept as a single chunk.
     return k_da.chunk({Coordinate.K: -1})

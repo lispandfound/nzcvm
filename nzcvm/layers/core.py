@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import typing
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Generic, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from shapely import Geometry
 
@@ -16,10 +16,8 @@ if TYPE_CHECKING:
     from nzcvm.grids.grid import Grid
     from nzcvm.qualities import Qualities
 
-C = TypeVar("C", bound=LayerConfig)
 
-
-class Layer(ABC, Generic[C]):
+class Layer[C: LayerConfig](ABC):
     """Abstract base class for a single stage in the model-query pipeline.
 
     A layer receives a :class:`~nzcvm.grids.grid.Grid` chunk, computes or
@@ -33,7 +31,7 @@ class Layer(ABC, Generic[C]):
     nzcvm.layers.functional.functional_layer : Derive a layer from a plain function.
     """
 
-    registry: dict[type[LayerConfig], type[Layer]] = dict()
+    registry: ClassVar[dict[type[LayerConfig], type[Layer]]] = {}
     config: C
 
     def __init__(self, config: C, geometry: Geometry, next_layer: Layer[Any]) -> None:

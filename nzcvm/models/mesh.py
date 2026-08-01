@@ -35,7 +35,7 @@ def _decode_geometry_attr(value: Any) -> Any:
     if isinstance(value, str):
         try:
             return shapely.from_wkb(value)
-        except Exception:
+        except shapely.errors.ShapelyError:
             return value
     return value
 

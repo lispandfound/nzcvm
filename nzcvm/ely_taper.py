@@ -22,7 +22,7 @@ from nzcvm.qualities import Qualities, QualitiesSchema
 BROCHER_VP_COEFFS = xr.DataArray(
     np.array([-2.51e-11, 2.683e-07, -0.0008206, 2.0947, 940.9], dtype=np.float32),
     dims=["degree"],
-    coords=dict(degree=[4, 3, 2, 1, 0]),
+    coords={"degree": [4, 3, 2, 1, 0]},
 )
 VP_FROM_VS_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_VP_COEFFS)
 
@@ -31,7 +31,7 @@ BROCHER_DENSITY_COEFFS = xr.DataArray(
         [1.06e-16, -4.3e-12, 6.71e-08, -0.00047211, 1.6612, 0.0], dtype=np.float32
     ),
     dims=["degree"],
-    coords=dict(degree=[5, 4, 3, 2, 1, 0]),
+    coords={"degree": [5, 4, 3, 2, 1, 0]},
 )
 DENSITY_RELATION = functools.partial(xr.polyval, coeffs=BROCHER_DENSITY_COEFFS)
 
@@ -83,7 +83,7 @@ def _ely_vs_profile(
     qp = 100.0 * vs / 1000.0
     alpha = xr.full_like(rho, 1.0)
 
-    return xr.Dataset(dict(rho=rho, vs=vs, vp=vp, qp=qp, qs=qs, alpha=alpha))
+    return xr.Dataset({"rho": rho, "vs": vs, "vp": vp, "qp": qp, "qs": qs, "alpha": alpha})
 
 
 def ely_vs_profile(

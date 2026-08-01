@@ -86,7 +86,7 @@ def add_logical_axes(pl: object, grid: xr.Dataset, bounds: tuple[float, ...]) ->
             (_get_pt(0, 1, 0), "j", "green"),
             (_get_pt(0, 0, 1), "k", "blue"),
         ]
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - best-effort viewer annotation, must not crash the viewer
         typer.secho(f"⚠️ Could not calculate logical axes: {exc}", fg="yellow")
         return
 
@@ -429,7 +429,7 @@ def model(
                 )
             )
             typer.echo(f"    → {g.n_points:,} points")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - one bad grid must not abort the whole viewer
             typer.secho(f"  [error] Failed to build grid for '{name}': {exc}", fg="red")
 
     if not grids:
@@ -452,7 +452,7 @@ def model(
     if coastline:
         add_coastline_underlay(pl, global_bounds, coastline)
     if show_axes:
-        for _, (grid_ds, _) in vmod1.pairwise.items():
+        for grid_ds, _ in vmod1.pairwise.values():
             add_logical_axes(pl, grid_ds, global_bounds)
 
     mesh_kwargs = {

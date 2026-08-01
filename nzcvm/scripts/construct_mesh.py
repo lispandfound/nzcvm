@@ -329,12 +329,12 @@ def construct_volumetric_mesh(
         name=name,
         points=mesh_vertices,
         connectivity=tetra,
-        cell_data=dict(
-            model_type=model_type,
-            priority=priority_data,
-        ),
+        cell_data={
+            "model_type": model_type,
+            "priority": priority_data,
+        },
         geometry=geometry,
-        field_data=dict(rho=rho, vp=vp, vs=vs, qp=qp, qs=qs, alpha=alpha),
+        field_data={"rho": rho, "vp": vp, "vs": vs, "qp": qp, "qs": qs, "alpha": alpha},
     )
     return mesh
 
@@ -669,7 +669,7 @@ def retain_connected(
             [geom for geom in poly.geoms if shapely.intersects(internal_poly, geom)]
         )
     else:
-        raise ValueError(f"Invalid geometry: {poly!r}")
+        raise TypeError(f"Invalid geometry: {poly!r}")
 
 
 @app.command()

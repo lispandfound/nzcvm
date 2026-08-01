@@ -74,7 +74,7 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
             grid.z,
             input_core_dims=[[], [], []],
             output_core_dims=[["component"]],
-            kwargs=dict(model_range=model_range),
+            kwargs={"model_range": model_range},
         )
         dset = darr.assign_coords(component=list(Component)).to_dataset(dim="component")
         return QualitiesSchema.from_dataset(dset)

@@ -10,11 +10,13 @@ python visualise_grid.py model.nc --scalar depth
 python visualise_grid.py model.nc --scalar vs --compare-to model2.nc --diff-mode abs
 """
 
+from __future__ import annotations
+
 import gzip
 import itertools
 from enum import StrEnum, auto
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import numpy as np
 import shapely
@@ -27,6 +29,9 @@ from nzcvm.grids.grid import Grid
 from nzcvm.models.mesh import TetrahedralMeshSchema
 from nzcvm.qualities import Qualities
 from nzcvm.velocity_model import VelocityModel
+
+if TYPE_CHECKING:
+    import pyvista as pv
 
 
 def _require_pyvista():  # type: ignore[return]
@@ -69,7 +74,7 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def add_logical_axes(pl: object, grid: xr.Dataset, bounds: tuple[float, ...]) -> None:
+def add_logical_axes(pl: pv.Plotter, grid: xr.Dataset, bounds: tuple[float, ...]) -> None:
     """Draws i, j, k logical direction vectors starting from the logical origin."""
     pv = _require_pyvista()
     w, e, s, n, z_min, z_max = bounds
@@ -125,7 +130,7 @@ def add_logical_axes(pl: object, grid: xr.Dataset, bounds: tuple[float, ...]) ->
 
 
 def add_coastline_underlay(
-    pl: object, bounds: tuple[float, ...], coastline_path: Path
+    pl: pv.Plotter, bounds: tuple[float, ...], coastline_path: Path
 ) -> None:
     """Reads a vector geometry file in NZTM and plots it as a clean line underlay."""
     pv = _require_pyvista()
@@ -178,7 +183,7 @@ def _build_structured_grid(
     grid2: Grid | None = None,
     qualities2: Qualities | None = None,
     diff_mode: DiffMode = DiffMode.NONE,
-) -> object:
+) -> pv.StructuredGrid:
     """Build a PyVista StructuredGrid from merged xarray Datasets, optionally applying a functional difference mapping."""
     pv = _require_pyvista()
     ds1 = xr.merge([grid1, qualities1])
@@ -199,7 +204,9 @@ def _build_structured_grid(
             ds1[var] = ops[diff_mode](ds1[var], ds2[var])
 
     if stride > 1:
-        ds1 = ds1.coarsen(i=stride, j=stride, boundary="trim").mean()
+        ds1 = ds1.coarsen(  # ty: ignore[unresolved-attribute]
+            i=stride, j=stride, boundary="trim"
+        ).mean()
 
     mesh = pv.StructuredGrid(ds1.x.values, ds1.y.values, ds1.z.values)
 

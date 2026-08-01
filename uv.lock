@@ -1271,6 +1271,7 @@ dev = [
     { name = "ipython" },
     { name = "numpydoc" },
     { name = "pytest" },
+    { name = "pyvista" },
     { name = "ruff" },
     { name = "ty" },
 ]
@@ -1312,6 +1313,7 @@ dev = [
     { name = "ipython", specifier = ">=9.12.0" },
     { name = "numpydoc", specifier = ">=1.10.0" },
     { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pyvista", specifier = ">=0.48.4" },
     { name = "ruff", specifier = ">=0.15.10" },
     { name = "ty", specifier = ">=0.0.29" },
 ]

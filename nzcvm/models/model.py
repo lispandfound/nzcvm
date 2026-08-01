@@ -353,8 +353,6 @@ class ModelTree:
         mesh_model :
             A :class:`~nzcvm.models.mesh.TetrahedralMesh` with the NZCVM cell and
             field data layout (see :func:`nzcvm.models.mesh.make_mesh`).
-        model_map :
-            Optional mapping from integer model ID to a display name.
 
         Returns
         -------
@@ -597,11 +595,7 @@ class ModelTree:
         for m in data["models"]:
             m_id = m["id"]
             embedded_name = m.get("name") or ""
-            name = embedded_name or (
-                self.model_map.get(m_id, f"Model {m_id}")
-                if self.model_map is not None
-                else f"Model {m_id}"
-            )
+            name = embedded_name or f"Model {m_id}"
 
             branch = tree.add(f"{name} (ID: {m_id})")
             size_mb = round(m["size"] * MB)
@@ -638,6 +632,7 @@ class ModelTree:
 
 def _mesh_model_from_tetra(
     mesh_model: TetrahedralMesh,
+    name: str | None = None,
 ) -> Any:
     """Build a PyMeshModel from a :class:`~nzcvm.models.mesh.TetrahedralMesh`."""
     connectivity = mesh_model.connectivity.values
@@ -656,7 +651,7 @@ def _mesh_model_from_tetra(
     ]
 
     priority = mesh_model.priority.isel(j=0).item()
-    name = mesh_model.name
+    name = name if name is not None else mesh_model.name
 
     transform = mesh_model.attrs.get("transform")
 

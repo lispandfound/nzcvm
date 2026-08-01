@@ -99,8 +99,11 @@ def unit_grid() -> Grid:
     return make_grid()
 
 
-def get_model_directory():
-    return Path(os.getenv("MODEL_PATH"))
+def get_model_directory() -> Path:
+    model_path = os.getenv("MODEL_PATH")
+    if model_path is None:
+        raise RuntimeError("MODEL_PATH environment variable must be set to run these tests")
+    return Path(model_path)
 
 
 @pytest.fixture

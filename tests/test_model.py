@@ -149,7 +149,7 @@ def test_mesh_model_query_outside_returns_none() -> None:
 def test_mesh_model_view_label_contains_name() -> None:
     m = MeshModel(_mesh_model(name="crust"))
     view = m.view()
-    assert "crust" in view.label
+    assert "crust" in str(view.label)
 
 
 # ---------------------------------------------------------------------------

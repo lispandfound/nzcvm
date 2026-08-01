@@ -50,18 +50,20 @@ class Bound(ConfigObject):
     def __post_init__(self) -> None:
         super().__post_init__()
 
-        valid_refs = {str(c) for c in Component}
         for side, coeff, ref in (
             ("min", self.min, self.min_ref),
             ("max", self.max, self.max_ref),
         ):
             if ref is None:
                 continue
-            if ref not in valid_refs:
+            try:
+                ref = Component(ref)
+            except ValueError:
                 self._raise(
                     f"{side}_ref",
-                    f"{side}_ref must be one of {sorted(valid_refs)}, got {ref!r}.",
+                    f"{side}_ref must be one of {sorted(str(c) for c in Component)}, got {ref!r}.",
                 )
+            setattr(self, f"{side}_ref", ref)
             if coeff is None:
                 self._raise(
                     side, f"{side}_ref is set but {side} multiplier is missing."

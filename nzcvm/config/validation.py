@@ -173,7 +173,7 @@ def in_choices(choices: Collection[Any]) -> Callable[[Any], Any]:
 
 PositiveInt = Annotated[int, validate_positive]
 NonNegativeInt = Annotated[int, validate_non_negative]
-NonNegativeFloat = Annotated[int, validate_non_negative]
+NonNegativeFloat = Annotated[float, validate_non_negative]
 PositiveFloat = Annotated[float, validate_positive]
 Latitude = Annotated[float, latitude]
 Longitude = Annotated[float, longitude]

@@ -30,7 +30,7 @@ def _project_origin(
     return tr.transform(lon, lat)
 
 
-def _ep_affine(origin_crs: CRS) -> tuple[Affine, Affine]:
+def _ep_affine(origin_crs: CRS) -> Affine:
     ox, oy = _project_origin(172.9037, -41.7638, origin_crs, CRS_NZTM)
 
     inv = (

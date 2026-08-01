@@ -42,7 +42,7 @@ class GridSchema(AsDataset):
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> Grid:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
-        dset = cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
+        dset = cls.new(**dataset.data_vars, **dataset.attrs)  # ty: ignore[invalid-argument-type]
         return dset
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 import shapely
 
+from nzcvm.components import Component
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
@@ -57,7 +58,7 @@ def test_clamp_chain_outer_before_inner() -> None:
     counter = CountingLayer(GEOM, terminal)
     # Min-vs clamp of 4000 will push vs up from 3000 to 4000
     clamp = ClampLayer(
-        ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), GEOM, counter
+        ClampLayerConfig(clamps={Component.VS: Bound(min=4000.0)}), GEOM, counter
     )
 
     grid = make_grid()
@@ -73,10 +74,10 @@ def test_two_clamp_layers_compose_correctly() -> None:
     """Stacking two ClampLayers applies both constraints."""
     terminal = ConstantLayer(vs=3000.0, vp=5000.0)
     clamp_inner = ClampLayer(
-        ClampLayerConfig(clamps={"vs": Bound(min=3500.0)}), GEOM, terminal
+        ClampLayerConfig(clamps={Component.VS: Bound(min=3500.0)}), GEOM, terminal
     )
     clamp_outer = ClampLayer(
-        ClampLayerConfig(clamps={"vp": Bound(max=4500.0)}), GEOM, clamp_inner
+        ClampLayerConfig(clamps={Component.VP: Bound(max=4500.0)}), GEOM, clamp_inner
     )
 
     result = clamp_outer(make_grid())

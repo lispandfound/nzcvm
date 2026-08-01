@@ -205,3 +205,18 @@ Cargo.lock
 *.vp3dfile
 *.wkb.*
 
+### Jujutsu ###
+/.jj/
+.claude/*
+
+### Local model/resource data & CLI-generated output (large, regenerable) ###
+/models/
+/resources/
+/models_pre_fix/
+/nzcvm_data/
+/basins/
+*.zip
+*.gz
+*.parquet
+velocity_model.json
+velocity_model.toml

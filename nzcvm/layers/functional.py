@@ -53,7 +53,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import field, make_dataclass
-from typing import TYPE_CHECKING, Any, Protocol, get_type_hints
+from typing import TYPE_CHECKING, Any, Protocol, cast, get_type_hints
 
 from mashumaro.core.meta.mixin import compile_mixin_packer, compile_mixin_unpacker
 from shapely import Geometry
@@ -84,6 +84,20 @@ class _LayerFunc(Protocol):
     ) -> Qualities: ...
 
 
+class GeneratedLayer(Protocol):
+    """Protocol for the :class:`~nzcvm.layers.core.Layer` subclass returned by
+    :func:`functional_layer`.
+
+    Instances accept either ``(config, geometry, next_layer)`` or
+    ``(next_layer=..., geometry=..., **config_kwargs)`` — a shape too dynamic
+    for a plain ``type[Layer]`` constructor signature to express.
+    """
+
+    config_cls: type[LayerConfig]
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Layer: ...
+
+
 def _recompile_mashumaro_codecs(cls: type) -> None:
     """Recompile mashumaro packer/unpacker codecs for *cls*.
 
@@ -106,7 +120,7 @@ def _recompile_mashumaro_codecs(cls: type) -> None:
                 compile_mixin_packer(cls, **bp["packer"])
 
 
-def functional_layer(func: _LayerFunc) -> type[Layer]:
+def functional_layer(func: _LayerFunc) -> GeneratedLayer:
     """Derive a :class:`~nzcvm.layers.core.Layer` subclass from *func*.
 
     Parameters
@@ -117,7 +131,7 @@ def functional_layer(func: _LayerFunc) -> type[Layer]:
 
     Returns
     -------
-    type[Layer]
+    GeneratedLayer
         A new, registered Layer subclass whose name matches *func.__name__*.
     """
     hints = get_type_hints(func)
@@ -178,7 +192,7 @@ def functional_layer(func: _LayerFunc) -> type[Layer]:
             # (e.g. drop inherited base fields like 'provides'/'requires').
             config = ConfigCls(
                 **{k: v for k, v in kwargs.items() if k in _config_init_params}
-            )  # ty: ignore[invalid-assignment]
+            )
 
         Layer.__init__(self, config, geometry, next_layer)  # ty: ignore[invalid-argument-type]
 
@@ -202,4 +216,4 @@ def functional_layer(func: _LayerFunc) -> type[Layer]:
         config_cls=ConfigCls,
     )
 
-    return LayerCls
+    return cast(GeneratedLayer, LayerCls)

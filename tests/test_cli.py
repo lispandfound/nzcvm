@@ -6,8 +6,9 @@ dependency on data files or model configuration.
 """
 
 import pytest
-from nzcvm.scripts.nzcvm import app
 from typer.testing import CliRunner
+
+from nzcvm.scripts.nzcvm_cli import app
 
 runner = CliRunner()
 

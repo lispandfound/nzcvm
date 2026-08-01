@@ -25,7 +25,7 @@ from nzcvm.grids.grid import Grid
 from nzcvm.layers.clamp import ClampLayer
 from nzcvm.layers.core import Layer
 from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
-from nzcvm.qualities import QualitiesSchema
+from nzcvm.qualities import Qualities
 from nzcvm.query import ModelRange
 from tests.conftest import make_grid
 
@@ -41,7 +41,7 @@ GEOM = shapely.box(171.9, -43.6, 172.1, -43.4)
 def _clamp_over_constant(
     config: ClampLayerConfig,
     **constants,
-) -> QualitiesSchema:
+) -> Qualities:
     """Apply *config* to a 2×2×2 grid backed by a ConstantLayer(*constants*)."""
     grid = make_grid()
     inner = ConstantLayer(**constants)
@@ -100,7 +100,9 @@ def test_clamp_ungoverned_components_unchanged() -> None:
 
 def test_clamp_qs_floored_to_multiple_of_vs() -> None:
     """A relative min bound floors Qs at ``factor * Vs`` (EMOD3D Qs = 50*Vs)."""
-    cfg = ClampLayerConfig(clamps={Component.QS: Bound(min=0.05, min_ref="vs")})
+    cfg = ClampLayerConfig(
+        clamps={Component.QS: Bound(min=0.05, min_ref="vs")}  # ty: ignore[invalid-argument-type]
+    )
     # Vs = 3000 m/s -> floor 0.05 * 3000 = 150; input Qs = 40 is below it.
     result = _clamp_over_constant(cfg, vs=3000.0, qs=40.0)
     assert float(result.qs.mean()) == pytest.approx(150.0, rel=1e-4)
@@ -108,7 +110,9 @@ def test_clamp_qs_floored_to_multiple_of_vs() -> None:
 
 def test_clamp_qp_capped_to_multiple_of_vp() -> None:
     """A relative max bound caps Qp at ``factor * Vp``; below the cap is untouched."""
-    cfg = ClampLayerConfig(clamps={Component.QP: Bound(max=0.1, max_ref="vp")})
+    cfg = ClampLayerConfig(
+        clamps={Component.QP: Bound(max=0.1, max_ref="vp")}  # ty: ignore[invalid-argument-type]
+    )
     # Vp = 5000 m/s -> cap 0.1 * 5000 = 500; input Qp = 900 is above it, 200 is not.
     capped = _clamp_over_constant(cfg, vp=5000.0, qp=900.0)
     assert float(capped.qp.mean()) == pytest.approx(500.0, rel=1e-4)
@@ -121,7 +125,7 @@ def test_clamp_relative_bound_uses_clamped_vs() -> None:
     cfg = ClampLayerConfig(
         clamps={
             Component.VS: Bound(min=4000.0),  # forces Vs 3000 -> 4000
-            Component.QS: Bound(min=0.05, min_ref="vs"),
+            Component.QS: Bound(min=0.05, min_ref="vs"),  # ty: ignore[invalid-argument-type]
         }
     )
     result = _clamp_over_constant(cfg, vs=3000.0, qs=40.0)
@@ -134,7 +138,7 @@ def test_clamp_bound_rejects_unknown_ref() -> None:
     from mashumaro.exceptions import InvalidFieldValue
 
     with pytest.raises(InvalidFieldValue):
-        Bound(min=0.05, min_ref="not_a_component")
+        Bound(min=0.05, min_ref="not_a_component")  # ty: ignore[invalid-argument-type]
 
 
 def test_clamp_vs_snaps_vp_and_rho_onto_manifold() -> None:
@@ -326,21 +330,21 @@ def test_functional_layer_config_has_correct_type_tag() -> None:
     from nzcvm.layers.dummy import constant
 
     cfg = constant.config_cls()
-    assert cfg.type == "constant"
+    assert cfg.type == "constant"  # ty: ignore[unresolved-attribute]
 
 
 def test_functional_layer_config_accepts_custom_parameters() -> None:
     from nzcvm.layers.dummy import constant
 
-    cfg = constant.config_cls(vs=1234.0, vp=5678.0)
-    assert cfg.vs == pytest.approx(1234.0)
-    assert cfg.vp == pytest.approx(5678.0)
+    cfg = constant.config_cls(vs=1234.0, vp=5678.0)  # ty: ignore[unknown-argument]
+    assert cfg.vs == pytest.approx(1234.0)  # ty: ignore[unresolved-attribute]
+    assert cfg.vp == pytest.approx(5678.0)  # ty: ignore[unresolved-attribute]
 
 
 def test_functional_layer_config_serialises_to_dict() -> None:
     from nzcvm.layers.dummy import constant
 
-    cfg = constant.config_cls(vs=999.0)
+    cfg = constant.config_cls(vs=999.0)  # ty: ignore[unknown-argument]
     d = cfg.to_dict()
     assert d["type"] == "constant"
     assert d["vs"] == pytest.approx(999.0)
@@ -351,13 +355,13 @@ def test_functional_layer_config_deserialises_via_base_class() -> None:
     from nzcvm.config.layers.core import LayerConfig
     from nzcvm.layers.dummy import constant
 
-    cfg = constant.config_cls(vs=3210.0)
+    cfg = constant.config_cls(vs=3210.0)  # ty: ignore[unknown-argument]
     d = cfg.to_dict()
 
     cfg2 = LayerConfig.from_dict(d)
     assert type(cfg2) is type(cfg)
-    assert cfg2.vs == pytest.approx(3210.0)  # type: ignore[attr-defined]
-    assert cfg2.type == "constant"
+    assert cfg2.vs == pytest.approx(3210.0)  # type: ignore[attr-defined]  # ty: ignore[unresolved-attribute]
+    assert cfg2.type == "constant"  # ty: ignore[unresolved-attribute]
 
 
 def test_functional_layer_registered_in_layer_registry() -> None:
@@ -376,7 +380,7 @@ def test_functional_layer_instantiation_from_deserialised_config() -> None:
     from nzcvm.layers.dummy import constant
     from tests.conftest import make_grid
 
-    d = constant.config_cls(vs=2000.0).to_dict()
+    d = constant.config_cls(vs=2000.0).to_dict()  # ty: ignore[unknown-argument]
     cfg = LayerConfig.from_dict(d)
 
     LayerCls = Layer.registry[type(cfg)]
@@ -402,7 +406,7 @@ def test_adhoc_functional_layer_deserialises() -> None:
         model_range: ModelRange = ModelRange.ALL,
         *,
         next_layer: Layer | None = None,
-    ) -> QualitiesSchema:
+    ) -> Qualities:
         """Return all-zero qualities for every point in the grid."""
         import numpy as np
 
@@ -412,7 +416,7 @@ def test_adhoc_functional_layer_deserialises() -> None:
 
     # Config must carry the right type tag
     cfg = zeros.config_cls()
-    assert cfg.type == "zeros"
+    assert cfg.type == "zeros"  # ty: ignore[unresolved-attribute]
 
     # Must survive a dict round-trip via the base LayerConfig discriminator
     d = cfg.to_dict()

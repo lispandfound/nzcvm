@@ -88,7 +88,7 @@ def save_to_parquet(xs, ys, times, aabb_tests, simplex_tests, output_path):
 
 def run_benchmark(model_paths: list[Path], n_samples: int, output_path: Path):
     console.print(f"[bold blue]Loading {len(model_paths)} model(s)...[/bold blue]")
-    mesh_model = ModelTree.load_models(*model_paths)
+    mesh_model = ModelTree.load_models(model_paths)
 
     min_bounds, max_bounds = mesh_model.aabb
     nz_land = get_nz_land_polygon()

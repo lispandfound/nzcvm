@@ -1,4 +1,4 @@
-from typing import Hashable
+from collections.abc import Hashable
 
 import xarray as xr
 from zarr.codecs import ZFPY, Blosc

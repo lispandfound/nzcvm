@@ -13,7 +13,9 @@ from nzcvm.models.mesh import (
 app = typer.Typer()
 
 
-def convert_tiff(name: str, tiff_model: xr.DataArray, downsample: int) -> StructuredMesh:
+def convert_tiff(
+    name: str, tiff_model: xr.DataArray, downsample: int
+) -> StructuredMesh:
     clipped = tiff_model.dropna("x", how="all").dropna("y", how="all")
     if downsample > 1:
         clipped = clipped.coarsen(x=downsample, y=downsample, boundary="pad").mean()
@@ -24,13 +26,17 @@ def convert_tiff(name: str, tiff_model: xr.DataArray, downsample: int) -> Struct
 
     x, y = np.meshgrid(xi, yi)
     ni, nj = x.shape
-    return StructuredMeshSchema.new(x=x, y=y, z=z, i=np.arange(ni), j=np.arange(nj), name=name)
+    return StructuredMeshSchema.new(
+        x=x, y=y, z=z, i=np.arange(ni), j=np.arange(nj), name=name
+    )
 
 
 @app.command()
 def main(tiff_path: Path, band: int, output_path: Path, downsample: int = 1) -> None:
     dset = xr.open_dataset(tiff_path, engine="rasterio")
-    surface = convert_tiff(output_path.stem, dset["band_data"].sel(band=band), downsample)
+    surface = convert_tiff(
+        output_path.stem, dset["band_data"].sel(band=band), downsample
+    )
     surface.to_zarr(output_path, encoding=DEFAULT_STRUCTURED_ENCODING_SETTINGS)
 
 

@@ -108,7 +108,7 @@ class Bound(ConfigObject):
             msg=msg,
         )
 
-    def resolve(self, which: Literal["min"] | Literal["max"], qualities):
+    def resolve(self, which: Literal["min", "max"], qualities):
         """Resolve the ``"min"`` or ``"max"`` side to a scalar or per-point array.
 
         Returns ``None`` when that side is unbounded, the constant when no

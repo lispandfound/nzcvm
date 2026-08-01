@@ -38,15 +38,15 @@ from nzcvm.velocity_model import VelocityModel
 # ~100 km × 80 km domain, three refinements totalling roughly 0.5 GB of
 # quality data (6 components × float32 × ni × nj × nk summed over layers).
 EXTENT_X = 100_000.0  # metres
-EXTENT_Y = 80_000.0   # metres
+EXTENT_Y = 80_000.0  # metres
 
 # In +z-down convention positive bottom means depth below the surface.
 # Subsequent refinements must have *smaller* resolution (finer) so the
 # integer ratio top_resolution / refinement_resolution is >= 1.
 REFINEMENTS = {
     "near_surface": MeshRefinement(resolution=800.0, bottom=2_000.0),
-    "mid_crust":    MeshRefinement(resolution=400.0, bottom=20_000.0),
-    "lower_crust":  MeshRefinement(resolution=200.0, bottom=60_000.0),
+    "mid_crust": MeshRefinement(resolution=400.0, bottom=20_000.0),
+    "lower_crust": MeshRefinement(resolution=200.0, bottom=60_000.0),
 }
 
 CHUNK_SIZE = 64  # voxels per chunk along i/j; k is always a single chunk
@@ -112,8 +112,9 @@ def run_benchmark() -> None:
         # Values represent typical New Zealand lower-crustal material:
         # rho ≈ 2700 kg m⁻³, Vp ≈ 6000 m s⁻¹, Vs ≈ 3500 m s⁻¹ (Brocher, 2005),
         # Qp/Qs ≈ 200/100 (anelastic attenuation), alpha = 1.0 (fully opaque).
-        pipeline = constant(rho=2700.0, vp=6000.0, vs=3500.0,
-                            qp=200.0, qs=100.0, alpha=1.0)
+        pipeline = constant(
+            rho=2700.0, vp=6000.0, vs=3500.0, qp=200.0, qs=100.0, alpha=1.0
+        )
 
         # 4. Lazy graph construction + materialise all quality arrays ----------
         #

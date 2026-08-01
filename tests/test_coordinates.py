@@ -104,4 +104,3 @@ def test_reflect_x_3d_negates_x_diagonal() -> None:
     assert float(R[0, 0]) == -1.0
     assert float(R[1, 1]) == 1.0
     assert float(R[2, 2]) == 1.0
-

@@ -50,12 +50,15 @@ def test_build_pipeline_single_config_produces_callable() -> None:
 # Layer ordering: first config is outermost
 # ---------------------------------------------------------------------------
 
+
 def test_clamp_chain_outer_before_inner() -> None:
     """The outermost ClampLayer runs *before* the inner ConstantLayer."""
     terminal = ConstantLayer(vs=3000.0)
     counter = CountingLayer(GEOM, terminal)
     # Min-vs clamp of 4000 will push vs up from 3000 to 4000
-    clamp = ClampLayer(ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), GEOM, counter)
+    clamp = ClampLayer(
+        ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), GEOM, counter
+    )
 
     grid = make_grid()
     result = clamp(grid)

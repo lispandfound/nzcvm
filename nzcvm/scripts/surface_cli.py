@@ -1,4 +1,5 @@
 """Convert an HDF5 topography file to a VTK UnstructuredGrid (VTKHDF compatible)."""
+
 from pathlib import Path
 from typing import Annotated
 
@@ -54,15 +55,12 @@ def convert(
     x, y, scalars = read_surface_file(surface, scalar_key, flip)
     ni, nj = x.shape
     surface_mesh = StructuredMeshSchema.new(
-        x=x,
-        y=y,
-        z=scalars,
-        i=np.arange(ni),
-        j=np.arange(nj),
-        name=surface.stem
+        x=x, y=y, z=scalars, i=np.arange(ni), j=np.arange(nj), name=surface.stem
     )
-    surface_mesh.to_zarr(output, encoding=DEFAULT_STRUCTURED_ENCODING_SETTINGS, mode='w')
-    
+    surface_mesh.to_zarr(
+        output, encoding=DEFAULT_STRUCTURED_ENCODING_SETTINGS, mode="w"
+    )
+
 
 if __name__ == "__main__":
     app()

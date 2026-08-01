@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 import typing
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Literal
+from typing import TYPE_CHECKING, Literal
 
 import xarray as xr
 from shapely import Geometry

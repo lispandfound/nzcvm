@@ -53,8 +53,6 @@ class Quality(DataClassDictMixin):
         )
 
 
-
-
 class Qualities(xr.Dataset):
     """Typed :class:`xarray.Dataset` subclass holding seismic material properties.
 

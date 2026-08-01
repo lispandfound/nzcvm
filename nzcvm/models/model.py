@@ -107,7 +107,7 @@ class ModelContribution(DataClassDictMixin):
 
     def __str__(self) -> str:
         """Return ``priority=<n>, quality=<Quality>``."""
-        return f"priority={self.priority}, quality={str(self.quality)}"
+        return f"priority={self.priority}, quality={self.quality!s}"
 
 
 @dataclass

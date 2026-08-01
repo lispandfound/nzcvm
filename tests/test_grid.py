@@ -34,8 +34,12 @@ _SURFACE_EXTENT = 2_000_000.0  # 2000 km side, clearly encompasses test grids
 def _write_flat_surface(path: Path) -> None:
     """Write a flat z=0 StructuredMesh zarr surface to *path*."""
     n = 8  # 8×8 grid of points — enough for interpolation
-    xs = np.linspace(_SURFACE_XMIN, _SURFACE_XMIN + _SURFACE_EXTENT, n, dtype=np.float32)
-    ys = np.linspace(_SURFACE_YMIN, _SURFACE_YMIN + _SURFACE_EXTENT, n, dtype=np.float32)
+    xs = np.linspace(
+        _SURFACE_XMIN, _SURFACE_XMIN + _SURFACE_EXTENT, n, dtype=np.float32
+    )
+    ys = np.linspace(
+        _SURFACE_YMIN, _SURFACE_YMIN + _SURFACE_EXTENT, n, dtype=np.float32
+    )
     xx, yy = np.meshgrid(xs, ys, indexing="ij")
     zz = np.zeros_like(xx)
     mesh = StructuredMeshSchema.new(
@@ -310,6 +314,7 @@ class TestSW4RefinementSeams:
         depths = grid.z.isel(i=0, j=0).compute().values.astype(np.float64)
         diffs = np.abs(np.diff(depths))
         assert list(diffs) == pytest.approx([res] * len(diffs), rel=1e-3)
+
 
 class TestSW4Rotation:
     def test_nonzero_azimuth_rotates_axes(self, flat_surface: Path) -> None:

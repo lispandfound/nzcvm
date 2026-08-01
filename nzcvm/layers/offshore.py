@@ -67,7 +67,7 @@ def _extract_qualities(layers: list[VelocityModel1D]) -> np.ndarray:
 def _build_model_interpolator(
     model: list[VelocityModel1D], absolute_bottom: float
 ) -> tuple[np.ndarray, np.ndarray]:
-    layers = list(sorted(model, key=lambda model: model.bottom_depth))
+    layers = sorted(model, key=lambda model: model.bottom_depth)
     # Trim excess layers from velocity model
     end_idx = max(
         i for i in range(len(layers)) if layers[i].bottom_depth < absolute_bottom

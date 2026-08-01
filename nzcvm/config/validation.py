@@ -1,7 +1,8 @@
 import os
 import re
+from collections.abc import Callable, Collection
 from pathlib import Path
-from typing import Annotated, Any, Callable, Collection
+from typing import Annotated, Any
 
 import pyproj
 from mashumaro.types import SerializationStrategy

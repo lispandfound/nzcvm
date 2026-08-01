@@ -156,7 +156,7 @@ def read_surface_file(
     return x, y, elevation
 
 
-class LinearNDInterpolatorExt(object):
+class LinearNDInterpolatorExt:
     """Linear interpolator with nearest-neighbour fallback outside the hull.
 
     NaN input values are dropped before the interpolators are built so that an

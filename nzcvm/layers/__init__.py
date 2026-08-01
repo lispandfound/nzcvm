@@ -21,4 +21,4 @@ Available layers
 
 from nzcvm.layers import backus, clamp, coastline, ely, offshore, query
 
-__all__ = ["ely", "clamp", "offshore", "query", "coastline", "backus"]
+__all__ = ["backus", "clamp", "coastline", "ely", "offshore", "query"]

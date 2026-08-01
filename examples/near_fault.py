@@ -5,6 +5,7 @@
 
 import numpy as np
 import xarray as xr
+
 from nzcvm.grids import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.layers.functional import functional_layer
@@ -16,20 +17,22 @@ from nzcvm.scripts import nzcvm
 # any complex geometry.
 @functional_layer
 def fault_zone(
-        grid: Grid,
-        model_range: ModelRange,
-        *,
-        next_layer: Layer,
-        fault_x: float,
-        fault_y: float,
-        fault_z: float
+    grid: Grid,
+    model_range: ModelRange,
+    *,
+    next_layer: Layer,
+    fault_x: float,
+    fault_y: float,
+    fault_z: float,
 ):
-    dist = np.sqrt((grid.x - fault_x) ** 2 + (grid.y - fault_y) ** 2 + (grid.z - fault_z) ** 2)
+    dist = np.sqrt(
+        (grid.x - fault_x) ** 2 + (grid.y - fault_y) ** 2 + (grid.z - fault_z) ** 2
+    )
     qualities = next_layer(grid, model_range)
     # Artificially lower Vs values in 10km radius (numbers chosen for effect).
-    qualities['vs'] = xr.where(dist < 10000.0, 0.8 * qualities.vs, qualities.vs)
+    qualities["vs"] = xr.where(dist < 10000.0, 0.8 * qualities.vs, qualities.vs)
     return qualities
-     
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     nzcvm.app()

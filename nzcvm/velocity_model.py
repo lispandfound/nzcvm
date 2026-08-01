@@ -1,6 +1,7 @@
 import dataclasses
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Self
+from typing import Self
 
 import shapely
 import xarray as xr

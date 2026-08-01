@@ -90,15 +90,22 @@ class SW4GridConfig(GridConfig):
 
     type: Literal["sw4"] = "sw4"
 
-
     def __post_init__(self):
-        refinements = sorted(self.refinements.values(), key=lambda refinement: refinement.resolution)
+        refinements = sorted(
+            self.refinements.values(), key=lambda refinement: refinement.resolution
+        )
         for cur_refinement, next_refinement in itertools.pairwise(refinements):
             ratio = next_refinement.resolution / cur_refinement.resolution
             if not np.isclose(ratio, 2.0):
-                raise ValueError('Refinements must follow 2:1 ratio in resolution.')
+                raise ValueError("Refinements must follow 2:1 ratio in resolution.")
 
         coarsest_grid_resolution = refinements[-1].resolution
         # Adjust extent x and y so it is divisible by the coarsest mesh refinement.
-        self.extent_x = np.round(self.extent_x / coarsest_grid_resolution) * coarsest_grid_resolution
-        self.extent_y = np.round(self.extent_y / coarsest_grid_resolution) * coarsest_grid_resolution
+        self.extent_x = (
+            np.round(self.extent_x / coarsest_grid_resolution)
+            * coarsest_grid_resolution
+        )
+        self.extent_y = (
+            np.round(self.extent_y / coarsest_grid_resolution)
+            * coarsest_grid_resolution
+        )

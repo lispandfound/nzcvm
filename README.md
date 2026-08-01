@@ -258,6 +258,7 @@ from nzcvm.grids import Grid
 from nzcvm.layers.core import Layer
 from nzcvm.query import ModelRange
 
+
 @functional_layer
 def scale_vs(
     grid: Grid,
@@ -377,9 +378,7 @@ def borehole_grid(
     """
     z = np.arange(z_top, z_bottom, -dz, dtype=np.float32)
     return GridSchema.new(
-        x=('k', np.full_like(z, x)),
-        y=('k', np.full_like(z, y)),
-        z=('k', z)
+        x=("k", np.full_like(z, x)), y=("k", np.full_like(z, y)), z=("k", z)
     )
 ```
 
@@ -398,13 +397,14 @@ from nzcvm.config.grids import GridConfig
 from nzcvm.grids.grid import Grid, GridSchema
 from nzcvm.grids import build_grid_from_config
 
+
 class BoreholeConfig(GridConfig):
     x: float
     y: float
     z_top: float
     z_bottom: float
     dz: float
-    type: Literal['borehole'] = 'borehole'
+    type: Literal["borehole"] = "borehole"
 
 
 @build_grid_from_config.register
@@ -424,9 +424,7 @@ def borehole_grid(config: BoreholeConfig) -> Grid:
     """
     z = np.arange(config.z_top, config.z_bottom, -config.dz, dtype=np.float32)
     return GridSchema.new(
-        x=('k', np.full_like(z, x)),
-        y=('k', np.full_like(z, y)),
-        z=('k', z)
+        x=("k", np.full_like(z, x)), y=("k", np.full_like(z, y)), z=("k", z)
     )
 ```
 

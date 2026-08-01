@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import shapely
+
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.grids.grid import Grid, GridSchema
 

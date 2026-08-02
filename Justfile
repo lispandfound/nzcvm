@@ -189,6 +189,8 @@ pytest:
 
 cargo:
     cargo test
+    cargo test --features high_precision
+    cargo test --doc
 
 test: pytest cargo
 

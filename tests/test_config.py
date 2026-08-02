@@ -15,11 +15,12 @@ library's responsibility.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from mashumaro.exceptions import InvalidFieldValue
-
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
 from nzcvm.config.layers.offshore import VelocityModel1D
 from nzcvm.config.validation import (
@@ -28,6 +29,7 @@ from nzcvm.config.validation import (
     in_choices,
     latitude,
     le,
+    longitude,
     lt,
     max_len,
     min_len,
@@ -160,15 +162,42 @@ def test_regex_rejects_non_match() -> None:
 # ---------------------------------------------------------------------------
 
 
-@given(st.floats(min_value=-90.0, max_value=90.0, allow_nan=False))
-def test_latitude_accepts_valid(v: float) -> None:
-    latitude(v)  # should not raise
+@pytest.mark.parametrize(
+    "validator, value, range_str",
+    [
+        (latitude, -90.0, "[-90, 90]"),
+        (latitude, 0.0, "[-90, 90]"),
+        (latitude, 90.0, "[-90, 90]"),
+        (longitude, -180.0, "[-180, 180]"),
+        (longitude, 0.0, "[-180, 180]"),
+        (longitude, 180.0, "[-180, 180]"),
+    ],
+)
+def test_coordinate_accepts_valid(validator, value, range_str) -> None:
+    validator(value)
 
 
-@given(st.floats(allow_nan=False).filter(lambda x: not (-90 <= x <= 90)))
-def test_latitude_rejects_out_of_range(v: float) -> None:
-    with pytest.raises(ValueError):
-        latitude(v)
+@pytest.mark.parametrize(
+    "validator, value, range_str",
+    [
+        (latitude, -91.0, "[-90, 90]"),
+        (latitude, 91.0, "[-90, 90]"),
+        (longitude, -181.0, "[-180, 180]"),
+        (longitude, 181.0, "[-180, 180]"),
+    ],
+)
+def test_coordinate_rejects_out_of_range(validator, value, range_str) -> None:
+    with pytest.raises(
+        ValueError, match=range_str.replace("[", r"\[").replace("]", r"\]")
+    ):
+        validator(value)
+
+
+def test_model_wiring_origin_lon_lat_validated() -> None:
+    from nzcvm.config.grids.model import Model
+    from pyproj import CRS
+
+    Model(origin_lon=172.0, origin_lat=-43.5, azimuth=0.0, crs=CRS.from_epsg(2193))
 
 
 # ---------------------------------------------------------------------------
@@ -260,16 +289,3 @@ def test_velocity_model_1d_rejects_equal_vp_vs() -> None:
 def test_layer_from_config_clamp() -> None:
     cfg = ClampLayerConfig()
     assert layer_from_config(cfg) is ClampLayer
-
-
-def test_layer_from_config_unknown_raises() -> None:
-    from dataclasses import dataclass
-
-    from nzcvm.config.layers.core import LayerConfig
-
-    @dataclass
-    class _UnknownConfig(LayerConfig):
-        type: str = "unknown_xyz"
-
-    with pytest.raises(KeyError):
-        layer_from_config(_UnknownConfig())

@@ -174,3 +174,170 @@ impl BHShape<Real, 3> for BuildSimplex {
         self.node_index
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Six times the signed volume of `[c0, c1, c2, c3]`.
+    ///
+    /// This is exactly the determinant `Simplex::new` inverts, so it is the
+    /// natural conditioning measure for the tests below.
+    fn vol6(c0: Point3<Real>, c1: Point3<Real>, c2: Point3<Real>, c3: Point3<Real>) -> Real {
+        Matrix3::from_columns(&[c0 - c3, c1 - c3, c2 - c3])
+            .determinant()
+            .abs()
+    }
+
+    fn coord() -> impl Strategy<Value = Real> {
+        (-50.0 as Real)..(50.0 as Real)
+    }
+
+    fn vertex() -> impl Strategy<Value = Point3<Real>> {
+        (coord(), coord(), coord()).prop_map(|(x, y, z)| Point3::new(x, y, z))
+    }
+
+    /// Four non-negative weights summing to 1 — i.e. a point in the closed
+    /// simplex, expressed in the coordinates the test expects to recover.
+    fn weights() -> impl Strategy<Value = [Real; 4]> {
+        [(0.0 as Real)..1.0, 0.0..1.0, 0.0..1.0, 0.0..1.0]
+            .prop_filter("degenerate all-zero weights", |w| {
+                w[0] + w[1] + w[2] + w[3] > 1e-2
+            })
+            .prop_map(|w| {
+                let s = w[0] + w[1] + w[2] + w[3];
+                [w[0] / s, w[1] / s, w[2] / s, w[3] / s]
+            })
+    }
+
+    proptest! {
+        /// Barycentric coordinates *invert* the convex combination that built
+        /// the point.
+        ///
+        /// This is the property that actually exercises the matrix inversion in
+        /// [`Simplex::new`]: every hand-written test in this crate uses the
+        /// axis-aligned unit tetrahedron, whose `inv_matrix` is the identity, so
+        /// a transposed, mis-anchored or otherwise wrong inverse passes them all.
+        /// Recovering arbitrary weights from an arbitrarily-shaped tetrahedron
+        /// does not.
+        #[test]
+        fn prop_barycentric_inverts_convex_combination(
+            c0 in vertex(), c1 in vertex(), c2 in vertex(), c3 in vertex(),
+            w in weights(),
+        ) {
+            // Keep `try_inverse` well-conditioned; near-coplanar vertices make
+            // the recovered weights arbitrarily sensitive to f32 rounding.
+            prop_assume!(vol6(c0, c1, c2, c3) > 1_000.0);
+            let simplex = Simplex::new(c0, c1, c2, c3).unwrap();
+
+            let p = Point3::from(
+                c0.coords * w[0] + c1.coords * w[1] + c2.coords * w[2] + c3.coords * w[3],
+            );
+            let bary = simplex.barycentric_coordinates(p);
+
+            // 1e-2 is loose relative to f32 epsilon but two orders of magnitude
+            // tighter than anything a structurally wrong inverse could satisfy:
+            // the weights span the whole of [0, 1].
+            prop_assert!((bary.x - w[0]).abs() < 1e-2, "l0 {} != {}", bary.x, w[0]);
+            prop_assert!((bary.y - w[1]).abs() < 1e-2, "l1 {} != {}", bary.y, w[1]);
+            prop_assert!((bary.z - w[2]).abs() < 1e-2, "l2 {} != {}", bary.z, w[2]);
+            prop_assert!((bary.w - w[3]).abs() < 1e-2, "l3 {} != {}", bary.w, w[3]);
+        }
+
+        /// A point built from non-negative weights lies in the simplex, and the
+        /// four vertices map to the four unit basis vectors.
+        #[test]
+        fn prop_convex_combinations_are_contained(
+            c0 in vertex(), c1 in vertex(), c2 in vertex(), c3 in vertex(),
+            w in weights(),
+        ) {
+            prop_assume!(vol6(c0, c1, c2, c3) > 1_000.0);
+            let simplex = Simplex::new(c0, c1, c2, c3).unwrap();
+
+            let p = Point3::from(
+                c0.coords * w[0] + c1.coords * w[1] + c2.coords * w[2] + c3.coords * w[3],
+            );
+            prop_assert!(simplex.contains(&p));
+
+            for (i, v) in [c0, c1, c2, c3].iter().enumerate() {
+                let b = simplex.barycentric_coordinates(*v);
+                let got = [b.x, b.y, b.z, b.w];
+                for (j, g) in got.iter().enumerate() {
+                    let want = if i == j { 1.0 } else { 0.0 };
+                    prop_assert!((g - want).abs() < 1e-2, "vertex {i} coord {j}: {g} != {want}");
+                }
+            }
+        }
+
+        /// `contains` must agree with the sign of the coordinates reported by
+        /// `barycentric_coordinates`, up to `CONTAINMENT_EPS`.
+        ///
+        /// The two share no code — `contains` re-implements the matrix multiply
+        /// and skips `l3` — so nothing else in the crate holds them together.
+        #[test]
+        fn prop_contains_agrees_with_barycentric_coordinates(
+            c0 in vertex(), c1 in vertex(), c2 in vertex(), c3 in vertex(),
+            p in vertex(),
+        ) {
+            prop_assume!(vol6(c0, c1, c2, c3) > 1_000.0);
+            let simplex = Simplex::new(c0, c1, c2, c3).unwrap();
+            let b = simplex.barycentric_coordinates(p);
+
+            let strictly_inside = b.x > CONTAINMENT_EPS
+                && b.y > CONTAINMENT_EPS
+                && b.z > CONTAINMENT_EPS
+                && b.w > CONTAINMENT_EPS;
+            let strictly_outside = b.x < -CONTAINMENT_EPS
+                || b.y < -CONTAINMENT_EPS
+                || b.z < -CONTAINMENT_EPS
+                || b.w < -CONTAINMENT_EPS;
+
+            // Points within CONTAINMENT_EPS of a face are deliberately ambiguous.
+            if strictly_inside {
+                prop_assert!(simplex.contains(&p));
+            } else if strictly_outside {
+                prop_assert!(!simplex.contains(&p));
+            }
+        }
+    }
+
+    /// Coplanar vertices have no inverse and must be rejected, not silently
+    /// accepted with a garbage matrix.
+    #[test]
+    fn test_new_rejects_coplanar_vertices() {
+        let s = Simplex::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Point3::new(1.0, 0.0, 0.0),
+            Point3::new(0.0, 1.0, 0.0),
+            Point3::new(1.0, 1.0, 0.0),
+        );
+        assert!(s.is_none(), "coplanar vertices must not build a simplex");
+    }
+
+    /// A non-axis-aligned tetrahedron: the inverse matrix is genuinely
+    /// non-trivial here, unlike the unit tetrahedron used elsewhere.
+    #[test]
+    fn test_barycentric_on_skewed_tetrahedron() {
+        let s = Simplex::new(
+            Point3::new(1.0, 1.0, 1.0),
+            Point3::new(5.0, 2.0, 1.0),
+            Point3::new(2.0, 6.0, 2.0),
+            Point3::new(1.0, 2.0, 7.0),
+        )
+        .unwrap();
+
+        // Deliberately distinct weights: an index permutation changes the answer.
+        let w = [0.5 as Real, 0.2, 0.2, 0.1];
+        let p = Point3::new(
+            1.0 * w[0] + 5.0 * w[1] + 2.0 * w[2] + 1.0 * w[3],
+            1.0 * w[0] + 2.0 * w[1] + 6.0 * w[2] + 2.0 * w[3],
+            1.0 * w[0] + 1.0 * w[1] + 2.0 * w[2] + 7.0 * w[3],
+        );
+        let b = s.barycentric_coordinates(p);
+        assert!((b.x - w[0]).abs() < 1e-5, "l0 = {}", b.x);
+        assert!((b.y - w[1]).abs() < 1e-5, "l1 = {}", b.y);
+        assert!((b.z - w[2]).abs() < 1e-5, "l2 = {}", b.z);
+        assert!((b.w - w[3]).abs() < 1e-5, "l3 = {}", b.w);
+    }
+}

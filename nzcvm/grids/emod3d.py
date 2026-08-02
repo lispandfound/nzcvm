@@ -49,9 +49,8 @@ def _topography_type_interpolator(
 
 def _depth_array(nk: int, resolution: float) -> xr.DataArray:
     k = np.arange(nk)
-    offset = np.float32(1 / (2 * resolution))
     k_da = xr.DataArray(
-        offset + np.float32(k) * np.float32(resolution),
+        np.float32(k) * np.float32(resolution),
         dims=[Coordinate.K],
         coords={Coordinate.K: k},
     )
@@ -62,7 +61,7 @@ def _depth_array(nk: int, resolution: float) -> xr.DataArray:
 @build_grids_from_config.register
 def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     resolution = config.resolution
-    offset = 1 / (2 * resolution)
+    offset = resolution / 2
 
     ox, oy = helpers.raw_coordinates(
         config.nx,

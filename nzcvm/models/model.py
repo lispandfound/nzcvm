@@ -35,7 +35,7 @@ from nzcvm.nzcvm import (  # ty: ignore[unresolved-import]
     QueryCoordinates,
     QueryParams,
 )
-from nzcvm.qualities import Quality
+from nzcvm.qualities import Qualities, QualitiesSchema, Quality
 from nzcvm.query import ModelRange
 
 MB = 1 / (1024 * 1024)
@@ -472,7 +472,7 @@ class ModelTree:
                 "or combined quality alpha ~ 1.0"
             )
 
-    def query_many_raw(
+    def _query_many_raw(
         self,
         x: Any,
         y: Any,
@@ -535,20 +535,18 @@ class ModelTree:
             where_np = np.broadcast_to(np.asarray(where, dtype=bool), orig_shape)
             where_flat = np.ascontiguousarray(where_np.ravel())
 
-        logger.debug("Querying for chunk qualities for range: %s.", model_range)
         coords = QueryCoordinates(x.ravel(), y.ravel(), z.ravel(), where_flat)
         self.inner.query_many(out_flat, coords, params)
-        logger.debug("Query complete")
         return out_flat.reshape(orig_shape + (6,))
 
     def query_many(
         self,
-        x: Any,
-        y: Any,
-        z: Any,
+        x: xr.DataArray,
+        y: xr.DataArray,
+        z: xr.DataArray,
         *,
         model_range: ModelRange = ModelRange.ALL,
-    ) -> xr.Dataset:
+    ) -> Qualities:
         """Vectorised query returning a labelled :class:`xarray.Dataset`.
 
         Parameters
@@ -561,29 +559,25 @@ class ModelTree:
 
         Returns
         -------
-        xarray.Dataset
-            Dataset with a ``qualities`` variable of shape
-            ``(*x.shape, n_components)`` and a ``component`` coordinate
-            (``["rho", "vp", "vs", "qp", "qs", "alpha"]``), plus spatial
-            coordinates ``x``, ``y``, ``z``.
+        Qualities
+            Qualities dataset.
 
         See Also
         --------
         ModelTree.query_many_raw : Same query as an unlabelled float32 array.
         """
-        x, y, z = np.broadcast_arrays(x, y, z)
-        raw = self.query_many_raw(x, y, z, model_range=model_range)
-        dims = tuple(f"d{i}" for i in range(x.ndim))
-        component_names = list(Component)
-        return xr.Dataset(
-            data_vars={"qualities": (dims + ("component",), raw)},
-            coords={
-                "x": (dims, x),
-                "y": (dims, y),
-                "z": (dims, z),
-                "component": component_names,
-            },
+        x, y, z = xr.broadcast(x, y, z)
+        darr = xr.apply_ufunc(
+            self._query_many_raw,
+            x,
+            y,
+            z,
+            input_core_dims=[[], [], []],
+            output_core_dims=[["component"]],
+            kwargs={"model_range": model_range},
         )
+        dset = darr.assign_coords(component=list(Component)).to_dataset(dim="component")
+        return QualitiesSchema.from_dataset(dset)
 
     def view(self) -> Tree:
         """Return a :class:`rich.tree.Tree` representation of the model tree."""

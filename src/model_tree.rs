@@ -264,11 +264,62 @@ mod tests {
             99.0,
             epsilon = 1e-4
         );
-        // Exact boundary: priority 50 is outside 128-255
-        assert!(tree
-            .query(PT, None, 128, 255)
-            .map(|q| q.rho == 99.0)
-            .unwrap_or(false));
+    }
+
+    /// The `(lo, hi)` priority window is inclusive at both ends.
+    ///
+    /// A half-open window would exclude the `hi == priority` model, and an
+    /// exclusive lower bound would exclude the `lo == priority` one.
+    #[test]
+    fn test_query_priority_bounds_are_inclusive() {
+        let tree = ModelTree::new(vec![cube_mesh(10, 5.0, 1.0)]);
+
+        // Degenerate window on the model's own priority.
+        assert_relative_eq!(
+            tree.query(PT, None, 10, 10).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
+        // lo == priority
+        assert_relative_eq!(
+            tree.query(PT, None, 10, 20).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
+        // hi == priority
+        assert_relative_eq!(tree.query(PT, None, 0, 10).unwrap().rho, 5.0, epsilon = 1e-4);
+
+        // Just outside on either side must miss entirely.
+        assert!(tree.query(PT, None, 11, 20).is_none());
+        assert!(tree.query(PT, None, 0, 9).is_none());
+    }
+
+    /// Adjacent priorities must be discriminated.
+    ///
+    /// This is what exercises `PRIORITY_AABB_EXTENT = 0.5` (`mesh.rs`): the
+    /// half-unit padding on the priority dimension of the 4D AABB has to sit
+    /// strictly between two consecutive integers, or a query for priority 10
+    /// would also sweep in the priority-11 model.
+    #[test]
+    fn test_adjacent_priorities_are_discriminated() {
+        let tree = ModelTree::new(vec![cube_mesh(10, 5.0, 1.0), cube_mesh(11, 99.0, 1.0)]);
+
+        assert_relative_eq!(
+            tree.query(PT, None, 10, 10).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
+        assert_relative_eq!(
+            tree.query(PT, None, 11, 11).unwrap().rho,
+            99.0,
+            epsilon = 1e-4
+        );
+        // Spanning both, the lower priority number wins.
+        assert_relative_eq!(
+            tree.query(PT, None, 10, 11).unwrap().rho,
+            5.0,
+            epsilon = 1e-4
+        );
     }
 
     #[test]

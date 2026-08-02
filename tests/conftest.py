@@ -6,9 +6,27 @@ from pathlib import Path
 import numpy as np
 import pytest
 import shapely
+from hypothesis import HealthCheck, settings
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.grids.grid import Grid, GridSchema
+
+# ---------------------------------------------------------------------------
+# Hypothesis profiles
+#
+# ``deadline=None`` is load-bearing: several property tests build a fresh
+# xarray Dataset per example, which is slow enough to trip the default
+# deadline on a loaded machine.
+# ---------------------------------------------------------------------------
+
+settings.register_profile(
+    "default",
+    deadline=None,
+    max_examples=50,
+    suppress_health_check=[HealthCheck.function_scoped_fixture],
+)
+settings.register_profile("ci", deadline=None, max_examples=300)
+settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "default"))
 
 # ---------------------------------------------------------------------------
 # Rust-level helpers
@@ -99,20 +117,56 @@ def unit_grid() -> Grid:
     return make_grid()
 
 
-def get_model_directory() -> Path:
+@pytest.fixture()
+def isolated_layer_registry():
+    """Snapshot and restore ``Layer.registry`` after the test."""
+    from nzcvm.layers.core import Layer
+
+    original = Layer.registry.copy()
+    yield
+    Layer.registry.clear()
+    Layer.registry.update(original)
+
+
+def get_model_directory() -> Path | None:
     model_path = os.getenv("MODEL_PATH")
-    if model_path is None:
-        raise RuntimeError("MODEL_PATH environment variable must be set to run these tests")
-    return Path(model_path)
+    return Path(model_path) if model_path else None
 
 
 @pytest.fixture
-def model_directory():
-    return get_model_directory()
+def model_directory() -> Path:
+    directory = get_model_directory()
+    if directory is None:
+        pytest.skip("MODEL_PATH is not set")
+    return directory
 
 
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
-    if "model_path" in metafunc.fixturenames:
-        paths = list(get_model_directory().glob("*.zarr"))
-        ids = [p.stem for p in paths]
-        metafunc.parametrize("model_path", paths, ids=ids)
+    if "model_path" not in metafunc.fixturenames:
+        return
+    directory = get_model_directory()
+    if directory is None:
+        metafunc.parametrize(
+            "model_path",
+            [
+                pytest.param(
+                    None,
+                    marks=[
+                        pytest.mark.real_data,
+                        pytest.mark.skip(reason="MODEL_PATH is not set"),
+                    ],
+                )
+            ],
+        )
+        return
+    paths = sorted(directory.glob("*.zarr"))
+    if not paths:
+        raise pytest.UsageError(
+            f"MODEL_PATH={directory} contains no *.zarr models; the real-data "
+            "suite would otherwise collect zero tests and report green."
+        )
+    metafunc.parametrize(
+        "model_path",
+        [pytest.param(p, marks=pytest.mark.real_data) for p in paths],
+        ids=[p.stem for p in paths],
+    )

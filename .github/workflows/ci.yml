@@ -35,6 +35,9 @@ jobs:
       - name: cargo test
         run: cargo test
 
+      - name: cargo test (high_precision)
+        run: cargo test --features high_precision
+
       - name: cargo doc-tests
         run: cargo test --doc
 

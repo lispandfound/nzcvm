@@ -4,6 +4,7 @@ use criterion::{
 use nalgebra::Point3;
 use nzcvm::mesh::MeshModel;
 use nzcvm::quality::Quality;
+use nzcvm::real::Real;
 use pprof::criterion::{Output, PProfProfiler};
 use std::hint::black_box;
 
@@ -31,7 +32,7 @@ fn bench_mesh_queries(c: &mut Criterion) {
                 let i = idx / (n * n);
                 let j = (idx / n) % n;
                 let k = idx % n;
-                Point3::new(i as f32, j as f32, k as f32)
+                Point3::new(i as Real, j as Real, k as Real)
             })
             .collect();
 
@@ -43,24 +44,35 @@ fn bench_mesh_queries(c: &mut Criterion) {
         )
         .unwrap_or_else(|_| panic!("mesh construction failed"));
 
-        // Multiple query points to isolate spatial bias
+        // Each query point gets its own benchmark case.  Summing them inside a
+        // single `b.iter` averaged the three together, which is the opposite of
+        // isolating spatial bias: a regression affecting only deep-BVH lookups
+        // would be diluted by two thirds.
         let queries = [
-            Point3::new(0.1, 0.1, 0.1),
-            Point3::new(n as f32 / 2.0, n as f32 / 2.0, n as f32 / 2.0),
-            Point3::new(n as f32 - 1.1, n as f32 - 1.1, n as f32 - 1.1),
+            ("near_origin", Point3::new(0.1, 0.1, 0.1)),
+            (
+                "centre",
+                Point3::new(n as Real / 2.0, n as Real / 2.0, n as Real / 2.0),
+            ),
+            (
+                "far_corner",
+                Point3::new(n as Real - 1.1, n as Real - 1.1, n as Real - 1.1),
+            ),
         ];
 
-        group.bench_with_input(
-            BenchmarkId::from_parameter(total_vertices),
-            &mesh,
-            |b, m: &MeshModel| {
-                b.iter(|| {
-                    for q in queries.iter() {
-                        m.query(black_box(*q));
-                    }
-                })
-            },
-        );
+        for (name, query) in queries {
+            group.bench_with_input(
+                BenchmarkId::new(name, total_vertices),
+                &mesh,
+                |b, m: &MeshModel| {
+                    // The result must be black-boxed, not just the input:
+                    // discarding it lets LLVM elide the whole lookup, so the
+                    // benchmark would happily "pass" if `query` returned `None`
+                    // unconditionally.
+                    b.iter(|| black_box(m.query(black_box(query))))
+                },
+            );
+        }
     }
     group.finish();
 }

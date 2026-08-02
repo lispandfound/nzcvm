@@ -66,15 +66,10 @@ class QueryLayer(Layer[QueryLayerConfig], config_cls=QueryLayerConfig):
         model_range :
             Priority range used for the query.
         """
+
         logger.debug("Beginning query layer query with model_range=%s", model_range)
-        darr = xr.apply_ufunc(
-            self.model.query_many_raw,
-            grid.x,
-            grid.y,
-            grid.z,
-            input_core_dims=[[], [], []],
-            output_core_dims=[["component"]],
-            kwargs={"model_range": model_range},
+        qualities = self.model.query_many(
+            grid.x, grid.y, grid.z, model_range=model_range
         )
-        dset = darr.assign_coords(component=list(Component)).to_dataset(dim="component")
-        return QualitiesSchema.from_dataset(dset)
+        logger.debug("Query complete")
+        return qualities

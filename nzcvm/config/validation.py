@@ -155,7 +155,7 @@ def latitude(value: float) -> None:
 def longitude(value: float) -> None:
     if value is not None and not (-180 <= value <= 180):
         raise ValueError(
-            f"Longitude values must be in the range [-90, 90], found {value}."
+            f"Longitude values must be in the range [-180, 180], found {value}."
         )
 
 

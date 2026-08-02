@@ -65,3 +65,5 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = ["real_data: requires a real model directory supplied via MODEL_PATH"]

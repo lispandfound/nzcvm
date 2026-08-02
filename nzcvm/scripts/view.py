@@ -74,7 +74,9 @@ app = typer.Typer(
 # ---------------------------------------------------------------------------
 
 
-def add_logical_axes(pl: pv.Plotter, grid: xr.Dataset, bounds: tuple[float, ...]) -> None:
+def add_logical_axes(
+    pl: pv.Plotter, grid: xr.Dataset, bounds: tuple[float, ...]
+) -> None:
     """Draws i, j, k logical direction vectors starting from the logical origin."""
     pv = _require_pyvista()
     w, e, s, n, z_min, z_max = bounds

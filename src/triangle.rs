@@ -36,7 +36,13 @@ impl Triangle {
     ///
     /// Note: The BVH and containment logic use the XY projection.
     /// The Z-coordinates are preserved for interpolation.
-    pub fn new(c0: Point2<Real>, c1: Point2<Real>, c2: Point2<Real>, id: usize) -> Self {
+    ///
+    /// Returns `None` if the three vertices are collinear in the XY plane
+    /// (zero area), mirroring [`Simplex::new`](crate::simplex::Simplex::new).
+    /// Real surface meshes do contain occasional degenerate triangles; those
+    /// are skipped by [`SurfaceModel::new`](crate::surface::SurfaceModel::new)
+    /// rather than taking the process down.
+    pub fn new(c0: Point2<Real>, c1: Point2<Real>, c2: Point2<Real>, id: usize) -> Option<Self> {
         let pts = [c0, c1, c2];
 
         // 2D AABB construction (XY plane)
@@ -55,17 +61,15 @@ impl Triangle {
         let v1 = Vector2::new(c1.x - c2.x, c1.y - c2.y);
 
         let m = Matrix2::from_columns(&[v0, v1]);
-        let inv_matrix = m
-            .try_inverse()
-            .expect("Degenerate triangle (zero area in XY plane) encountered");
+        let inv_matrix = m.try_inverse()?;
 
-        Self {
+        Some(Self {
             c2,
             inv_matrix,
             aabb,
             id,
             node_index: 0,
-        }
+        })
     }
 
     /// Return the 3-element barycentric coordinates $(l_0, l_1, l_2)$ for point `p`.
@@ -116,5 +120,147 @@ impl BHShape<Real, 2> for Triangle {
     }
     fn bh_node_index(&self) -> usize {
         self.node_index
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    /// Twice the signed area of the XY triangle — the determinant `new` inverts.
+    fn area2(c0: Point2<Real>, c1: Point2<Real>, c2: Point2<Real>) -> Real {
+        ((c0.x - c2.x) * (c1.y - c2.y) - (c1.x - c2.x) * (c0.y - c2.y)).abs()
+    }
+
+    fn coord() -> impl Strategy<Value = Real> {
+        (-50.0 as Real)..(50.0 as Real)
+    }
+
+    fn vertex() -> impl Strategy<Value = Point2<Real>> {
+        (coord(), coord()).prop_map(|(x, y)| Point2::new(x, y))
+    }
+
+    /// Three non-negative weights summing to 1.
+    fn weights() -> impl Strategy<Value = [Real; 3]> {
+        [(0.0 as Real)..1.0, 0.0..1.0, 0.0..1.0]
+            .prop_filter("degenerate all-zero weights", |w| w[0] + w[1] + w[2] > 1e-2)
+            .prop_map(|w| {
+                let s = w[0] + w[1] + w[2];
+                [w[0] / s, w[1] / s, w[2] / s]
+            })
+    }
+
+    proptest! {
+        /// Barycentric coordinates invert the convex combination in 2D.
+        #[test]
+        fn prop_barycentric_round_trip(
+            c0 in vertex(), c1 in vertex(), c2 in vertex(), w in weights(),
+        ) {
+            // Keep the 2x2 inverse well-conditioned.
+            prop_assume!(area2(c0, c1, c2) > 100.0);
+            let tri = Triangle::new(c0, c1, c2, 0).unwrap();
+
+            let p = Point2::from(c0.coords * w[0] + c1.coords * w[1] + c2.coords * w[2]);
+            let b = tri.barycentric_coordinates(&p);
+
+            prop_assert!((b.x - w[0]).abs() < 1e-2, "l0 {} != {}", b.x, w[0]);
+            prop_assert!((b.y - w[1]).abs() < 1e-2, "l1 {} != {}", b.y, w[1]);
+            prop_assert!((b.z - w[2]).abs() < 1e-2, "l2 {} != {}", b.z, w[2]);
+        }
+
+        /// Any convex combination of the vertices is contained, and the AABB
+        /// encloses it.
+        #[test]
+        fn prop_convex_combinations_are_contained(
+            c0 in vertex(), c1 in vertex(), c2 in vertex(), w in weights(),
+        ) {
+            prop_assume!(area2(c0, c1, c2) > 100.0);
+            let tri = Triangle::new(c0, c1, c2, 0).unwrap();
+
+            let p = Point2::from(c0.coords * w[0] + c1.coords * w[1] + c2.coords * w[2]);
+            prop_assert!(tri.contains(&p).is_some());
+
+            let aabb = tri.aabb();
+            prop_assert!(p.x >= aabb.min.x && p.x <= aabb.max.x);
+            prop_assert!(p.y >= aabb.min.y && p.y <= aabb.max.y);
+        }
+
+        /// `contains` must agree with the sign of the reported coordinates.
+        ///
+        /// `contains` re-implements the matrix multiply by hand (indexing
+        /// `inv_matrix` directly), so nothing else ties the two together — a
+        /// transposed index pair there would go unnoticed.
+        #[test]
+        fn prop_contains_agrees_with_barycentric_coordinates(
+            c0 in vertex(), c1 in vertex(), c2 in vertex(), p in vertex(),
+        ) {
+            prop_assume!(area2(c0, c1, c2) > 100.0);
+            let tri = Triangle::new(c0, c1, c2, 0).unwrap();
+            let b = tri.barycentric_coordinates(&p);
+
+            if b.x > CONTAINMENT_EPS && b.y > CONTAINMENT_EPS && b.z > CONTAINMENT_EPS {
+                prop_assert!(tri.contains(&p).is_some());
+            } else if b.x < -CONTAINMENT_EPS || b.y < -CONTAINMENT_EPS || b.z < -CONTAINMENT_EPS {
+                prop_assert!(tri.contains(&p).is_none());
+            }
+        }
+    }
+
+    /// Collinear vertices have no inverse.  This used to panic (`.expect`),
+    /// which took the whole process down for one bad face in a real mesh.
+    #[test]
+    fn test_new_rejects_collinear_vertices() {
+        let t = Triangle::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 1.0),
+            Point2::new(2.0, 2.0),
+            0,
+        );
+        assert!(t.is_none(), "collinear vertices must not build a triangle");
+    }
+
+    #[test]
+    fn test_new_rejects_duplicate_vertices() {
+        let t = Triangle::new(
+            Point2::new(3.0, 4.0),
+            Point2::new(3.0, 4.0),
+            Point2::new(9.0, 1.0),
+            0,
+        );
+        assert!(t.is_none(), "repeated vertices must not build a triangle");
+    }
+
+    /// The vertices map to the unit basis vectors, in the documented order.
+    #[test]
+    fn test_vertices_map_to_basis_vectors() {
+        let c0 = Point2::new(1.0, 1.0);
+        let c1 = Point2::new(5.0, 2.0);
+        let c2 = Point2::new(2.0, 7.0);
+        let tri = Triangle::new(c0, c1, c2, 0).unwrap();
+
+        for (i, v) in [c0, c1, c2].iter().enumerate() {
+            let b = tri.barycentric_coordinates(v);
+            let got = [b.x, b.y, b.z];
+            for (j, g) in got.iter().enumerate() {
+                let want = if i == j { 1.0 } else { 0.0 };
+                assert!((g - want).abs() < 1e-5, "vertex {i} coord {j}: {g} != {want}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_contains_rejects_point_outside() {
+        let tri = Triangle::new(
+            Point2::new(0.0, 0.0),
+            Point2::new(1.0, 0.0),
+            Point2::new(0.0, 1.0),
+            7,
+        )
+        .unwrap();
+        assert!(tri.contains(&Point2::new(0.25, 0.25)).is_some());
+        assert!(tri.contains(&Point2::new(0.9, 0.9)).is_none());
+        assert!(tri.contains(&Point2::new(-0.5, 0.5)).is_none());
+        assert_eq!(tri.contains(&Point2::new(0.25, 0.25)).unwrap().id, 7);
     }
 }

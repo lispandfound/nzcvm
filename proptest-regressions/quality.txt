@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 400d6babf8b70f63db58ef47d4a9dab8be76ef1d4a2e5958101af069b73f98b6 # shrinks to a = Quality { rho: 1.0, vp: 1.0, vs: 1.0, qp: 1.0, qs: 1.0, alpha: 0.6922877 }, b = Quality { rho: 1.0, vp: 1.0, vs: 1.0, qp: 8708.973, qs: 1.0, alpha: 0.48277432 }

@@ -21,6 +21,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 from mashumaro.exceptions import InvalidFieldValue
+
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
 from nzcvm.config.layers.offshore import VelocityModel1D
 from nzcvm.config.validation import (
@@ -194,8 +195,9 @@ def test_coordinate_rejects_out_of_range(validator, value, range_str) -> None:
 
 
 def test_model_wiring_origin_lon_lat_validated() -> None:
-    from nzcvm.config.grids.model import Model
     from pyproj import CRS
+
+    from nzcvm.config.grids.model import Model
 
     Model(origin_lon=172.0, origin_lat=-43.5, azimuth=0.0, crs=CRS.from_epsg(2193))
 

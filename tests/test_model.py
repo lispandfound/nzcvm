@@ -17,6 +17,7 @@ import pytest
 import xarray as xr
 from hypothesis import given
 from hypothesis import strategies as st
+
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.models.model import MeshModel, ModelRange, ModelTree
 from tests.conftest import _mesh_model

@@ -10,11 +10,9 @@ import shapely
 import xarray as xr
 from shapely import Geometry
 
-from nzcvm.components import Component
 from nzcvm.config.layers.query import QueryLayerConfig
 from nzcvm.layers.core import Layer
 from nzcvm.models.model import ModelTree
-from nzcvm.qualities import QualitiesSchema
 from nzcvm.query import ModelRange
 
 if TYPE_CHECKING:

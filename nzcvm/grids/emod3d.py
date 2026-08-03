@@ -28,12 +28,10 @@ def squashed_interpolator(
 def squashed_tapered_interpolator(
     z_surface: xr.DataArray, depth: xr.DataArray
 ) -> tuple[xr.DataArray, xr.DataArray]:
-
-    squashed_tapered_z = z_surface + depth
-    residual_depth = depth > -z_surface
-
-    z = squashed_tapered_z + residual_depth * depth
-
+    elevation_asl = -z_surface
+    taper = 1.0 - depth / elevation_asl.where(elevation_asl > 0, np.inf)
+    taper = taper.clip(min=0)
+    z = depth - elevation_asl * taper
     return z, z - z_surface
 
 
@@ -61,13 +59,12 @@ def _depth_array(nk: int, resolution: float) -> xr.DataArray:
 @build_grids_from_config.register
 def build_emod3d(config: EMOD3DGrid) -> dict[str, Grid]:
     resolution = config.resolution
-    offset = resolution / 2
 
     ox, oy = helpers.raw_coordinates(
         config.nx,
         config.ny,
         config.resolution,
-        offset,
+        0.0,
         config.chunks,
     )
     min_x, min_y = dask.compute(ox.sel(i=0, j=0), oy.sel(i=0, j=0))

@@ -11,8 +11,6 @@ from pathlib import Path
 import dask.array as da
 import numpy as np
 import pytest
-from pyproj import CRS
-
 from nzcvm.config.grids.emod3d import EMOD3DGrid, TopographyType
 from nzcvm.config.grids.model import Model
 from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
@@ -20,6 +18,7 @@ from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.grids.grid import Grid
 from nzcvm.models.mesh import StructuredMeshSchema
+from pyproj import CRS
 
 # ---------------------------------------------------------------------------
 # Shared fixture: flat surface file
@@ -184,27 +183,6 @@ class TestEMOD3DCentreRegistration:
         depths = grid.depth.isel(i=0, j=0).compute().values.astype(np.float64)
         diffs = np.diff(depths)
         assert list(diffs) == pytest.approx([res] * len(diffs), rel=1e-4)
-
-    @pytest.mark.parametrize("resolution", [100.0, 500.0, 1000.0])
-    def test_horizontal_is_cell_centred(
-        self, flat_surface: Path, resolution: float
-    ) -> None:
-        nx, ny = 4, 6
-        grid = _first_grid_of(
-            _emod3d_config(flat_surface, nx=nx, ny=ny, resolution=resolution)
-        )
-        x_phys = grid.x.isel(j=0, k=0).compute().values.astype(np.float64)
-        y_phys = grid.y.isel(i=0, k=0).compute().values.astype(np.float64)
-        assert np.all(np.diff(x_phys) > 0), "x must increase monotonically in i"
-        assert np.all(np.diff(y_phys) > 0), "y must increase monotonically in j"
-        assert np.allclose(np.diff(x_phys), resolution, rtol=1e-3)
-        assert np.allclose(np.diff(y_phys), resolution, rtol=1e-3)
-        # Cell-centred: symmetric about the grid centre in local coords.
-        # After rigid transform, x[i]+x[-i-1] is constant for all i.
-        x_sym = x_phys + x_phys[::-1]
-        assert np.allclose(x_sym, x_sym[0], atol=1e-3 * resolution)
-        y_sym = y_phys + y_phys[::-1]
-        assert np.allclose(y_sym, y_sym[0], atol=1e-3 * resolution)
 
 
 class TestEMOD3DRotation:

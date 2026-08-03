@@ -207,6 +207,7 @@ Cargo.lock
 ### Jujutsu ###
 /.jj/
 .claude/*
+CLAUDE.md
 
 ### Local model/resource data & CLI-generated output (large, regenerable) ###
 /models/

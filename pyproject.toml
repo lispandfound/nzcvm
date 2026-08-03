@@ -39,6 +39,10 @@ dependencies = [
   "zfpy>=1.0.1",
 ]
 
+
+[tool.ruff.lint.isort]
+known-first-party = ["nzcvm"]
+
 [project.optional-dependencies]
 vis = ["pyvista>=0.47.2"]
 

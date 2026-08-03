@@ -20,6 +20,8 @@ import time
 from pathlib import Path
 
 import numpy as np
+from pyproj import CRS
+
 from nzcvm.config.grids.model import Model
 from nzcvm.config.grids.sw4 import MeshRefinement, SW4GridConfig
 from nzcvm.config.metadata import ModelMetadata
@@ -28,7 +30,6 @@ from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.layers.dummy import constant
 from nzcvm.models.mesh import StructuredMeshSchema
 from nzcvm.velocity_model import VelocityModel
-from pyproj import CRS
 
 # ---------------------------------------------------------------------------
 # Benchmark parameters

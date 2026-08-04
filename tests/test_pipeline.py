@@ -11,11 +11,10 @@ from __future__ import annotations
 import pytest
 import shapely
 
+from nzcvm.components import Component
 from nzcvm.config.layers.clamp import Bound, ClampLayerConfig
-from nzcvm.layers.clamp import ClampLayer
-from nzcvm.layers.dummy import ConstantLayer, CountingLayer, RecordingLayer
+from nzcvm.layers.dummy import ConstantLayer
 from nzcvm.layers.pipeline import build_pipeline
-from nzcvm.models.model import ModelRange
 from tests.conftest import make_grid
 
 # Layers now carry a spatial domain; these unit tests don't exercise masking,
@@ -47,58 +46,73 @@ def test_build_pipeline_single_config_produces_callable() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Layer ordering: first config is outermost
+# build_pipeline ordering: first config is outermost
+#
+# These go through build_pipeline itself rather than hand-assembling a chain,
+# which is the only way to exercise the ``reversed(configs)`` at
+# ``pipeline.py:52``.
 # ---------------------------------------------------------------------------
 
 
-def test_clamp_chain_outer_before_inner() -> None:
-    """The outermost ClampLayer runs *before* the inner ConstantLayer."""
-    terminal = ConstantLayer(vs=3000.0)
-    counter = CountingLayer(GEOM, terminal)
-    # Min-vs clamp of 4000 will push vs up from 3000 to 4000
-    clamp = ClampLayer(
-        ClampLayerConfig(clamps={"vs": Bound(min=4000.0)}), GEOM, counter
+def _constant_cfg(**kwargs: float):
+    """A real registered terminal config, built through the layer registry."""
+    return ConstantLayer.config_cls(**kwargs)
+
+
+def test_build_pipeline_first_config_is_outermost() -> None:
+    """The first config in the list must wrap the rest.
+
+    A clamp listed *before* the constant terminal governs the terminal's
+    output; listed after, it would never see it.
+    """
+    pipeline = build_pipeline(
+        GEOM,
+        [
+            ClampLayerConfig(clamps={Component.VS: Bound(min=4000.0)}),
+            _constant_cfg(vs=3000.0),
+        ],
     )
-
-    grid = make_grid()
-    result = clamp(grid)
-
-    # Inner layer was called
-    assert counter.call_count == 1
-    # Outer layer applied its clamp
-    assert float(result.vs.min()) >= 4000.0 - 1e-4
+    result = pipeline(make_grid())
+    assert float(result.vs.min()) == pytest.approx(4000.0, rel=1e-4)
 
 
-def test_two_clamp_layers_compose_correctly() -> None:
-    """Stacking two ClampLayers applies both constraints."""
-    terminal = ConstantLayer(vs=3000.0, vp=5000.0)
-    clamp_inner = ClampLayer(
-        ClampLayerConfig(clamps={"vs": Bound(min=3500.0)}), GEOM, terminal
+def test_build_pipeline_order_is_not_symmetric() -> None:
+    """Reversing the config list must change the result.
+
+    This is the assertion that catches ``build_pipeline`` dropping its
+    ``reversed()``: with the clamp innermost the terminal's constant output
+    overwrites it, so vs stays at 3000 instead of being raised to 4000.
+    """
+    clamp = ClampLayerConfig(clamps={Component.VS: Bound(min=4000.0)})
+    terminal = _constant_cfg(vs=3000.0)
+
+    clamp_outermost = build_pipeline(GEOM, [clamp, terminal])(make_grid())
+    clamp_innermost = build_pipeline(GEOM, [terminal, clamp])(make_grid())
+
+    assert float(clamp_outermost.vs.min()) == pytest.approx(4000.0, rel=1e-4)
+    assert float(clamp_innermost.vs.min()) == pytest.approx(3000.0, rel=1e-4)
+    assert float(clamp_outermost.vs.min()) != float(clamp_innermost.vs.min())
+
+
+def test_build_pipeline_terminates_in_sentinel() -> None:
+    """A chain of non-terminal layers must bottom out in the sentinel.
+
+    Two clamps delegate downstream forever; without the ``_SentinelLayer`` the
+    innermost would call ``None``.
+    """
+    pipeline = build_pipeline(
+        GEOM,
+        [
+            ClampLayerConfig(clamps={Component.VS: Bound(min=4000.0)}),
+            ClampLayerConfig(clamps={Component.VP: Bound(max=4500.0)}),
+        ],
     )
-    clamp_outer = ClampLayer(
-        ClampLayerConfig(clamps={"vp": Bound(max=4500.0)}), GEOM, clamp_inner
-    )
-
-    result = clamp_outer(make_grid())
-    # vs raised from 3000 → 3500 by inner clamp
-    assert float(result.vs.min()) >= 3500.0 - 1e-4
-    # vp lowered from 5000 → 4500 by outer clamp
-    assert float(result.vp.max()) <= 4500.0 + 1e-4
+    with pytest.raises(ValueError, match="out of bounds"):
+        pipeline(make_grid())
 
 
-# ---------------------------------------------------------------------------
-# model_range propagation through a chain
-# ---------------------------------------------------------------------------
-
-
-def test_model_range_propagated_through_clamp() -> None:
-    """model_range passed to outermost layer reaches innermost layer."""
-    terminal = ConstantLayer()
-    recorder = RecordingLayer(GEOM, terminal)
-    clamp = ClampLayer(ClampLayerConfig(), GEOM, recorder)
-
-    clamp(make_grid(), model_range=ModelRange.BASINS)
-    assert recorder.calls[0][1] == ModelRange.BASINS
+# Hand-assembled ``Layer`` composition tests live in ``test_layers.py``: they
+# exercise the Layer chaining contract, not the pipeline builder.
 
 
 # ---------------------------------------------------------------------------

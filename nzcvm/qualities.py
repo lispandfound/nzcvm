@@ -83,7 +83,7 @@ class QualitiesSchema(AsDataset):
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> Qualities:
         """Build a :class:`Qualities` instance from a plain :class:`xarray.Dataset`."""
-        return cls.new(**dataset.data_vars)  # ty: ignore[invalid-argument-type, missing-argument]
+        return cls.new(**dataset.data_vars)  # ty: ignore[invalid-argument-type]
 
 
 def template_like(arr: xr.DataArray) -> xr.Dataset:

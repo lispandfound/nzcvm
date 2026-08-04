@@ -39,6 +39,10 @@ dependencies = [
   "zfpy>=1.0.1",
 ]
 
+
+[tool.ruff.lint.isort]
+known-first-party = ["nzcvm"]
+
 [project.optional-dependencies]
 vis = ["pyvista>=0.47.2"]
 
@@ -58,9 +62,12 @@ dev = [
   "ipython>=9.12.0",
   "numpydoc>=1.10.0",
   "pytest>=8.0.0",
+  "pyvista>=0.48.4",
   "ruff>=0.15.10",
   "ty>=0.0.29",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "--strict-markers"
+markers = ["real_data: requires a real model directory supplied via MODEL_PATH"]

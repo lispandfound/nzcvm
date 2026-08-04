@@ -19,6 +19,14 @@ pub struct Quality {
     pub alpha: Real,
 }
 
+/// Opacity at or below which a quality is treated as fully transparent.
+///
+/// Deliberately pinned to `f32::EPSILON` rather than `Real::EPSILON`: this
+/// threshold expresses when an opacity is *physically* negligible, not the
+/// precision of the storage type, so it must not shift by nine orders of
+/// magnitude when the `high_precision` feature switches `Real` to `f64`.
+const TRANSPARENT_ALPHA: Real = f32::EPSILON as Real;
+
 impl Quality {
     /// Composite `self` over `rhs` using the Porter-Duff "over" operator.
     ///
@@ -40,9 +48,9 @@ impl Quality {
     pub fn blend(&self, rhs: &Quality) -> Quality {
         // These shortcuts are required to ensure correct behaviour when
         // interpolating Qp/Qs.
-        if self.alpha < f32::EPSILON {
+        if self.alpha < TRANSPARENT_ALPHA {
             return *rhs;
-        } else if rhs.alpha < f32::EPSILON {
+        } else if rhs.alpha < TRANSPARENT_ALPHA {
             return *self;
         }
         let alpha = self.alpha + rhs.alpha * (1.0 - self.alpha);
@@ -157,28 +165,73 @@ mod tests {
 
     #[test]
     fn test_blend_commutative_alpha() {
+        // Alpha composition is always commutative regardless of alpha values
         let a = Quality {
-            rho: 1.0,
-            vp: 1.0,
-            vs: 1.0,
-            qp: 1.0,
-            qs: 1.0,
-            alpha: 0.6,
+            rho: 2700.0, vp: 6000.0, vs: 3500.0, qp: 200.0, qs: 100.0, alpha: 0.6,
         };
         let b = Quality {
-            rho: 2.0,
-            vp: 2.0,
-            vs: 2.0,
-            qp: 2.0,
-            qs: 2.0,
-            alpha: 0.4,
+            rho: 1000.0, vp: 1500.0, vs: 0.0, qp: 50.0, qs: 25.0, alpha: 0.4,
         };
         let ab = a.blend(&b);
         let ba = b.blend(&a);
-        let expected_alpha_ab = 0.6 + 0.4 * (1.0 - 0.6);
-        let expected_alpha_ba = 0.4 + 0.6 * (1.0 - 0.4);
-        assert_relative_eq!(ab.alpha, expected_alpha_ab as Real, epsilon = 1e-5);
-        assert_relative_eq!(ba.alpha, expected_alpha_ba as Real, epsilon = 1e-5);
+        assert_relative_eq!(ab.alpha, ba.alpha, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_blend_non_commutative_materials() {
+        // With different materials and alphas, blend order changes result
+        let a = Quality {
+            rho: 2700.0, vp: 6000.0, vs: 3500.0, qp: 200.0, qs: 100.0, alpha: 0.6,
+        };
+        let b = Quality {
+            rho: 1000.0, vp: 1500.0, vs: 0.0, qp: 50.0, qs: 25.0, alpha: 0.4,
+        };
+        let ab = a.blend(&b);
+        let ba = b.blend(&a);
+        // Alpha is commutative, materials are not
+        assert_relative_eq!(ab.alpha, ba.alpha, epsilon = 1e-5);
+        assert!(ab.rho != ba.rho);
+        assert!(ab.vp != ba.vp);
+    }
+
+    #[test]
+    fn test_blend_epsilon_shortcut_transparent_self() {
+        let a = Quality {
+            rho: 1.0, vp: 1.0, vs: 1.0, qp: 0.0, qs: 1.0, alpha: 0.0,
+        };
+        let b = Quality {
+            rho: 99.0, vp: 99.0, vs: 99.0, qp: 99.0, qs: 99.0, alpha: 0.5,
+        };
+        let blended = a.blend(&b);
+        assert_relative_eq!(blended.rho, b.rho, epsilon = 1e-5);
+        assert_relative_eq!(blended.alpha, b.alpha, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_blend_epsilon_shortcut_transparent_rhs() {
+        let a = Quality {
+            rho: 10.0, vp: 10.0, vs: 10.0, qp: 10.0, qs: 10.0, alpha: 0.5,
+        };
+        let b = Quality {
+            rho: 99.0, vp: 99.0, vs: 99.0, qp: 0.0, qs: 99.0, alpha: 0.0,
+        };
+        let blended = a.blend(&b);
+        assert_relative_eq!(blended.rho, a.rho, epsilon = 1e-5);
+        assert_relative_eq!(blended.alpha, a.alpha, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_blend_harmonic_mean_qp() {
+        // alpha_a=0.5, alpha_b=0.5 → a0=2/3, a1=1/3, qp 100/300 → harmonic 900/7
+        // Arithmetic mean would give 500/3 ≈ 166.667
+        let a = Quality {
+            rho: 1.0, vp: 1.0, vs: 1.0, qp: 100.0, qs: 1.0, alpha: 0.5,
+        };
+        let b = Quality {
+            rho: 1.0, vp: 1.0, vs: 1.0, qp: 300.0, qs: 1.0, alpha: 0.5,
+        };
+        let blended = a.blend(&b);
+        assert_relative_eq!(blended.qp, 900.0 / 7.0, epsilon = 1e-3);
     }
 
     #[test]
@@ -231,5 +284,141 @@ mod tests {
         assert_eq!(arr.len(), 5);
         assert_relative_eq!(arr[0], 1.0);
         assert_relative_eq!(arr[4], 5.0);
+    }
+
+    // -----------------------------------------------------------------------
+    // Property tests
+    // -----------------------------------------------------------------------
+
+    use proptest::prelude::*;
+
+    /// Material magnitudes spanning the range the model actually carries
+    /// (densities ~2700, velocities ~6000, Q ~100).  Strictly positive because
+    /// `blend` takes the reciprocal of `qp`/`qs`.
+    fn material() -> impl Strategy<Value = Real> {
+        (1.0 as Real)..10_000.0
+    }
+
+    fn alpha() -> impl Strategy<Value = Real> {
+        (0.0 as Real)..=1.0
+    }
+
+    fn quality() -> impl Strategy<Value = Quality> {
+        (
+            material(),
+            material(),
+            material(),
+            material(),
+            material(),
+            alpha(),
+        )
+            .prop_map(|(rho, vp, vs, qp, qs, alpha)| Quality {
+                rho,
+                vp,
+                vs,
+                qp,
+                qs,
+                alpha,
+            })
+    }
+
+    /// Tolerance scaled to the magnitudes involved.
+    ///
+    /// Near `alpha ≈ f32::EPSILON` the weights `a0 + a1` differ from 1 by ~1e-7,
+    /// which at material magnitude 1e4 is ~1e-3 of overshoot past the convex
+    /// hull.  A fixed tolerance would be marginally flaky.
+    fn tol(magnitude: Real) -> Real {
+        1e-3 + 1e-4 * magnitude
+    }
+
+    proptest! {
+        /// The composited opacity is symmetric in its operands, always in
+        /// `[0, 1]`, and never less than either input.
+        #[test]
+        fn prop_blend_alpha_is_commutative_and_monotone(a in quality(), b in quality()) {
+            let ab = a.blend(&b);
+            let ba = b.blend(&a);
+
+            prop_assert!((ab.alpha - ba.alpha).abs() < 1e-5,
+                         "alpha not commutative: {} vs {}", ab.alpha, ba.alpha);
+            prop_assert!((0.0..=1.0 + 1e-5).contains(&ab.alpha), "alpha {} out of range", ab.alpha);
+            prop_assert!(ab.alpha >= a.alpha - 1e-5, "alpha decreased: {} < {}", ab.alpha, a.alpha);
+            prop_assert!(ab.alpha >= b.alpha - 1e-5, "alpha decreased: {} < {}", ab.alpha, b.alpha);
+        }
+
+        /// Every blended material lies within the convex hull of its two
+        /// inputs — a weighted mean cannot leave the interval it averages over.
+        ///
+        /// This is the invariant that fails if a weight is negative, if `a0`
+        /// and `a1` stop summing to 1, or if a field is crossed with another.
+        #[test]
+        fn prop_blend_materials_lie_in_convex_hull(a in quality(), b in quality()) {
+            let ab = a.blend(&b);
+
+            for (got, lo, hi) in [
+                (ab.rho, a.rho.min(b.rho), a.rho.max(b.rho)),
+                (ab.vp, a.vp.min(b.vp), a.vp.max(b.vp)),
+                (ab.vs, a.vs.min(b.vs), a.vs.max(b.vs)),
+                (ab.qp, a.qp.min(b.qp), a.qp.max(b.qp)),
+                (ab.qs, a.qs.min(b.qs), a.qs.max(b.qs)),
+            ] {
+                let t = tol(hi);
+                prop_assert!(got >= lo - t && got <= hi + t,
+                             "{got} outside [{lo}, {hi}] (tol {t})");
+            }
+        }
+
+        /// No blend of finite, positive inputs may produce a NaN or an
+        /// infinity — the reason `blend` short-circuits on near-zero alpha in
+        /// the first place.
+        #[test]
+        fn prop_blend_is_finite(a in quality(), b in quality()) {
+            let ab = a.blend(&b);
+            for (name, v) in [("rho", ab.rho), ("vp", ab.vp), ("vs", ab.vs),
+                              ("qp", ab.qp), ("qs", ab.qs), ("alpha", ab.alpha)] {
+                prop_assert!(v.is_finite(), "{name} is not finite: {v}");
+            }
+        }
+
+        /// Blending anything under a fully-opaque quality is the identity.
+        #[test]
+        fn prop_blend_opaque_is_left_identity(a in quality(), b in quality()) {
+            let opaque = Quality { alpha: 1.0, ..a };
+            let ab = opaque.blend(&b);
+            prop_assert!((ab.rho - opaque.rho).abs() < tol(opaque.rho));
+            prop_assert!((ab.vp - opaque.vp).abs() < tol(opaque.vp));
+            prop_assert!((ab.alpha - 1.0).abs() < 1e-5);
+        }
+
+        /// `qp`/`qs` are combined as a *harmonic* mean, which for distinct
+        /// inputs is **strictly** below the arithmetic mean of the same values.
+        ///
+        /// The strictness is the point: asserting only `<=` would be satisfied
+        /// by a plain weighted sum, so swapping the `recip()` chain for
+        /// arithmetic averaging would go unnoticed here.  The preconditions
+        /// keep the AM-HM gap comfortably above the f32 noise floor.
+        #[test]
+        fn prop_blend_q_is_strictly_harmonic(a in quality(), b in quality()) {
+            let alpha = a.alpha + b.alpha * (1.0 - a.alpha);
+            prop_assume!(alpha > 1e-3);
+            let a0 = a.alpha / alpha;
+            let a1 = b.alpha * (1.0 - a.alpha) / alpha;
+
+            // Both operands must genuinely participate...
+            prop_assume!(a0 > 0.1 && a1 > 0.1);
+            // ...and the values must differ by at least 2x, which bounds the
+            // AM-HM gap below at ~4% of the arithmetic mean.
+            let (lo, hi) = (a.qp.min(b.qp), a.qp.max(b.qp));
+            prop_assume!(hi >= 2.0 * lo);
+
+            let ab = a.blend(&b);
+            let arithmetic = a0 * a.qp + a1 * b.qp;
+
+            prop_assert!(ab.qp < arithmetic * 0.99,
+                         "qp {} is not strictly below the arithmetic mean {}",
+                         ab.qp, arithmetic);
+            // Still a mean: bounded by the inputs it averages.
+            prop_assert!(ab.qp >= lo - tol(hi) && ab.qp <= hi + tol(hi));
+        }
     }
 }

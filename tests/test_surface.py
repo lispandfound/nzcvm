@@ -67,9 +67,9 @@ def test_bounds_order_min_lt_max(flat_surface: Surface) -> None:
 
 def test_bounds_z_constant_for_flat_surface() -> None:
     s = _flat_surface(z=7.0)
-    # z min and max should both be close to 7.0
-    assert abs(s.bounds[2] - 7.0) < 0.1
-    assert abs(s.bounds[5] - 7.0) < 0.1
+    assert s.bounds[2] == pytest.approx(7.0, abs=1e-6)
+    assert s.bounds[5] == pytest.approx(7.0, abs=1e-6)
+    assert s.bounds[2] == s.bounds[5]
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +110,10 @@ def test_transform_1d_input(flat_surface: Surface) -> None:
 def test_surface_pickleable(flat_surface: Surface) -> None:
     import pickle
 
-    restored = pickle.loads(pickle.dumps(flat_surface))
     x = np.array([5.0], dtype=np.float32)
     y = np.array([5.0], dtype=np.float32)
-    # Both the original and the restored object should return the same value.
+    np.testing.assert_allclose(flat_surface.transform(x, y), 5.0, rtol=1e-5)
+    restored = pickle.loads(pickle.dumps(flat_surface))
     np.testing.assert_allclose(
         flat_surface.transform(x, y),
         restored.transform(x, y),

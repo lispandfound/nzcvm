@@ -79,7 +79,7 @@ class TetrahedralMeshSchema(AsDataset):
     def from_dataset(cls, dataset: xr.Dataset) -> TetrahedralMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
         dataset = encode(dataset, attr_hook=_decode_geometry_attr)
-        return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
+        return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type]
 
 
 MEDIUM_COMPRESSOR = [Blosc(cname="zstd", clevel=5, shuffle=True)]
@@ -123,7 +123,7 @@ class StructuredMeshSchema(AsDataset):
     @classmethod
     def from_dataset(cls, dataset: xr.Dataset) -> StructuredMesh:
         """Parses, validates, and builds a Grid from a standard xr.Dataset."""
-        return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type, missing-argument]
+        return cls.new(**dataset.data_vars, **dataset.coords, **dataset.attrs)  # ty: ignore[invalid-argument-type]
 
 
 DEFAULT_STRUCTURED_ENCODING_SETTINGS = {

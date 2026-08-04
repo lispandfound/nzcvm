@@ -83,7 +83,9 @@ def _ely_vs_profile(
     qp = 100.0 * vs / 1000.0
     alpha = xr.full_like(rho, 1.0)
 
-    return xr.Dataset({"rho": rho, "vs": vs, "vp": vp, "qp": qp, "qs": qs, "alpha": alpha})
+    return xr.Dataset(
+        {"rho": rho, "vs": vs, "vp": vp, "qp": qp, "qs": qs, "alpha": alpha}
+    )
 
 
 def ely_vs_profile(

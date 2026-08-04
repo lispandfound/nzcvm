@@ -20,7 +20,6 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pyvista as pv
 from pyproj import CRS
 
 from nzcvm.config.grids.model import Model
@@ -29,24 +28,20 @@ from nzcvm.config.metadata import ModelMetadata
 from nzcvm.coordinates import Coordinate
 from nzcvm.grids.builder import build_grids_from_config
 from nzcvm.layers.dummy import constant
+from nzcvm.models.mesh import StructuredMeshSchema
 from nzcvm.velocity_model import VelocityModel
 
 # ---------------------------------------------------------------------------
 # Benchmark parameters
 # ---------------------------------------------------------------------------
 
-# ~100 km × 80 km domain, three refinements totalling roughly 0.5 GB of
-# quality data (6 components × float32 × ni × nj × nk summed over layers).
 EXTENT_X = 100_000.0  # metres
 EXTENT_Y = 80_000.0  # metres
 
-# In +z-down convention positive bottom means depth below the surface.
-# Subsequent refinements must have *smaller* resolution (finer) so the
-# integer ratio top_resolution / refinement_resolution is >= 1.
 REFINEMENTS = {
-    "near_surface": MeshRefinement(resolution=800.0, bottom=2_000.0),
+    "near_surface": MeshRefinement(resolution=200.0, bottom=2_000.0),
     "mid_crust": MeshRefinement(resolution=400.0, bottom=20_000.0),
-    "lower_crust": MeshRefinement(resolution=200.0, bottom=60_000.0),
+    "lower_crust": MeshRefinement(resolution=800.0, bottom=60_000.0),
 }
 
 CHUNK_SIZE = 64  # voxels per chunk along i/j; k is always a single chunk
@@ -57,7 +52,7 @@ CHUNK_SIZE = 64  # voxels per chunk along i/j; k is always a single chunk
 # ---------------------------------------------------------------------------
 
 
-def _write_flat_surface(path: str) -> None:
+def _write_flat_surface(path: Path) -> None:
     """Write a flat z=0 StructuredGrid to *path* (VTK format)."""
     # NZ-wide bounding box in NZTM2000: origin roughly (1e6, 4.7e6)
     xmin, ymin = 1_000_000.0, 4_700_000.0
@@ -67,7 +62,10 @@ def _write_flat_surface(path: str) -> None:
     ys = np.linspace(ymin, ymin + extent, n)
     xx, yy = np.meshgrid(xs, ys, indexing="ij")
     zz = np.zeros_like(xx)
-    pv.StructuredGrid(xx, yy, zz).save(path)
+    mesh = StructuredMeshSchema.new(
+        x=xx, y=yy, z=zz, i=np.arange(n), j=np.arange(n), name="float"
+    )
+    mesh.to_zarr(path)
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +77,8 @@ def run_benchmark() -> None:
     """Build grids, run the pipeline, compute results, and print a table."""
 
     with tempfile.TemporaryDirectory() as tmp:
-        surface_path = Path(tmp) / "flat.vtk"
-        _write_flat_surface(str(surface_path))
+        surface_path = Path(tmp) / "flat.zarr"
+        _write_flat_surface(surface_path)
 
         # 1. Build SW4 grids -------------------------------------------------
         t0 = time.perf_counter()
@@ -104,29 +102,13 @@ def run_benchmark() -> None:
         t1 = time.perf_counter()
         grid_time = t1 - t0
 
-        # 2. Assemble VelocityModel ------------------------------------------
         metadata = ModelMetadata(title="benchmark")
         vm = VelocityModel(grids=grids, metadata=metadata)
 
-        # 3. Build pipeline (constant terminal layer) ------------------------
-        # Values represent typical New Zealand lower-crustal material:
-        # rho ≈ 2700 kg m⁻³, Vp ≈ 6000 m s⁻¹, Vs ≈ 3500 m s⁻¹ (Brocher, 2005),
-        # Qp/Qs ≈ 200/100 (anelastic attenuation), alpha = 1.0 (fully opaque).
         pipeline = constant(
             rho=2700.0, vp=6000.0, vs=3500.0, qp=200.0, qs=100.0, alpha=1.0
         )
 
-        # 4. Lazy graph construction + materialise all quality arrays ----------
-        #
-        # `.compute()` materialises each grid's dask coordinate arrays before
-        # passing to the pipeline.  We do this here because the `constant`
-        # layer ignores the grid coordinates and returns plain numpy arrays
-        # (no coordinate labels), so the layer is incompatible with xarray
-        # map_blocks' template-matching requirement when used with
-        # coordinate-labelled grids from `build_grids_from_config`.  In
-        # production, layers that preserve coordinate metadata (e.g. model
-        # query layers) can use `execute_model_pipeline` directly for
-        # fully-lazy dispatch.
         t2 = time.perf_counter()
         all_qualities = {}
         for name, grid in vm.grids.items():

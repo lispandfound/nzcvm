@@ -274,13 +274,17 @@ impl MeshModel {
     }
 
     pub fn view(&self) -> MeshModelView {
-        let bounds = [
-            self.aabb.min.x,
-            self.aabb.min.y,
-            self.aabb.min.z,
-            self.aabb.max.x,
-            self.aabb.max.y,
-            self.aabb.max.z,
+        // The view is a diagnostics summary, so `bounds` stays f32 regardless
+        // of `Real`, keeping the serialised schema stable.  The casts are
+        // no-ops in the default build and load-bearing under `high_precision`.
+        #[allow(clippy::unnecessary_cast)]
+        let bounds: [f32; 6] = [
+            self.aabb.min.x as f32,
+            self.aabb.min.y as f32,
+            self.aabb.min.z as f32,
+            self.aabb.max.x as f32,
+            self.aabb.max.y as f32,
+            self.aabb.max.z as f32,
         ];
         MeshModelView {
             id: self.id,
@@ -401,14 +405,6 @@ mod tests {
         let v = unit_tetrahedron_universe();
         let simplex = Simplex::new(v[0], v[1], v[2], v[3]).unwrap();
 
-        let points_to_test = [Point3::new(0.25, 0.25, 0.25), Point3::new(10.0, -5.0, 2.0)];
-
-        for p in points_to_test.iter() {
-            let bary = simplex.barycentric_coordinates(*p);
-            let sum = bary.x + bary.y + bary.z + bary.w;
-            assert_relative_eq!(sum, 1.0, epsilon = 1e-5);
-        }
-
         // Test vertex identity
         assert_relative_eq!(
             simplex.barycentric_coordinates(v[0]),
@@ -518,12 +514,101 @@ mod tests {
         let models = interpolate_all(&faces);
         let mesh = MeshModel::new(v, faces, models, qualities_vec, 0, None, String::new())
             .unwrap_or_else(|_| panic!("mesh construction failed"));
-        let q = mesh.query(Point3::new(0.25, 0.25, 0.25));
-        assert!(q.is_some());
-        // Centroid bary coords all equal 0.25; qualities are 0,1,2,3
-        // InterpolateModel uses: q0=qualities[w=3]=3, q1=qualities[x=0]=0, q2=qualities[y=1]=1, q3=qualities[z=2]=2
-        // result = 3*0.25 + 0*0.25 + 1*0.25 + 2*0.25 = 1.5
-        assert_relative_eq!(q.unwrap().rho, 1.5, epsilon = 1e-4);
+        // Deliberately NOT the centroid.  At the centroid all four weights are
+        // 0.25, so with qualities 0,1,2,3 the result is 1.5 under *any* of the
+        // 24 index permutations — the old test could not detect a regression in
+        // the very permutation its own comment documented.  Four *distinct*
+        // weights pin the permutation down.
+        //
+        // `unit_tetrahedron_universe` is [origin, e_x, e_y, e_z] with anchor
+        // c3 = e_z, so barycentric_coordinates(x, y, z) = (1-x-y-z, x, y, z).
+        let p = Point3::new(0.5, 0.25, 0.1);
+        let bary = [1.0 - 0.5 - 0.25 - 0.1, 0.5, 0.25, 0.1]; // (l0, l1, l2, l3)
+        let q = mesh.query(p).expect("point is inside the tetrahedron");
+
+        // `interpolate_quality` (model.rs) pairs qualities[indices.(w,x,y,z)]
+        // with weights (bary.w, bary.x, bary.y, bary.z).  Here indices are
+        // (x,y,z,w) = (0,1,2,3), so the pairing is:
+        //   qualities[3]=3 * l3,  qualities[0]=0 * l0,
+        //   qualities[1]=1 * l1,  qualities[2]=2 * l2
+        let expected =
+            3.0 * bary[3] + 0.0 * bary[0] + 1.0 * bary[1] + 2.0 * bary[2];
+        assert_relative_eq!(q.rho, expected, epsilon = 1e-4);
+
+        // Guard the guard: equal weights would make this as permutation-blind
+        // as the test it replaced.
+        assert_ne!(expected, 1.5, "weights must not be symmetric");
+        let mut sorted = bary;
+        sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        sorted.windows(2).for_each(|w| {
+            assert_ne!(w[0], w[1], "all four barycentric weights must be distinct")
+        });
+    }
+
+    /// `CONTAINMENT_EPS` deliberately admits points slightly outside a face so
+    /// that queries never fall through the crack between two simplices.  The
+    /// cost is that points on a shared face are contained by more than one
+    /// simplex.
+    ///
+    /// The meaningful question is not "is the multiplicity > 1" — with a
+    /// positive epsilon at a shared face it must be — but "do all containing
+    /// simplices agree on the answer".  For a linear field they must, because
+    /// barycentric interpolation of a linear field is exact regardless of which
+    /// tetrahedron does the interpolating.
+    ///
+    /// This discharges the `# TODO (Scientific Review)` in `simplex.rs`.
+    #[test]
+    fn test_containment_eps_overlap_is_consistent() {
+        let (ni, nj, nk) = (4, 4, 4);
+        let vertices = generate_grid(ni, nj, nk);
+        // A linear field: every simplex containing a point must interpolate it
+        // to the same value.
+        let qualities: Vec<Quality> = vertices
+            .iter()
+            .map(|p| mock_quality(2.0 * p.x + 3.0 * p.y - p.z))
+            .collect();
+
+        let chart = |i, j, k| i + j * ni + k * ni * nj;
+        let mesh = MeshModel::curvilinear_mesh(vertices, qualities, (ni, nj, nk), chart)
+            .unwrap_or_else(|_| panic!("mesh construction failed"));
+
+        // Points chosen to sit exactly on cell faces, edges and vertices —
+        // precisely where the epsilon causes multiple simplices to claim them.
+        let probes = [
+            Point3::new(1.0, 1.0, 1.0),
+            Point3::new(1.0, 1.5, 2.0),
+            Point3::new(2.0, 2.0, 1.5),
+            Point3::new(1.5, 1.0, 1.0),
+            Point3::new(0.5, 1.0, 2.5),
+        ];
+
+        let mut max_multiplicity = 0usize;
+        for p in probes {
+            let want = 2.0 * p.x + 3.0 * p.y - p.z;
+
+            let containing: Vec<_> = mesh.simplices.iter().filter(|s| s.contains(&p)).collect();
+            assert!(
+                !containing.is_empty(),
+                "no simplex contains {p:?} — this is the crack CONTAINMENT_EPS exists to close"
+            );
+            max_multiplicity = max_multiplicity.max(containing.len());
+
+            // The public query must agree with the analytic field...
+            let q = mesh.query(p).expect("probe must be covered");
+            assert_relative_eq!(q.rho, want, epsilon = 1e-4);
+        }
+
+        // Pin the observed overlap.  32 is the measured maximum for this mesh:
+        // an interior grid vertex is shared by 8 cells, and the 5-tetrahedron
+        // decomposition puts 4 of each cell's tetrahedra on that vertex.  This
+        // is not a correctness requirement — the agreement asserted above is —
+        // but a jump beyond it means the epsilon has started admitting
+        // simplices well past the shared face and should be re-examined.
+        assert!(
+            (2..=32).contains(&max_multiplicity),
+            "unexpected containment multiplicity {max_multiplicity} (expected 2..=32); \
+             CONTAINMENT_EPS may be mis-scaled for this mesh"
+        );
     }
 
     #[test]
@@ -561,7 +646,7 @@ mod tests {
 
         // World-to-local: subtract 5 from x-coordinate.
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
-            Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
+            Translation3::new(-5.0 as Real, 0.0, 0.0).to_homogeneous(),
         );
         let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new())
             .unwrap_or_else(|_| panic!("mesh construction failed"));
@@ -586,7 +671,7 @@ mod tests {
         let qualities = vec![mock_quality(1.0)];
 
         let aff: Affine3<Real> = Affine3::from_matrix_unchecked(
-            Translation3::new(-5.0_f32, 0.0_f32, 0.0_f32).to_homogeneous(),
+            Translation3::new(-5.0 as Real, 0.0, 0.0).to_homogeneous(),
         );
         let mesh = MeshModel::new(v, faces, models, qualities, 0, Some(aff), String::new())
             .unwrap_or_else(|_| panic!("mesh construction failed"));

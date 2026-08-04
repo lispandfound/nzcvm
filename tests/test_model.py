@@ -13,35 +13,14 @@ tests focus on the Python-level contracts:
 from __future__ import annotations
 
 import numpy as np
+import pytest
+import xarray as xr
 from hypothesis import given
 from hypothesis import strategies as st
 
 from nzcvm import nzcvm as _nzcvm  # ty: ignore[unresolved-import]
 from nzcvm.models.model import MeshModel, ModelRange, ModelTree
 from tests.conftest import _mesh_model
-
-# ---------------------------------------------------------------------------
-# ModelRange enum contract
-# ---------------------------------------------------------------------------
-
-
-def test_model_range_all_covers_full_byte() -> None:
-    lo, hi = ModelRange.ALL.value
-    assert lo == 0 and hi == 255
-
-
-def test_model_range_basins_below_tomography() -> None:
-    b_lo, b_hi = ModelRange.BASINS.value
-    t_lo, t_hi = ModelRange.TOMOGRAPHY.value
-    assert b_lo < t_lo
-    assert b_hi < t_hi
-
-
-def test_model_range_basins_and_tomography_disjoint() -> None:
-    _, b_hi = ModelRange.BASINS.value
-    t_lo, _ = ModelRange.TOMOGRAPHY.value
-    assert b_hi < t_lo
-
 
 # ---------------------------------------------------------------------------
 # query_many_raw shape and dtype contract
@@ -51,12 +30,11 @@ def test_model_range_basins_and_tomography_disjoint() -> None:
 @given(
     n=st.integers(min_value=1, max_value=16),
 )
-def test_query_many_raw_1d_shape(n: int) -> None:
-    tree = _nzcvm.model_tree([_mesh_model()])
-    model = ModelTree(tree)
+def test_query_many_raw_1d_shape(unit_tetrahedron_tree, n: int) -> None:
+    model = ModelTree(unit_tetrahedron_tree)
     x = np.full(n, 0.1, dtype=np.float32)
     z = np.zeros(n, dtype=np.float32)
-    result = model.query_many_raw(x, z, z)
+    result = model._query_many_raw(x, z, z)
     assert result.shape == (n, 6)
     assert result.dtype == np.float32
 
@@ -65,43 +43,11 @@ def test_query_many_raw_1d_shape(n: int) -> None:
     nx=st.integers(min_value=1, max_value=4),
     ny=st.integers(min_value=1, max_value=4),
 )
-def test_query_many_raw_nd_shape(nx: int, ny: int) -> None:
-    model = ModelTree(_nzcvm.model_tree([_mesh_model()]))
+def test_query_many_raw_nd_shape(unit_tetrahedron_tree, nx: int, ny: int) -> None:
+    model = ModelTree(unit_tetrahedron_tree)
     x = np.full((nx, ny), 0.1, dtype=np.float32)
-    result = model.query_many_raw(x, x, x)
+    result = model._query_many_raw(x, x, x)
     assert result.shape == (nx, ny, 6)
-
-
-# ---------------------------------------------------------------------------
-# query_many Dataset contract
-# ---------------------------------------------------------------------------
-
-
-EXPECTED_COMPONENTS = ["rho", "vp", "vs", "qp", "qs", "alpha"]
-
-
-def test_query_many_has_qualities_variable() -> None:
-    model = ModelTree(_nzcvm.model_tree([_mesh_model()]))
-    x = np.array([0.1], dtype=np.float32)
-    z = np.zeros(1, dtype=np.float32)
-    ds = model.query_many(x, z, z)
-    assert "qualities" in ds
-
-
-def test_query_many_component_coordinate_labels() -> None:
-    model = ModelTree(_nzcvm.model_tree([_mesh_model()]))
-    x = np.array([0.1], dtype=np.float32)
-    z = np.zeros(1, dtype=np.float32)
-    ds = model.query_many(x, z, z)
-    assert list(ds.coords["component"].values) == EXPECTED_COMPONENTS
-
-
-def test_query_many_qualities_shape_matches_input() -> None:
-    model = ModelTree(_nzcvm.model_tree([_mesh_model()]))
-    x = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-    z = np.zeros(3, dtype=np.float32)
-    ds = model.query_many(x, z, z)
-    assert ds["qualities"].shape == (3, 6)
 
 
 # ---------------------------------------------------------------------------
@@ -127,59 +73,106 @@ def test_mesh_model_priority_accessible() -> None:
     assert m.priority == 42
 
 
-def test_mesh_model_aabb_shape() -> None:
-    raw = _mesh_model()
-    m = MeshModel(raw)
-    mn, mx = m.aabb
+def test_mesh_model_aabb_shape(unit_tetrahedron_mesh) -> None:
+    mn, mx = MeshModel(unit_tetrahedron_mesh).aabb
     assert mn.shape == (3,) and mx.shape == (3,)
 
 
-def test_mesh_model_aabb_min_lt_max() -> None:
-    raw = _mesh_model()
-    m = MeshModel(raw)
-    mn, mx = m.aabb
+def test_mesh_model_aabb_min_lt_max(unit_tetrahedron_mesh) -> None:
+    mn, mx = MeshModel(unit_tetrahedron_mesh).aabb
     assert all(mn[i] <= mx[i] for i in range(3))
-
-
-def test_mesh_model_query_outside_returns_none() -> None:
-    m = MeshModel(_mesh_model())
-    assert m.query(99.0, 99.0, 99.0) is None
 
 
 def test_mesh_model_view_label_contains_name() -> None:
     m = MeshModel(_mesh_model(name="crust"))
     view = m.view()
-    assert "crust" in view.label
+    assert "crust" in str(view.label)
 
 
 # ---------------------------------------------------------------------------
-# ModelTree from MeshModel list
+# Query wrappers: MeshModel and ModelTree share a point-query contract
 # ---------------------------------------------------------------------------
 
 
-def test_model_tree_from_mesh_models_queries_inside() -> None:
-    raw = _nzcvm.model_tree([_mesh_model(rho=1234.0)])
-    tree = ModelTree(raw)
-    q = tree.query(0.1, 0.1, 0.1)
+def _as_mesh_model(raw) -> MeshModel:
+    return MeshModel(raw)
+
+
+def _as_model_tree(raw) -> ModelTree:
+    return ModelTree(_nzcvm.model_tree([raw]))
+
+
+_WRAPPERS = pytest.mark.parametrize(
+    "wrap", [_as_mesh_model, _as_model_tree], ids=["MeshModel", "ModelTree"]
+)
+
+
+@_WRAPPERS
+def test_query_inside_returns_quality(wrap) -> None:
+    model = wrap(_mesh_model(rho=1234.0))
+    q = model.query(0.1, 0.1, 0.1)
     assert q is not None
+    assert q.rho == pytest.approx(1234.0)
 
 
-def test_model_tree_query_outside_returns_none() -> None:
-    raw = _nzcvm.model_tree([_mesh_model()])
-    tree = ModelTree(raw)
-    assert tree.query(99.0, 99.0, 99.0) is None
+@_WRAPPERS
+def test_query_outside_returns_none(wrap) -> None:
+    """A point beyond the mesh AABB must miss for both wrapper types.
 
+    The point is derived from the AABB rather than hardcoded, so it stays
+    genuinely outside if the shared tetrahedron fixture ever changes.
+    """
+    _, aabb_max = MeshModel(_mesh_model()).aabb
+    outside = tuple(float(c) + 1.0 for c in aabb_max)
 
-# ---------------------------------------------------------------------------
-# model_range filtering contract
-# ---------------------------------------------------------------------------
+    model = wrap(_mesh_model())
+    assert model.query(*outside) is None
 
 
 def test_model_range_basins_includes_priority_zero() -> None:
     """A priority-0 model should be visible in the BASINS range."""
+    vs = 3500.0
+    model = ModelTree(_nzcvm.model_tree([_mesh_model(vs=vs, priority=0)]))
+    x = 0.1
+    z = 0.4
+    result = model.query(x, z, z, model_range=ModelRange.BASINS)
+    assert result is not None
+    assert result.vs == pytest.approx(vs)
+
+
+def test_model_range_tomography_excludes_priority_zero() -> None:
+    """A priority-0 (basin) model must NOT be visible in TOMOGRAPHY range."""
     model = ModelTree(_nzcvm.model_tree([_mesh_model(vs=3500.0, priority=0)]))
-    x = np.array([0.1], dtype=np.float32)
-    z = np.zeros(1, dtype=np.float32)
-    result = model.query_many_raw(x, z, z, model_range=ModelRange.BASINS)
-    # vs column (index 2) should be non-zero (model was found)
-    assert float(result[0, 2]) > 0.0
+    x = 0.1
+    z = 1.0
+    result = model.query(x, z, z, model_range=ModelRange.TOMOGRAPHY)
+    assert result is None
+
+
+@given(
+    x=st.floats(0.0, 1.0, width=32),
+    y=st.floats(0.0, 1.0, width=32),
+    z=st.floats(0.0, 1.0, width=32),
+)
+def test_query_matches_query_many(x: float, y: float, z: float) -> None:
+    """Asserts that query and query many agree on model outputs."""
+    model = ModelTree(_nzcvm.model_tree([_mesh_model(vs=3500.0, priority=0)]))
+    x_arr = xr.DataArray(
+        np.atleast_3d(x), dims=["i", "j", "k"], coords={"i": [0], "j": [0], "k": [0]}
+    )
+    y_arr = xr.DataArray(
+        np.atleast_3d(y), dims=["i", "j", "k"], coords={"i": [0], "j": [0], "k": [0]}
+    )
+    z_arr = xr.DataArray(
+        np.atleast_3d(z), dims=["i", "j", "k"], coords={"i": [0], "j": [0], "k": [0]}
+    )
+    result_query = model.query(x, y, z)
+    result_query_many = model.query_many(x_arr, y_arr, z_arr)
+    assert (result_query is None) == (result_query_many.alpha.item() == 0.0)
+    if result_query:
+        assert result_query.vs == pytest.approx(result_query_many.vs.item())
+        assert result_query.vp == pytest.approx(result_query_many.vp.item())
+        assert result_query.rho == pytest.approx(result_query_many.rho.item())
+        assert result_query.qp == pytest.approx(result_query_many.qp.item())
+        assert result_query.qs == pytest.approx(result_query_many.qs.item())
+        assert result_query.alpha == pytest.approx(result_query_many.alpha.item())

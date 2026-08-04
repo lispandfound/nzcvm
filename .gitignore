@@ -51,7 +51,6 @@ nosetests.xml
 coverage.xml
 *.cover
 *.py,cover
-.hypothesis/
 .pytest_cache/
 cover/
 
@@ -205,3 +204,19 @@ Cargo.lock
 *.vp3dfile
 *.wkb.*
 
+### Jujutsu ###
+/.jj/
+.claude/*
+CLAUDE.md
+
+### Local model/resource data & CLI-generated output (large, regenerable) ###
+/models/
+/resources/
+/models_pre_fix/
+/nzcvm_data/
+/basins/
+*.zip
+*.gz
+*.parquet
+velocity_model.json
+velocity_model.toml

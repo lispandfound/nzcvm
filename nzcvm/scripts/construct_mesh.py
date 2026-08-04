@@ -555,8 +555,8 @@ def cull_mesh(
     return (
         culled_vertices,
         culled_tetra,
-        len(vertices) - np.sum(has_vertex_neighbours),
-        len(tetra) - np.sum(has_non_zero_volume),
+        int(len(vertices) - np.sum(has_vertex_neighbours)),
+        int(len(tetra) - np.sum(has_non_zero_volume)),
     )
 
 
@@ -818,7 +818,13 @@ def main(
 
     if vm_1d is not None:
         model = read_layered_model(vm_1d)
-    elif all(v is not None for v in (rho, vp, vs, qp, qs)):
+    elif (
+        rho is not None
+        and vp is not None
+        and vs is not None
+        and qp is not None
+        and qs is not None
+    ):
         model = uniform_model(rho, vp, vs, qp, qs)
     else:
         raise typer.BadParameter(

@@ -72,7 +72,7 @@ def constant(
     """
     shape = grid.x.shape
     ones = np.ones(shape, dtype=np.float32)
-    return QualitiesSchema.new(  # ty: ignore[missing-argument]
+    return QualitiesSchema.new(
         rho=ones * rho,
         vp=ones * vp,
         vs=ones * vs,

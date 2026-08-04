@@ -8,7 +8,7 @@
 /// ```
 /// use nzcvm::real::Real;
 /// let v: Real = 3500.0;
-/// assert_eq!(v, 3500.0_f32);
+/// assert_eq!(v, 3500.0);
 /// ```
 #[cfg(feature = "high_precision")]
 pub type Real = f64;
@@ -23,7 +23,7 @@ pub type Real = f64;
 /// ```
 /// use nzcvm::real::Real;
 /// let v: Real = 3500.0;
-/// assert_eq!(v, 3500.0_f32);
+/// assert_eq!(v, 3500.0);
 /// ```
 #[cfg(not(feature = "high_precision"))]
 pub type Real = f32;

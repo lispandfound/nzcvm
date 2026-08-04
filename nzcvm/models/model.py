@@ -564,7 +564,7 @@ class ModelTree:
 
         See Also
         --------
-        ModelTree.query_many_raw : Same query as an unlabelled float32 array.
+        ModelTree.query : Same query logic outside of the pipeline
         """
         x, y, z = xr.broadcast(x, y, z)
         darr = xr.apply_ufunc(
